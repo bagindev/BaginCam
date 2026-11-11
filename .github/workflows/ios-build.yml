@@ -1,7 +1,7 @@
 name: iOS build (unsigned IPA)
 
 # Build app iOS di runner macOS GitHub (tanpa Mac lokal).
-# Hasil: artifact "ModKamera-ipa" -> ModKamera-unsigned.ipa
+# Hasil: artifact "BaginCam-ipa" -> BaginCam-unsigned.ipa
 # Pasang ke iPhone dengan Sideloadly (Windows) + Apple ID gratis (re-sign tiap 7 hari).
 
 on:
@@ -32,8 +32,8 @@ jobs:
         working-directory: ios-app
         run: |
           xcodebuild \
-            -project ModKamera.xcodeproj \
-            -scheme ModKamera \
+            -project BaginCam.xcodeproj \
+            -scheme BaginCam \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -47,15 +47,15 @@ jobs:
         working-directory: ios-app
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/ModKamera.app Payload/
-          zip -qry ModKamera-unsigned.ipa Payload
-          ls -la ModKamera-unsigned.ipa
+          cp -R build/Build/Products/Release-iphoneos/BaginCam.app Payload/
+          zip -qry BaginCam-unsigned.ipa Payload
+          ls -la BaginCam-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ModKamera-ipa
-          path: ios-app/ModKamera-unsigned.ipa
+          name: BaginCam-ipa
+          path: ios-app/BaginCam-unsigned.ipa
           retention-days: 14
 
       - name: Upload build log

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct ModKameraApp: App {
+struct BaginCamApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

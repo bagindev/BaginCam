@@ -1,8 +1,8 @@
-# XcodeGen spec -> ModKamera.xcodeproj dibuat otomatis di GitHub Actions (macOS).
+# XcodeGen spec -> BaginCam.xcodeproj dibuat otomatis di GitHub Actions (macOS).
 # Tidak perlu Mac/Xcode lokal. Lihat .github/workflows/ios-build.yml
-name: ModKamera
+name: BaginCam
 options:
-  bundleIdPrefix: dev.modkamera
+  bundleIdPrefix: dev.bagincam
   deploymentTarget:
     iOS: "17.0"
 settings:
@@ -11,24 +11,24 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
-  ModKamera:
+  BaginCam:
     type: application
     platform: iOS
     scheme: {}
     sources:
-      - path: ModKamera
+      - path: BaginCam
         excludes:
           - "LUTs/**"
-      - path: ModKamera/LUTs
+      - path: BaginCam/LUTs
         type: folder          # folder reference -> ikut ke bundle sebagai folder "LUTs"
     info:
-      path: ModKamera/Info.plist
+      path: BaginCam/Info.plist
       properties:
-        CFBundleDisplayName: ModKamera
+        CFBundleDisplayName: BaginCam
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        NSCameraUsageDescription: ModKamera butuh kamera untuk memotret.
-        NSPhotoLibraryAddUsageDescription: ModKamera menyimpan foto RAW ke galeri.
+        NSCameraUsageDescription: BaginCam butuh kamera untuk memotret.
+        NSPhotoLibraryAddUsageDescription: BaginCam menyimpan foto RAW ke galeri.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
@@ -38,7 +38,7 @@ targets:
           - UIInterfaceOrientationPortrait
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.modkamera.app
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bagincam.app
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_BITCODE: NO

@@ -3,13 +3,13 @@ iphone_syslog.py - Rekam syslog live iPhone via USB (pymobiledevice3), difilter 
 
 Dipakai untuk:
   1. Mengintip pipeline kamera Apple saat memotret (cameracaptured, mediaserverd, Camera, ...).
-  2. Debug app kita sendiri dari Windows tanpa Xcode (filter nama proses app: ModKamera).
+  2. Debug app kita sendiri dari Windows tanpa Xcode (filter nama proses app: BaginCam).
 
 Syarat: iPhone terhubung USB, unlock, sudah "Trust". Aplikasi Apple Devices (driver) terpasang.
 
 Contoh:
   python iphone_syslog.py --detik 60                     # filter kamera default
-  python iphone_syslog.py --detik 120 --proses ModKamera  # log app kita
+  python iphone_syslog.py --detik 120 --proses BaginCam  # log app kita
   python iphone_syslog.py --detik 30 --semua              # tanpa filter (besar!)
 Output: data\\logs\\syslog_<tanggal-jam>.txt
 """
@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PROC = ["cameracaptured", "mediaserverd", "Camera", "deferredmediad", "mediaanalysisd",
-                "AppleCameraInterface", "ModKamera", "photoanalysisd", "assetsd"]
+                "AppleCameraInterface", "BaginCam", "photoanalysisd", "assetsd"]
 LINE_RE = re.compile(r"^\S+ \S+ ([^\{\[ ]+)")
 
 

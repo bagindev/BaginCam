@@ -188,3 +188,6 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - Build pertama GitHub Actions (run 43070208052): **BUILD SUCCEEDED** dalam 43 s, Xcode 16.4 / iOS SDK 18.5, 0 warning kode.
   IPA unsigned 1.5 MB (binary 488 KB + 3 LUT) -> `data/builds/ModKamera-v0.1.0-unsigned.ipa`.
 
+- Folder lokal berhasil di-rename -> `D:\project\ios\BaginCam` (setelah tab VS Code ditutup). venv tetap jalan.
+- **App di-rename ModKamera -> BaginCam**: target/scheme/`.app`, `ios-app/BaginCam/`, `BaginCamApp.swift`, bundle ID `dev.bagincam.app`, log subsystem `dev.bagincam.app`, artifact `BaginCam-ipa` / `BaginCam-unsigned.ipa`, filter syslog default `BaginCam`.
+

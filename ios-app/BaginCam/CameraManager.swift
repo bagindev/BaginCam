@@ -40,8 +40,8 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: AVFoundation
     let session = AVCaptureSession()
-    private let sessionQueue = DispatchQueue(label: "modkamera.session")
-    private let videoQueue = DispatchQueue(label: "modkamera.video", qos: .userInteractive)
+    private let sessionQueue = DispatchQueue(label: "bagincam.session")
+    private let videoQueue = DispatchQueue(label: "bagincam.video", qos: .userInteractive)
     private let videoOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
     private var device: AVCaptureDevice?
