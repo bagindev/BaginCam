@@ -235,3 +235,7 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
   (1.21 M param). **Core ML fp16 vs PyTorch: PSNR 52.3 dB**. `.mlmodelc` 2.4 MB di
   `ios-app/BaginCam/Models/` + lisensi BSD-3.
 - Versi 0.4.0 (build 3).
+
+- Build v0.4.0: run 43078455490 gagal (Swift type-check timeout di HDRPlusMerger.swift:180, ekspresi dipecah) -> run **43079680665 SUCCESS**, 0 warning kode.
+  IPA 3.9 MB `data/builds/BaginCam-v0.4.0-unsigned.ipa`: binary 697 KB, `default.metallib` 39 KB (kernel HDR+), model SR 2.4 MB, 3 LUT.
+- **Belum diuji di HP**: HDR+ di GPU, AI Zoom, ganti lensa, zebra/peaking/histogram.
