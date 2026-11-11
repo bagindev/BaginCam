@@ -176,8 +176,13 @@ final class HDRPlusMerger {
         let rb = refB.contents().bindMemory(to: SIMD4<Float>.self, capacity: np)
         var total: Double = 0
         for i in stride(from: 0, to: np, by: 4) {   // sampling 1/4 cukup untuk rata-rata
-            let a = rp[i], b = rb[i]
-            total += Double(abs(a.x - b.x) + abs(a.y - b.y) + abs(a.z - b.z) + abs(a.w - b.w))
+            let a: SIMD4<Float> = rp[i]
+            let b: SIMD4<Float> = rb[i]
+            let dx: Float = abs(a.x - b.x)
+            let dy: Float = abs(a.y - b.y)
+            let dz: Float = abs(a.z - b.z)
+            let dw: Float = abs(a.w - b.w)
+            total += Double(dx + dy + dz + dw)
         }
         let noiseSD = Float(total / Double((np + 3) / 4))
         let rev = 0.5 * (36.0 - Double(Int(noiseReduction + 0.5)))

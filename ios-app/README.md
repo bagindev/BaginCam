@@ -2,14 +2,15 @@
 
 App kamera iPhone 16 Pro Max: preview LUT live, kontrol manual, burst RAW untuk HDR+ di PC.
 
-## Fitur v0.1
-- Preview **LUT live** (Core Image + Metal). Bawaan: `SonyLook_v0.1_SOFT/STANDARD/STRONG` (OpenColorLab,
-  input iPhone stock Rec.709). Import `.cube` sendiri dari Files.
-- **Manual**: ISO, shutter (skala log), WB (Kelvin), fokus. Mode Auto = AE/AWB/AF kontinu.
-- **Burst** 1-16 frame, AE/AWB/AF otomatis dikunci selama burst.
-- Format: **Bayer RAW** (DNG sensor asli, cocok untuk `pc-lab/burst_merge.py`), **ProRAW**, HEIF.
-- Simpan ke **Photos** + `Documents/Bursts/<tanggal-jam>/` (bisa dilihat di Files app / Apple Devices).
-- Log `os.Logger` subsystem `dev.bagincam.app` -> baca di Windows: `python pc-lab\iphone_syslog.py --proses BaginCam`.
+## Fitur (v0.4.0)
+- Mode: **HDR+** (burst Bayer RAW -> align + robust merge di GPU -> 1 DNG), **Bayer RAW**, **ProRAW**,
+  **HEIF**, **AI Zoom** (crop resolusi penuh + super-resolution x4 Core ML).
+- Lensa 0.5x / 1x / 5x, opsi 48MP (HEIF/ProRAW).
+- Preview **LUT live**: `SonyLook_v0.1_SOFT/STANDARD/STRONG` (OpenColorLab) + import `.cube`.
+- Bantu exposure/fokus: **histogram**, **zebra** (>95 %), **focus peaking**.
+- Manual ISO / shutter (log) / WB (K) / fokus; burst 2-16 frame dengan kunci AE/AWB/AF.
+- Simpan ke **Photos** + `Documents/Bursts/<MODE>_<tanggal-jam>/`.
+- Log `os.Logger` subsystem `dev.bagincam.app` (kategori camera, lut, hdrplus, aizoom).
 
 ## Build (tanpa Mac)
 GitHub Actions `.github/workflows/ios-build.yml`: XcodeGen -> xcodebuild (tanpa signing) -> artifact
@@ -26,13 +27,15 @@ GitHub Actions `.github/workflows/ios-build.yml`: XcodeGen -> xcodebuild (tanpa 
 | File | Isi |
 |---|---|
 | `project.yml` | spesifikasi XcodeGen (iOS 17+, bundle `dev.bagincam.app`) |
-| `BaginCam/CameraManager.swift` | AVCaptureSession, manual exposure/WB/fokus, burst RAW, simpan |
-| `BaginCam/PreviewRenderer.swift` | MTKView + Core Image, LUT di GPU |
+| `BaginCam/CameraManager.swift` | session, lensa, manual, burst, HDR+ / AI Zoom pipeline, simpan |
+| `BaginCam/PreviewRenderer.swift` | MTKView + Core Image: zoom, LUT, peaking, zebra, histogram |
+| `BaginCam/HDRPlus.metal` + `HDRPlusMerger.swift` | align + robust merge Bayer di GPU, tulis DNG |
+| `BaginCam/SRUpscaler.swift` + `Models/` | AI Zoom Core ML (Real-ESRGAN x4v3, BSD-3) |
 | `BaginCam/CubeLUT.swift` | parser `.cube` + library LUT (bawaan + import) |
 | `BaginCam/ContentView.swift` | UI SwiftUI |
 | `BaginCam/LUTs/` | LUT bawaan |
 
 ## Belum ada (rencana)
-- Ganti lensa (0.5x / 5x), histogram, focus peaking, zebra.
-- Port align+merge Metal (hdr-plus-swift) -> HDR+ langsung di HP.
-- AI zoom / super-resolution (Core ML).
+- Align sub-piksel + merge domain frekuensi (kualitas HDR+ lebih tinggi, penolakan lebih sedikit).
+- Multi-frame super-resolution (pakai goyangan tangan) untuk AI Zoom.
+- Video / Apple Log + LUT.

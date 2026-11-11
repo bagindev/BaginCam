@@ -203,3 +203,35 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - IPA `data/builds/BaginCam-v0.1.1-unsigned.ipa` (run 43072960194) di-sideload user; app terbuka normal (crash v0.1.0 teratasi).
 - Berikutnya: uji fungsi di HP (LUT, manual, burst Bayer RAW) sambil rekam syslog 5 menit.
 
+
+---
+
+## 2026-11-12 - Sesi 4: uji v0.1.1 di HP + v0.2 / v0.3 / v0.4 sekaligus
+
+### Hasil uji v0.1.1 (dari syslog USB, `data/logs/syslog_20261112-011043.txt`)
+- LUT SOFT/STANDARD/STRONG dimuat OK. Burst **HEIF** 8 frame ~0.45 s/frame (ISO 1000, 1/40).
+  Burst **ProRAW** 8 frame ~0.85 s/frame, ~11.5 MB/frame (ISO 6400, 1/1282 - manual).
+- Bayer RAW belum dicoba user. Tidak ada error/crash.
+
+### pc-lab: noise model dari NoiseProfile
+- `robust_merge.py`: opsi `noise_profile=(S,O)` -> ambang per piksel = k x selisih yang diharapkan dari
+  noise sensor (var = S*x + O, faktor blur binomial-16 = C(32,16)/2^32). CLI `--k` di burst_merge/compare.
+- Hasil ProRAW: k=8 ~ setara nr18 (A: -46/-62/-66 %, B: -14/-7/-34 %), k=4 lebih konservatif.
+  **Kesimpulan:** penolakan didominasi salah-align sub-piksel pada tekstur, bukan estimasi noise.
+  Default tetap nr 18. Perbaikan berikut: align sub-piksel.
+
+### App v0.4.0 (`ios-app/`)
+- **v0.2**: ganti lensa 0.5x/1x/5x (deteksi otomatis), opsi 48MP (HEIF/ProRAW), histogram luminans
+  (CIAreaHistogram 64 bin), zebra (>95 %, garis diagonal), focus peaking (CIEdges + threshold, merah).
+- **v0.3 HDR+ di HP** (`HDRPlus.metal`, `HDRPlusMerger.swift`): mode **HDR+** = burst Bayer RAW ->
+  align piramida (tile 16, +-2, coarse->fine) + spatial robust merge (blur binomial-16, nr 1..23) di GPU ->
+  data hasil ditulis kembali ke DNG Apple lewat `AVCapturePhotoFileDataRepresentationCustomizer`
+  (`RawReplacer`) -> metadata warna/lensa/NoiseProfile asli tetap. Opsi "+Frame" simpan frame mentah.
+- **v0.4 AI Zoom** (`SRUpscaler.swift`): foto resolusi penuh (48MP di lensa utama) -> crop tengah sesuai
+  zoom 1-10x -> bila < 4032 px: Real-ESRGAN **realesr-general-x4v3** (Core ML, tile 256 + overlap 16) ->
+  HEIC dengan EXIF asli.
+- Model: `tools/sr_model/convert_sr.py` + workflow `convert-sr-model.yml` (macOS, torch 2.5.1,
+  coremltools 8.3.0). Weights SHA-256 8dc7edb9...96292 (dicek). Arsitektur diverifikasi lokal
+  (1.21 M param). **Core ML fp16 vs PyTorch: PSNR 52.3 dB**. `.mlmodelc` 2.4 MB di
+  `ios-app/BaginCam/Models/` + lisensi BSD-3.
+- Versi 0.4.0 (build 3).
