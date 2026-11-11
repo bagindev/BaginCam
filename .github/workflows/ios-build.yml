@@ -1,0 +1,67 @@
+name: iOS build (unsigned IPA)
+
+# Build app iOS di runner macOS GitHub (tanpa Mac lokal).
+# Hasil: artifact "ModKamera-ipa" -> ModKamera-unsigned.ipa
+# Pasang ke iPhone dengan Sideloadly (Windows) + Apple ID gratis (re-sign tiap 7 hari).
+
+on:
+  push:
+    paths:
+      - "ios-app/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Info Xcode
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Build (tanpa code signing)
+        working-directory: ios-app
+        run: |
+          xcodebuild \
+            -project ModKamera.xcodeproj \
+            -scheme ModKamera \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || { grep -E "error:" build.log | head -60; tail -40 build.log; exit 1; }
+          echo "--- warnings ---"
+          grep -E "warning:" build.log | grep -v "appintentsmetadataprocessor" | sort -u | head -40 || true
+
+      - name: Paket IPA
+        working-directory: ios-app
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/ModKamera.app Payload/
+          zip -qry ModKamera-unsigned.ipa Payload
+          ls -la ModKamera-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModKamera-ipa
+          path: ios-app/ModKamera-unsigned.ipa
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ios-app/build.log
+          retention-days: 7

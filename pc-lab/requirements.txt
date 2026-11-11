@@ -1,0 +1,8 @@
+# venv dibuat dengan --system-site-packages (torch 2.13.0+cpu dari Python global)
+torch
+numpy
+rawpy==0.28.0
+imageio
+matplotlib
+tifffile
+imagecodecs  # decode ProRAW JPEG XL (DNG compression 52546)

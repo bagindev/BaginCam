@@ -1,0 +1,16 @@
+# data pribadi / besar - tidak ikut ke GitHub
+data/
+third_party/
+pc-lab/.venv/
+__pycache__/
+*.pyc
+
+# build iOS
+ios-app/build/
+ios-app/*.xcodeproj/
+ios-app/Payload/
+ios-app/*.ipa
+ios-app/build.log
+
+.DS_Store
+Thumbs.db
