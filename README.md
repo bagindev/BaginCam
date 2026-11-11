@@ -1,4 +1,4 @@
-# mod-Kamera - app kamera iPhone 16 Pro Max "ala GCam"
+# BaginCam - app kamera iPhone 16 Pro Max "ala GCam"
 
 App kamera iOS buatan sendiri: kontrol manual, preview LUT live (Sony-look dari OpenColorLab),
 ProRAW / Apple Log, stacking burst ala HDR+, lalu AI zoom / super-resolution.

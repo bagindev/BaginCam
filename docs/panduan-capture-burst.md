@@ -27,10 +27,10 @@ atau app kita sendiri nanti). Kalau ada, ambil set yang sama juga.
 ## Pindah ke PC
 - Kabel USB -> Windows "Import from device" / File Explorer `Apple iPhone\Internal Storage\DCIM`.
 - File ProRAW berekstensi `.DNG` (~25 MB per 12MP).
-- Taruh per set di `D:\project\ios\mod-Kamera\data\bursts\<nama-set>\`.
+- Taruh per set di `D:\project\ios\BaginCam\data\bursts\<nama-set>\`.
 
 ## Proses
 ```
-D:\project\ios\mod-Kamera\pc-lab\.venv\Scripts\python.exe D:\project\ios\mod-Kamera\pc-lab\burst_merge.py D:\project\ios\mod-Kamera\data\bursts\<nama-set> --ev 1
+D:\project\ios\BaginCam\pc-lab\.venv\Scripts\python.exe D:\project\ios\BaginCam\pc-lab\burst_merge.py D:\project\ios\BaginCam\data\bursts\<nama-set> --ev 1
 ```
 Hasil di `data\output\`.

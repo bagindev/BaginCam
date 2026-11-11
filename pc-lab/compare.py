@@ -6,7 +6,7 @@ compare.py - Perbandingan frame tunggal vs simple merge vs robust merge (burst P
   Kolom: frame tunggal | simple merge | robust merge
 
 Contoh:
-  python compare.py D:\\project\\ios\\mod-Kamera\\data\\bursts\\iphone-20261111-setA --ev 1 --nr 13
+  python compare.py D:\\project\\ios\\BaginCam\\data\\bursts\\iphone-20261111-setA --ev 1 --nr 13
 """
 import argparse
 import sys

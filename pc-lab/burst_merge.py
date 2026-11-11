@@ -7,7 +7,7 @@ Mendukung dua jenis DNG dari iPhone:
   * ProRAW     (Linear DNG, sudah demosaic)                     -> merge di domain RGB linear
 
 Contoh:
-  python burst_merge.py D:\\project\\ios\\mod-Kamera\\data\\bursts\\burst01
+  python burst_merge.py D:\\project\\ios\\BaginCam\\data\\bursts\\burst01
   python burst_merge.py <folder> --ev 1.5 --ref 0 --tile 16 --search 2 --max-frames 8
 """
 import argparse
@@ -294,7 +294,7 @@ def write_linear_dng(out_path, lin_chw, src_path):
                                   v if isinstance(v, (tuple, list)) else (v,), True))
     tifffile.imwrite(out_path, data, photometric=34892, planarconfig="contig",
                      subfiletype=0, extratags=extratags, metadata=None,
-                     software="mod-Kamera burst_merge (HDR+ robust merge)")
+                     software="BaginCam burst_merge (HDR+ robust merge)")
 
 
 if __name__ == "__main__":

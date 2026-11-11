@@ -3,7 +3,7 @@ iphone_meta.py - Baca metadata kamera iPhone (EXIF + Apple MakerNote) per frame 
 lalu cek konsistensi burst: exposure terkunci? fokus sama? HP bergerak?
 
 Contoh:
-  python iphone_meta.py D:\\project\\ios\\mod-Kamera\\data\\bursts\\iphone-20261111-setA
+  python iphone_meta.py D:\\project\\ios\\BaginCam\\data\\bursts\\iphone-20261111-setA
 Output: tabel di layar + <folder>\\_meta.csv
 """
 import csv

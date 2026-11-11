@@ -1,4 +1,4 @@
-# LOG aktivitas - mod-Kamera (iOS camera app)
+# LOG aktivitas - BaginCam (iOS camera app)
 
 Format: tanggal - apa yang dikerjakan - hasil / file.
 
@@ -167,7 +167,7 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - **Belum dikompilasi** (tidak ada Mac) -> build pertama di GitHub Actions akan memverifikasi.
 
 ### 6. GitHub
-- Repo **public**: https://github.com/bagindev/mod-kamera (lisensi **GPL-3.0**, karena robust merge turunan
+- Repo **public**: https://github.com/bagindev/BaginCam (lisensi **GPL-3.0**, karena robust merge turunan
   hdr-plus-swift). Commit identity: `bagindev` + email noreply GitHub (hanya untuk repo ini).
 - Tidak ikut diupload (`.gitignore`): `data/`, `third_party/`, `pc-lab/.venv/`.
 - Push pertama ditolak: token gh tidak punya scope `workflow` -> `gh auth refresh -s workflow` (perlu
@@ -179,3 +179,12 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - [ ] Ambil burst **Bayer RAW** dari app -> uji `burst_merge.py` jalur Bayer (pipeline "GCam murni").
 - [ ] Noise model dari `NoiseProfile` untuk robust merge yang lebih akurat.
 - [ ] v0.2: ganti lensa, histogram/zebra/peaking; port align+merge Metal ke app.
+
+---
+
+## 2026-11-12 - Rename proyek -> BaginCam
+- Repo GitHub: `bagindev/mod-kamera` -> **https://github.com/bagindev/BaginCam** (link lama di-redirect GitHub).
+- Folder lokal: `D:\project\ios\mod-Kamera` -> `D:\project\ios\BaginCam`; semua referensi path di docs/skrip diperbarui.
+- Build pertama GitHub Actions (run 43070208052): **BUILD SUCCEEDED** dalam 43 s, Xcode 16.4 / iOS SDK 18.5, 0 warning kode.
+  IPA unsigned 1.5 MB (binary 488 KB + 3 LUT) -> `data/builds/ModKamera-v0.1.0-unsigned.ipa`.
+
