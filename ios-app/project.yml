@@ -1,4 +1,4 @@
-﻿# XcodeGen spec -> BaginCam.xcodeproj dibuat otomatis di GitHub Actions (macOS).
+# XcodeGen spec -> BaginCam.xcodeproj dibuat otomatis di GitHub Actions (macOS).
 # Tidak perlu Mac/Xcode lokal. Lihat .github/workflows/ios-build.yml
 name: BaginCam
 options:
