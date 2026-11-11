@@ -191,3 +191,10 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - Folder lokal berhasil di-rename -> `D:\project\ios\BaginCam` (setelah tab VS Code ditutup). venv tetap jalan.
 - **App di-rename ModKamera -> BaginCam**: target/scheme/`.app`, `ios-app/BaginCam/`, `BaginCamApp.swift`, bundle ID `dev.bagincam.app`, log subsystem `dev.bagincam.app`, artifact `BaginCam-ipa` / `BaginCam-unsigned.ipa`, filter syslog default `BaginCam`.
 
+
+## 2026-11-12 - Bug: app crash saat dibuka (v0.1.0)
+- User sideload IPA v0.1.0 (masih bernama ModKamera, bundle `dev.modkamera.app.BWDD486C8J`, signer Apple ID gratis, profil valid, Developer Mode ON) -> **crash tiap dibuka**.
+- Crash log ditarik via `pymobiledevice3 crash pull` -> `data/logs/crash/` (9 file, semua sama): `EXC_CRASH SIGABRT`, NSException dari `AVCaptureFigVideoDevice deviceWhiteBalanceGains...` dipanggil dari Timer `updateReadout()`.
+- Penyebab: timer readout jalan sebelum session kamera aktif -> gain WB = 0 -> konversi ke Kelvin melempar NSException (tidak bisa di-catch Swift).
+- Fix v0.1.1: readout hanya saat `session.isRunning`, validasi gain > 0 & clamp ke [1, maxWhiteBalanceGain]; `applyManual` clamp suhu 2500-9000 K. Build lama (rename) dibatalkan untuk hemat kuota.
+

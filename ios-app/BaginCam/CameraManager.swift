@@ -173,8 +173,8 @@ final class CameraManager: NSObject, ObservableObject {
                 d.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
                                         iso: i, completionHandler: nil)
             }
-            if d.isWhiteBalanceModeSupported(.locked) {
-                let tv = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: temp, tint: 0)
+            if d.isWhiteBalanceModeSupported(.locked), d.maxWhiteBalanceGain >= 1 {
+                let tv = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: min(max(temp, 2500), 9000), tint: 0)
                 d.setWhiteBalanceModeLocked(with: Self.clamp(d.deviceWhiteBalanceGains(for: tv), d.maxWhiteBalanceGain),
                                             completionHandler: nil)
             }
@@ -204,13 +204,18 @@ final class CameraManager: NSObject, ObservableObject {
         d.unlockForConfiguration()
     }
 
+    /// Baca nilai kamera untuk ditampilkan.
+    /// PENTING: API white balance AVFoundation melempar NSException (crash, tidak bisa di-catch Swift)
+    /// bila gain di luar [1, maxWhiteBalanceGain] - mis. gain 0 sebelum session jalan (bug v0.1.0).
     private func updateReadout() {
-        guard let d = device else { return }
+        guard let d = device, session.isRunning else { return }
         liveISO = d.iso
         liveShutter = d.exposureDuration.seconds
         liveLens = d.lensPosition
-        let tt = d.temperatureAndTintValues(for: d.deviceWhiteBalanceGains)
-        liveTemp = tt.temperature
+        let maxGain = d.maxWhiteBalanceGain
+        let g = d.deviceWhiteBalanceGains
+        guard maxGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 else { return }
+        liveTemp = d.temperatureAndTintValues(for: Self.clamp(g, maxGain)).temperature
     }
 
     // MARK: burst capture
