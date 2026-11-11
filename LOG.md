@@ -105,8 +105,77 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - Catatan penting: **ProRAW sudah diproses multi-frame oleh Apple** sebelum disimpan. Merge kita = stacking di atas
   hasil Apple. Untuk pipeline "GCam murni" nanti app kita perlu ambil **Bayer RAW** (tersedia di AVFoundation).
 
+### Berikutnya (sesi 2)
+- [x] Robust merge -> sesi 3.
+- [x] Renderer ProfileGainTableMap -> sesi 3.
+- [x] Output DNG -> sesi 3.
+- [x] Kerangka app iOS + GitHub Actions -> sesi 3.
+
+---
+
+## 2026-11-12 - Sesi 3: robust merge, tone map Apple, DNG, log iPhone, app iOS v0.1
+
+### 1. Robust merge (`pc-lab/robust_merge.py`, baru)
+- Port logika `hdr-plus-swift/burstphoto/merge/spatial.{swift,metal}`: blur binomial 16 pada ref & frame
+  pembanding -> selisih per superpixel -> bobot `clamp(1 - diff / (noise_sd / robustness), 0, 1)` ->
+  `ref*(1-w) + comp*w`. Rumus robustness dari slider noise reduction Burst Photo (1..23).
+- Mendukung Bayer (4 plane RGGB) dan linear RGB (ProRAW).
+- `burst_merge.py`: opsi `--merge robust|simple` (default robust), `--nr` (default **18**).
+
+| Set | nr | Bobot rata-rata | Noise turun (3 crop) | Artefak kotak |
+|---|---|---|---|---|
+| B | simple | 1.0 | 30 / 32 / 46 % | **ada** (rel gorden) |
+| B | 13 | ~0.6 | 10 / 4 / 34 % | hilang |
+| B | **18** | ~0.77 | 14 / 9 / 41 % | **hilang** |
+| A | simple | 1.0 | 59 / 66 / 67 % | - |
+| A | 13 | ~0.33 | 38 / 56 / 64 % | - |
+| A | **18** | ~0.54 | 48 / 64 / 67 % | - |
+- Gambar: `data/output/*_3way_*.jpg` (kolom: tunggal | simple | robust).
+- Catatan: bobot set A (tripod, statis) masih ~0.5 -> estimasi noise dari |ref - blur(ref)| ikut menghitung
+  tekstur, dan ProRAW sudah di-denoise Apple. Perbaikan nanti: noise model dari `NoiseProfile` DNG.
+
+### 2. Tone map lokal Apple (ProfileGainTableMap)
+- Tag DNG 1.6 (big-endian): grid **48x64**, **257** titik kurva per titik grid, bobot input
+  (R,G,B,min,max) = (0.0031, 0.0104, 0.0011, 0, 0.0146). Didesain untuk input setelah BaselineExposure
+  (headroom ~34x / ~5 EV). Implementasi: interpolasi trilinear (`grid_sample`) di `apply_pgtm()`.
+- Hasil: plafon/jendela/dinding biru set B yang tadinya putih total kini ber-detail. Default ON
+  (`--no-local-tm` untuk mematikan). Gambar: `data/output/set{A,B}_render_global_vs_pgtm.jpg`.
+
+### 3. Output DNG
+- `write_linear_dng()`: hasil merge -> **DNG LinearRaw 16-bit tanpa kompresi**, metadata warna,
+  BaselineExposure, Orientation, NoiseProfile & ProfileGainTableMap disalin dari frame referensi.
+- Validasi: dibaca **rawpy/LibRaw** (RawType.Stack 4032x3024, render OK). ~73 MB/file.
+  Contoh: `data/output/iphone-20261111-setB_robust-nr18_merged.dng`.
+
+### 4. Log / metadata kamera iPhone (ide user)
+- Dipasang: **ExifTool 13.61** (winget OliverBetz.ExifTool), **pymobiledevice3** (venv).
+- `pc-lab/iphone_meta.py` (baru): tabel EXIF + Apple MakerNote per frame + cek konsistensi -> `<set>/_meta.csv`.
+  Hasil: kedua set **AE/AWB/AF terkunci** (ISO, shutter, fokus, Kelvin identik).
+  Set A: ISO 1600 1/26 s, fokus 62, 5677 K, SNR ~24, jeda ~1 s/frame, kemiringan HP berubah s/d 1.8 deg
+  (tripod bergetar saat shutter ditekan -> align tetap perlu). Set B: ISO 1250 1/25 s, SNR ~27, jeda ~1.8 s.
+- `pc-lab/iphone_syslog.py` (baru): syslog live via USB, filter proses kamera
+  (`cameracaptured`, `mediaserverd`, `Camera`, ... , `ModKamera`). Tes: 10 s -> 29 dari 9.757 baris.
+  Akan dipakai untuk debug app sendiri dari Windows (tanpa Xcode).
+
+### 5. App iOS v0.1 (`ios-app/`)
+- SwiftUI + AVFoundation + Metal/Core Image. File: `CameraManager.swift`, `PreviewRenderer.swift`,
+  `CubeLUT.swift`, `ContentView.swift`, `Log.swift`, `ModKameraApp.swift`, `project.yml` (XcodeGen).
+- Fitur: preview LUT live (bawaan `SonyLook_v0.1_SOFT/STANDARD/STRONG` = OpenColorLab iPhone16PM Stock
+  SonyInspired v0.1 Practical Pack, 33^3), import .cube, manual ISO/shutter(log)/WB/fokus, burst 1-16 frame
+  dengan kunci AE/AWB/AF, format Bayer RAW / ProRAW / HEIF, simpan ke Photos + `Documents/Bursts/`.
+- Build: `.github/workflows/ios-build.yml` (macos-15, XcodeGen, xcodebuild tanpa signing -> unsigned IPA).
+- **Belum dikompilasi** (tidak ada Mac) -> build pertama di GitHub Actions akan memverifikasi.
+
+### 6. GitHub
+- Repo **public**: https://github.com/bagindev/mod-kamera (lisensi **GPL-3.0**, karena robust merge turunan
+  hdr-plus-swift). Commit identity: `bagindev` + email noreply GitHub (hanya untuk repo ini).
+- Tidak ikut diupload (`.gitignore`): `data/`, `third_party/`, `pc-lab/.venv/`.
+- Push pertama ditolak: token gh tidak punya scope `workflow` -> `gh auth refresh -s workflow` (perlu
+  persetujuan user di browser).
+
 ### Berikutnya
-- [ ] Robust merge (bobot per tile berdasarkan selisih, ala HDR+ / hdr-plus-swift `merge/`) -> hilangkan artefak set B.
-- [ ] Renderer lebih baik: tone map lokal / terapkan ProfileGainTableMap, auto-exposure dari histogram.
-- [ ] Simpan hasil merge sebagai **DNG** (bisa diedit di Lightroom) - bukan cuma TIFF.
-- [ ] Langkah 2: kerangka app iOS (Apple ID gratis + Sideloadly) + workflow GitHub Actions -> butuh akun GitHub.
+- [ ] Push + build pertama GitHub Actions, perbaiki error kompilasi bila ada.
+- [ ] Pasang IPA via Sideloadly, uji di iPhone, baca log `ModKamera` via `iphone_syslog.py`.
+- [ ] Ambil burst **Bayer RAW** dari app -> uji `burst_merge.py` jalur Bayer (pipeline "GCam murni").
+- [ ] Noise model dari `NoiseProfile` untuk robust merge yang lebih akurat.
+- [ ] v0.2: ganti lensa, histogram/zebra/peaking; port align+merge Metal ke app.
