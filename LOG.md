@@ -198,3 +198,8 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - Penyebab: timer readout jalan sebelum session kamera aktif -> gain WB = 0 -> konversi ke Kelvin melempar NSException (tidak bisa di-catch Swift).
 - Fix v0.1.1: readout hanya saat `session.isRunning`, validasi gain > 0 & clamp ke [1, maxWhiteBalanceGain]; `applyManual` clamp suhu 2500-9000 K. Build lama (rename) dibatalkan untuk hemat kuota.
 
+
+## 2026-11-12 - BaginCam v0.1.1 terpasang & bisa dibuka
+- IPA `data/builds/BaginCam-v0.1.1-unsigned.ipa` (run 43072960194) di-sideload user; app terbuka normal (crash v0.1.0 teratasi).
+- Berikutnya: uji fungsi di HP (LUT, manual, burst Bayer RAW) sambil rekam syslog 5 menit.
+

@@ -1,0 +1,74 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "BaginCam AI Zoom: Real-ESRGAN realesr-general-x4v3 (BSD-3-Clause), tile 256 -> 1024",
+    "outputSchema" : [
+      {
+        "height" : "1024",
+        "colorspace" : "RGB",
+        "isOptional" : "0",
+        "width" : "1024",
+        "isColor" : "1",
+        "formattedType" : "Image (Color 1024 × 1024)",
+        "hasSizeFlexibility" : "0",
+        "type" : "Image",
+        "shortDescription" : "",
+        "name" : "output"
+      }
+    ],
+    "storagePrecision" : "Mixed (Float16, Float32)",
+    "modelParameters" : [
+
+    ],
+    "author" : "Real-ESRGAN (Xintao Wang et al.), converted for BaginCam",
+    "specificationVersion" : 8,
+    "license" : "BSD-3-Clause",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.prelu" : 33,
+      "Ios17.clip" : 1,
+      "PixelShuffle" : 1,
+      "Ios17.cast" : 2,
+      "Ios17.conv" : 34,
+      "Ios17.mul" : 2,
+      "Ios17.add" : 1,
+      "UpsampleNearestNeighbor" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "height" : "256",
+        "colorspace" : "RGB",
+        "isOptional" : "0",
+        "width" : "256",
+        "isColor" : "1",
+        "formattedType" : "Image (Color 256 × 256)",
+        "hasSizeFlexibility" : "0",
+        "type" : "Image",
+        "shortDescription" : "",
+        "name" : "input"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.version" : "8.3.0",
+      "com.github.apple.coremltools.source" : "torch==2.5.1",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "BaginCamSR_x4_256",
+    "method" : "predict"
+  }
+]

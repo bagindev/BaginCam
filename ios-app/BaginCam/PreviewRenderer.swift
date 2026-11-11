@@ -1,8 +1,11 @@
 import SwiftUI
 import MetalKit
 import CoreImage
+import CoreImage.CIFilterBuiltins
 
-/// Render frame kamera + LUT ke layar dengan Metal (Core Image di GPU).
+/// Render frame kamera ke layar dengan Metal (Core Image di GPU):
+/// digital zoom -> LUT -> focus peaking -> zebra, plus histogram luminans.
+/// Semua properti diakses dari main thread (draw MTKView berjalan di main).
 final class PreviewRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -10,8 +13,17 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     private let lock = NSLock()
     private var latest: CIImage?
 
-    /// Diakses hanya dari main thread (draw MTKView berjalan di main).
     var lutFilter: CIFilter?
+    var zoom: CGFloat = 1
+    var zebra = false
+    var zebraLevel: Float = 0.95
+    var peaking = false
+    var histogramEnabled = true
+    /// 64 bin luminans ternormalisasi 0..1 (dipanggil di main ~5x/detik)
+    var onHistogram: (([Float]) -> Void)?
+
+    private var frameCounter = 0
+    private var histBitmap = [Float](repeating: 0, count: 64 * 4)
 
     override init() {
         device = MTLCreateSystemDefaultDevice()!
@@ -33,14 +45,62 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
               let drawable = view.currentDrawable,
               let commandBuffer = queue.makeCommandBuffer() else { return }
 
+        // digital zoom (crop tengah) - sama persis dengan crop AI Zoom saat memotret
+        if zoom > 1.001 {
+            let e = image.extent
+            let cw = e.width / zoom, ch = e.height / zoom
+            image = image.cropped(to: CGRect(x: e.midX - cw / 2, y: e.midY - ch / 2, width: cw, height: ch))
+        }
+        let extent = image.extent
+
+        // luminans sinyal (sebelum LUT) untuk zebra / peaking / histogram
+        var luma: CIImage?
+        if zebra || peaking || histogramEnabled {
+            let mono = CIFilter.colorControls()
+            mono.inputImage = image
+            mono.saturation = 0
+            luma = mono.outputImage
+        }
+
         if let f = lutFilter {
             f.setValue(image, forKey: kCIInputImageKey)
             if let out = f.outputImage { image = out }
         }
 
+        if peaking, let l = luma {
+            let edges = CIFilter.edges()
+            edges.inputImage = l
+            edges.intensity = 4
+            let th = CIFilter.colorThreshold()
+            th.inputImage = edges.outputImage
+            th.threshold = 0.35
+            if let mask = th.outputImage?.cropped(to: extent) {
+                let red = CIImage(color: CIColor(red: 1, green: 0.15, blue: 0.1)).cropped(to: extent)
+                image = blend(red, over: image, mask: mask)
+            }
+        }
+
+        if zebra, let l = luma {
+            let th = CIFilter.colorThreshold()
+            th.inputImage = l
+            th.threshold = zebraLevel
+            let stripes = CIFilter.stripesGenerator()
+            stripes.color0 = CIColor(red: 0, green: 0, blue: 0)
+            stripes.color1 = CIColor(red: 1, green: 1, blue: 1)
+            stripes.width = Float(max(4, extent.width / 120))
+            stripes.sharpness = 1
+            if let mask = th.outputImage?.cropped(to: extent),
+               let st = stripes.outputImage?.transformed(by: CGAffineTransform(rotationAngle: .pi / 4)).cropped(to: extent) {
+                image = blend(st, over: image, mask: mask)
+            }
+        }
+
+        frameCounter += 1
+        if histogramEnabled, frameCounter % 6 == 0, let l = luma { computeHistogram(l) }
+
         // aspect-fill ke ukuran layar
         let ds = view.drawableSize
-        let scale = max(ds.width / image.extent.width, ds.height / image.extent.height)
+        let scale = max(ds.width / extent.width, ds.height / extent.height)
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         image = image.transformed(by: CGAffineTransform(
             translationX: (ds.width - image.extent.width) / 2 - image.extent.origin.x,
@@ -54,6 +114,35 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
                                      to: dest, at: .zero)
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func blend(_ top: CIImage, over background: CIImage, mask: CIImage) -> CIImage {
+        let b = CIFilter.blendWithMask()
+        b.inputImage = top
+        b.backgroundImage = background
+        b.maskImage = mask
+        return b.outputImage ?? background
+    }
+
+    private func computeHistogram(_ luma: CIImage) {
+        let small = luma.transformed(by: CGAffineTransform(scaleX: 0.125, y: 0.125))
+        let h = CIFilter.areaHistogram()
+        h.inputImage = small
+        h.extent = small.extent
+        h.count = 64
+        h.scale = 1
+        guard let out = h.outputImage else { return }
+        histBitmap.withUnsafeMutableBytes { ptr in
+            guard let base = ptr.baseAddress else { return }
+            ciContext.render(out, toBitmap: base, rowBytes: 64 * 16,
+                             bounds: CGRect(x: 0, y: 0, width: 64, height: 1),
+                             format: .RGBAf, colorSpace: nil)
+        }
+        var bins = (0..<64).map { histBitmap[$0 * 4] }
+        // akar supaya bin kecil tetap terlihat
+        bins = bins.map { $0.squareRoot() }
+        if let m = bins.max(), m > 0 { bins = bins.map { $0 / m } }
+        onHistogram?(bins)
     }
 }
 
@@ -71,4 +160,27 @@ struct MetalPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MTKView, context: Context) {}
+}
+
+/// Histogram kecil di pojok preview.
+struct HistogramView: View {
+    let bins: [Float]
+    var body: some View {
+        GeometryReader { g in
+            Path { p in
+                guard bins.count > 1 else { return }
+                let w = g.size.width, h = g.size.height
+                p.move(to: CGPoint(x: 0, y: h))
+                for (i, v) in bins.enumerated() {
+                    p.addLine(to: CGPoint(x: w * CGFloat(i) / CGFloat(bins.count - 1), y: h * (1 - CGFloat(v))))
+                }
+                p.addLine(to: CGPoint(x: w, y: h))
+                p.closeSubpath()
+            }
+            .fill(.white.opacity(0.75))
+        }
+        .frame(width: 110, height: 44)
+        .padding(4)
+        .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
+    }
 }

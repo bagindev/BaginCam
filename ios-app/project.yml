@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.1"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "3"
 targets:
   BaginCam:
     type: application
@@ -19,8 +19,11 @@ targets:
       - path: BaginCam
         excludes:
           - "LUTs/**"
+          - "Models/**"
       - path: BaginCam/LUTs
         type: folder          # folder reference -> ikut ke bundle sebagai folder "LUTs"
+      - path: BaginCam/Models
+        type: folder          # model Core ML terkompilasi (.mlmodelc) -> folder "Models"
     info:
       path: BaginCam/Info.plist
       properties:
