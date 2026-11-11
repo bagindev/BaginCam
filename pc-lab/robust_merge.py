@@ -81,12 +81,34 @@ def align_frame(ref_pyramid, comp, downscale_factor_list, tile_size, search_dist
 
 
 # ---------- main ----------
+# std noise sisa setelah blur binomial-16 2D: sum(k^2) per dimensi = C(32,16)/2^32 ~0.140
+_BLUR_SD_FACTOR = math.comb(32, 16) / 2 ** 32
+_EXPECTED_ABS = math.sqrt(2 / math.pi)                    # E|N(0,1)|
+
+
+def expected_blur_diff(ref_blur, noise_profile, data_scale=1.0):
+    """
+    Selisih |blur(ref) - blur(comp)| yang DIHARAPKAN bila hanya ada noise sensor (tanpa gerakan),
+    dari model DNG NoiseProfile: var(x) = S*x + O  (x ternormalisasi 0..1).
+    data_scale: pengali data -> ternormalisasi (mis. 1/(white-black) untuk Bayer mentah).
+    """
+    S, O = noise_profile
+    x = (ref_blur * data_scale).clamp(min=0)
+    sd = torch.sqrt(S * x + O) / data_scale               # kembali ke satuan data
+    sd_diff = sd * _BLUR_SD_FACTOR * math.sqrt(2)          # selisih 2 frame independen
+    return (sd_diff * _EXPECTED_ABS).sum(0)                # dijumlah atas plane (seperti color_difference)
+
+
 def align_and_robust_merge(images, ref_idx=0, noise_reduction=13, tile_size=16, search_dist=2,
-                           min_layer_res=64, return_weights=False):
+                           min_layer_res=64, return_weights=False,
+                           noise_profile=None, data_scale=1.0, k_sigma=4.0):
     """
     images: (N,C,H,W) float. C=1 -> Bayer RGGB, C=3 -> linear RGB.
     noise_reduction: 1..23 (lebih tinggi = merge lebih agresif, lebih sedikit penolakan)
                      None/0 -> rata-rata biasa (robustness off)
+    noise_profile: (S, O) dari tag DNG NoiseProfile -> ambang penolakan PER PIKSEL =
+                   k_sigma x selisih yang diharapkan dari noise sensor. Menggantikan estimasi global
+                   |ref - blur(ref)| (yang ikut menghitung tekstur). noise_reduction lalu diabaikan.
     """
     N, C, H, W = images.shape
     bayer = C == 1
@@ -101,6 +123,10 @@ def align_and_robust_merge(images, ref_idx=0, noise_reduction=13, tile_size=16, 
     ref_blur = blur(ref_p)
     # estimasi noise: rata-rata selisih antara referensi dan versi blur-nya
     noise_sd = color_difference(ref_p, ref_blur).mean()
+    max_diff_map = None
+    if noise_profile is not None:
+        max_diff_map = k_sigma * expected_blur_diff(ref_blur, noise_profile, data_scale)
+        robustness = 1.0  # pastikan jalur robust aktif
 
     acc = ref_p.clone() / N
     weights = []
@@ -111,7 +137,7 @@ def align_and_robust_merge(images, ref_idx=0, noise_reduction=13, tile_size=16, 
         comp_p = to_planes(aligned, bayer)
         if robustness > 0:
             diff = color_difference(ref_blur, blur(comp_p))
-            max_diff = noise_sd / robustness
+            max_diff = max_diff_map if max_diff_map is not None else noise_sd / robustness
             w = (1 - diff / max_diff).clamp(0, 1)
         else:
             w = torch.ones(ref_p.shape[1:])

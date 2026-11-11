@@ -73,6 +73,8 @@ def proraw_meta(path):
         # ColorMatrix2 = D65 (illuminant 21) jika ada, jika tidak ColorMatrix1
         cm = tg("ColorMatrix2") or tg("ColorMatrix1")
         meta["cm"] = _rat(cm.value).reshape(3, 3)
+        npf = tg("NoiseProfile")
+        meta["noise_profile"] = tuple(float(v) for v in npf.value[:2]) if npf else None
         pg = tg("ProfileGainTableMap")
         meta["pgtm"] = parse_pgtm(bytes(pg.value)) if pg else None
     return meta
@@ -206,6 +208,8 @@ def main():
     ap.add_argument("--merge", choices=["robust", "simple"], default="robust")
     ap.add_argument("--nr", type=float, default=18,
                     help="noise reduction 1..23 (robust merge). Default 18 (hasil uji ProRAW iPhone, sesi 3)")
+    ap.add_argument("--k", type=float, default=0,
+                    help="robust merge pakai NoiseProfile DNG, ambang k x noise (mis. 4). 0 = pakai --nr")
     ap.add_argument("--no-local-tm", action="store_true", help="ProRAW: jangan pakai ProfileGainTableMap")
     args = ap.parse_args()
 
@@ -229,8 +233,10 @@ def main():
     if args.merge == "robust":
         merged, wts, nsd = rm.align_and_robust_merge(images, ref_idx=args.ref, noise_reduction=args.nr,
                                                      tile_size=args.tile, search_dist=args.search,
-                                                     return_weights=True)
-        print(f"robust merge nr={args.nr:g}: bobot rata-rata per frame {[round(w, 2) for w in wts]}")
+                                                     return_weights=True,
+                                                     noise_profile=(meta or {}).get("noise_profile") if args.k else None,
+                                                     k_sigma=args.k or 4.0)
+        print(f"robust merge nr={args.nr:g} k={args.k:g}: bobot rata-rata per frame {[round(w, 2) for w in wts]}")
     else:
         merged = align.align_and_merge(images, ref_idx=args.ref, tile_size=args.tile,
                                        search_dist=args.search)
@@ -248,7 +254,7 @@ def main():
         mer16 = render_linear(merged.numpy(), args.ev)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    name = f"{args.folder.name}_{args.merge}" + (f"-nr{args.nr:g}" if args.merge == "robust" else "")
+    name = f"{args.folder.name}_{args.merge}" + (f"-k{args.k:g}" if args.k else f"-nr{args.nr:g}" if args.merge == "robust" else "")
     tifffile.imwrite(args.out / f"{name}_merged_16bit.tiff", mer16)
     iio.imwrite(args.out / f"{name}_ref.jpg", to8(ref16), quality=92)
     iio.imwrite(args.out / f"{name}_merged.jpg", to8(mer16), quality=92)

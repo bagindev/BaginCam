@@ -34,7 +34,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("folder", type=Path)
     ap.add_argument("--ev", type=float, default=0.0)
-    ap.add_argument("--nr", type=float, default=13)
+    ap.add_argument("--nr", type=float, default=18)
+    ap.add_argument("--k", type=float, default=0, help="pakai NoiseProfile DNG dengan ambang k x noise")
     ap.add_argument("--size", type=int, default=320, help="ukuran crop (piksel output)")
     ap.add_argument("--max-frames", type=int, default=0)
     ap.add_argument("--spots", default="0.5,0.5;0.62,0.40;0.30,0.55",
@@ -46,7 +47,9 @@ def main():
         paths = paths[: args.max_frames]
     images, meta = bm.load_proraw(paths)
     simple = bm.align.align_and_merge(images, ref_idx=0)
-    robust, wts, _ = rm.align_and_robust_merge(images, ref_idx=0, noise_reduction=args.nr, return_weights=True)
+    robust, wts, _ = rm.align_and_robust_merge(images, ref_idx=0, noise_reduction=args.nr, return_weights=True,
+                                              noise_profile=meta.get("noise_profile") if args.k else None,
+                                              k_sigma=args.k or 4.0)
 
     renders = [bm.render_proraw(x, meta, args.ev) for x in (images[0].numpy(), simple.numpy(), robust.numpy())]
     h, w = renders[0].shape[:2]
@@ -66,7 +69,7 @@ def main():
         rows.append(np.full((8, rows[-1].shape[1], 3), 255, np.uint8))
     grid = np.kron(np.concatenate(rows[:-1], 0), np.ones((2, 2, 1), np.uint8))
 
-    out = bm.ROOT / "data" / "output" / f"{args.folder.name}_3way_ev{args.ev:+g}_nr{args.nr:g}.jpg"
+    out = bm.ROOT / "data" / "output" / f"{args.folder.name}_3way_ev{args.ev:+g}_{f"k{args.k:g}" if args.k else f"nr{args.nr:g}"}.jpg"
     iio.imwrite(out, grid, quality=92)
     print(f"{len(paths)} frame, ev {args.ev:+g}, nr {args.nr:g} | kolom: tunggal | simple | robust")
     print("bobot robust rata-rata per frame:", [round(x, 2) for x in wts])
