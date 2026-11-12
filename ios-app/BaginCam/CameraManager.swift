@@ -315,6 +315,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var audioInput: AVCaptureDeviceInput?
     private var inVideo = false                 // sessionQueue
     private var fpsApplied = 30                 // sessionQueue
+    private var shutter180Warned = false        // sessionQueue
     private var videoSnap = VideoSnap()         // sessionQueue: pengaturan video terakhir
     private var recorder: VideoRecorder?        // videoQueue
     private var previewLog = false              // videoQueue: preview Apple Log -> Rec.709
@@ -1034,6 +1035,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func enterVideo() {
         guard !inVideo else { applyVideoFormat(); return }
         inVideo = true
+        shutter180Warned = false
         session.beginConfiguration()
         if session.outputs.contains(photoOutput) { session.removeOutput(photoOutput) }
         session.automaticallyConfiguresCaptureDeviceForWideColor = false
@@ -1076,6 +1078,11 @@ final class CameraManager: NSObject, ObservableObject {
 
     private static let tenBitFmt: FourCharCode = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
 
+    /// fps harus masuk salah satu rentang format, kalau tidak AVFoundation melempar NSException
+    private static func supportsFps(_ f: AVCaptureDevice.Format, _ fps: Int) -> Bool {
+        f.videoSupportedFrameRateRanges.contains { Double(fps) >= $0.minFrameRate - 0.01 && Double(fps) <= $0.maxFrameRate + 0.01 }
+    }
+
     private func maxFps(_ f: AVCaptureDevice.Format) -> Double {
         f.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
     }
@@ -1087,7 +1094,7 @@ final class CameraManager: NSObject, ObservableObject {
         let c = d.formats.filter { f in
             let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
             guard dim.width == want.w, dim.height == want.h else { return false }
-            guard maxFps(f) >= Double(fps) - 0.01, f.supportedColorSpaces.contains(color.avSpace) else { return false }
+            guard Self.supportsFps(f, fps), f.supportedColorSpaces.contains(color.avSpace) else { return false }
             let sub = CMFormatDescriptionGetMediaSubType(f.formatDescription)
             return color.tenBit ? sub == Self.tenBitFmt
                 : (sub == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
@@ -1137,9 +1144,13 @@ final class CameraManager: NSObject, ObservableObject {
         if (try? d.lockForConfiguration()) != nil {
             d.activeFormat = fmt
             if fmt.supportedColorSpaces.contains(color.avSpace) { d.activeColorSpace = color.avSpace }
-            let dur = CMTime(value: 1, timescale: CMTimeScale(fps))
-            d.activeVideoMinFrameDuration = dur
-            d.activeVideoMaxFrameDuration = dur
+            if Self.supportsFps(fmt, fps) {
+                let dur = CMTime(value: 1, timescale: CMTimeScale(fps))
+                d.activeVideoMinFrameDuration = dur
+                d.activeVideoMaxFrameDuration = dur
+            } else {
+                Log.camera.error("VIDEO: format tidak mendukung \(fps, privacy: .public) fps, pakai default")
+            }
             let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
             d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             d.unlockForConfiguration()
@@ -1196,7 +1207,7 @@ final class CameraManager: NSObject, ObservableObject {
         var fps = fpsApplied
         if s.fps == .auto && s.timelapse <= 1 {
             let want = gain < 1.5 ? 60 : 30
-            if want != fpsApplied, maxFps(d.activeFormat) >= Double(want), (try? d.lockForConfiguration()) != nil {
+            if want != fpsApplied, Self.supportsFps(d.activeFormat, want), (try? d.lockForConfiguration()) != nil {
                 let dur = CMTime(value: 1, timescale: CMTimeScale(want))
                 d.activeVideoMinFrameDuration = dur
                 d.activeVideoMaxFrameDuration = dur
@@ -1309,10 +1320,21 @@ final class CameraManager: NSObject, ObservableObject {
         }
         guard shutter180, !manualExposure else { return }
         sessionQueue.async {
-            guard self.inVideo, let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
+            guard self.inVideo, let d = self.device else { return }
+            // v0.11.1: kamera virtual (lensa Auto) tidak mendukung eksposur custom -> dulu crash (NSException)
+            guard d.isExposureModeSupported(.custom) else {
+                if !self.shutter180Warned {
+                    self.shutter180Warned = true
+                    Log.camera.info("VIDEO: 180° dilewati, \(d.localizedName, privacy: .public) tidak dukung eksposur custom")
+                    self.setStatus("180° aktif hanya bila lensa dikunci (UW/Utama/Tele)")
+                }
+                return
+            }
+            guard (try? d.lockForConfiguration()) != nil else { return }
             defer { d.unlockForConfiguration() }
             let fmt = d.activeFormat
-            let t = min(max(1.0 / (2 * Double(self.fpsApplied)), fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
+            let fps = max(self.fpsApplied, 1)
+            let t = min(max(1.0 / (2 * Double(fps)), fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
             var iso: Float
             if d.exposureMode != .custom {
                 let cur = d.exposureDuration.seconds
@@ -1323,8 +1345,10 @@ final class CameraManager: NSObject, ObservableObject {
                 iso = d.iso * pow(2, -max(-0.33, min(0.33, off)))
             }
             iso = min(max(iso, fmt.minISO), fmt.maxISO)
-            guard iso.isFinite else { return }
-            d.setExposureModeCustom(duration: CMTime(seconds: t, preferredTimescale: 1_000_000_000), iso: iso, completionHandler: nil)
+            guard iso.isFinite, t.isFinite, t > 0 else { return }
+            let dur = CMTimeClampToRange(CMTime(seconds: t, preferredTimescale: 1_000_000_000),
+                                         range: CMTimeRange(start: fmt.minExposureDuration, end: fmt.maxExposureDuration))
+            d.setExposureModeCustom(duration: dur, iso: iso, completionHandler: nil)
         }
     }
 

@@ -682,3 +682,17 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Sesi: photo output dilepas saat VIDEO (format video bebas), mikrofon + audio output dipasang; keluar VIDEO =
   kembali preset .photo. Zoom video dibatasi zoom hardware (crop preview tidak ikut terekam).
 - Build v0.11.0: run 43246034454 sukses -> `data/builds/BaginCam-v0.11.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 27 — 2026-11-13 · v0.11.1 (perbaikan crash VIDEO)
+- Keluhan: "eror" — v0.11.0 crash saat masuk VIDEO dan langsung crash lagi tiap dibuka (mode VIDEO tersimpan).
+- Crash report: `data/crash/20261113/BaginCam-2026-11-13-032252.ips`, `...-032254.ips`
+  - EXC_CRASH SIGABRT, NSException dari `-[AVCaptureFigVideoDevice setExposureModeCustomWithDuration:ISO:]`
+    dipanggil `CameraManager.videoReadout()` (auto-ISO shutter 180°).
+  - Penyebab: lensa Auto di VIDEO = kamera virtual (triple camera) yang tidak mendukung eksposur custom.
+- Perbaikan (CameraManager.swift):
+  - `videoReadout`: cek `isExposureModeSupported(.custom)`; bila tidak, 180° dilewati + status
+    "180° aktif hanya bila lensa dikunci (UW/Utama/Tele)" (sekali per masuk VIDEO).
+  - Durasi di-clamp dengan `CMTimeClampToRange` ke min/max format; fps minimal 1.
+  - `supportsFps()` baru: fps harus masuk rentang format sebelum set `activeVideoMin/MaxFrameDuration`
+    (dipakai di pickVideoFormat, applyVideoFormat, FPS Auto saat mulai rekam).
+- Versi 0.11.1 (build 25).
