@@ -659,3 +659,26 @@ Sampel `data/bursts/dcim-1112-v0100/` (IMG_6929-6937), log `syslog_20261112-1929
 - Fix v0.10.2: masukan nightPlan disaring (shutter/ISO/minISO NaN atau 0 -> nilai aman, frame dari n terbatas);
   nilai live (ISO, shutter, fokus, suhu WB) disaring isFinite di sumbernya (updateReadout).
 - Build v0.10.2: run 43224020401 sukses -> `data/builds/BaginCam-v0.10.2-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 26: v0.11.0 - mode VIDEO ala Blackmagic Camera + GCam
+
+Permintaan: fitur video seperti Blackmagic Camera, tambah H.265, campur fitur GCam, LUT bisa dibakar ke video.
+Sela sesi: C: penuh (0,4 GB) -> gcam-taoyao (83,6 GB) & OpenColorLab (9,4 GB) dipindah ke D:\project (junction di
+lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\project.
+- Mode strip: MALAM · FOTO · **VIDEO** · PRO. VIDEO = kamera virtual (lensa otomatis / kunci, flip depan).
+- Perekam: `VideoRecorder.swift` (AVAssetWriter, input pixel buffer + audio AAC), file `Documents/Videos/BaginCam_<waktu>_<res><fps>_<codec>_<warna>.mov`,
+  simpan ke Foto / Files (app) / keduanya.
+- Pilihan (chip atas + Pengaturan > Video, tersimpan):
+  - resolusi 4K / 1080p; fps Auto (GCam: 60 terang / 30 gelap, saat mulai rekam), 24/25/30/50/60,
+    slow-mo 120/240 (diputar 24/30 fps, waktu diregangkan, tanpa suara), time-lapse 5/10/30/60/120x (diputar 30 fps).
+  - codec HEVC (H.265) / H.264 / ProRes 422 HQ / 422 / LT / Proxy (H.264 + 10-bit -> HEVC).
+  - warna Rec.709 / HDR HLG / Apple Log (format kamera 10-bit x420, activeColorSpace); preview Log dikonversi ke
+    Rec.709 dengan cube 33^3 dari kurva Apple Log + matriks 2020->709 + tone map.
+  - stabilisasi Mati / Standard / Cinematic / Cinematic Extended; shutter 180° otomatis (shutter 1/(2 fps), ISO
+    mengikuti exposureTargetOffset, maks 1/3 EV per 0,25 s); laci Pro tetap untuk ISO/shutter/WB/fokus manual.
+  - LUT: di preview, opsional dibakar ke file (render CI -> BGRA -> Rec.709; dari Log dikonversi dulu).
+  - frame guide 2.39 / 1.85 / 16:9 / 4:3 / 1:1 / 9:16 (ikut orientasi HP), meter level mikrofon (dB), senter,
+    timer rekam, sisa menit (dari ruang kosong & bitrate).
+- Sesi: photo output dilepas saat VIDEO (format video bebas), mikrofon + audio output dipasang; keluar VIDEO =
+  kembali preset .photo. Zoom video dibatasi zoom hardware (crop preview tidak ikut terekam).
+- Build v0.11.0: run 43246034454 sukses -> `data/builds/BaginCam-v0.11.0-unsigned.ipa`. Belum diuji di HP.
