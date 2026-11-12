@@ -40,6 +40,60 @@ class SRVGGNetCompact(nn.Module):
         return out + F.interpolate(x, scale_factor=self.upscale, mode="nearest")
 
 
+class ResidualDenseBlock(nn.Module):
+    """basicsr/archs/rrdbnet_arch.py"""
+
+    def __init__(self, num_feat=64, num_grow_ch=32):
+        super().__init__()
+        self.conv1 = nn.Conv2d(num_feat, num_grow_ch, 3, 1, 1)
+        self.conv2 = nn.Conv2d(num_feat + num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv3 = nn.Conv2d(num_feat + 2 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv4 = nn.Conv2d(num_feat + 3 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv5 = nn.Conv2d(num_feat + 4 * num_grow_ch, num_feat, 3, 1, 1)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        return x5 * 0.2 + x
+
+
+class RRDB(nn.Module):
+    def __init__(self, num_feat, num_grow_ch=32):
+        super().__init__()
+        self.rdb1 = ResidualDenseBlock(num_feat, num_grow_ch)
+        self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
+        self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
+
+    def forward(self, x):
+        return self.rdb3(self.rdb2(self.rdb1(x))) * 0.2 + x
+
+
+class RRDBNet(nn.Module):
+    """RealESRGAN_x4plus: RRDBNet num_block=23, scale 4 (identik dengan basicsr)"""
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32):
+        super().__init__()
+        self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
+        self.body = nn.Sequential(*[RRDB(num_feat, num_grow_ch) for _ in range(num_block)])
+        self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+    def forward(self, x):
+        feat = self.conv_first(x)
+        feat = feat + self.conv_body(self.body(feat))
+        feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode="nearest")))
+        feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode="nearest")))
+        return self.conv_last(self.lrelu(self.conv_hr(feat)))
+
+
 class Wrapper(nn.Module):
     """input 0..1 (ImageType scale 1/255) -> output 0..255 untuk ImageType keluaran"""
 
@@ -51,13 +105,13 @@ class Wrapper(nn.Module):
         return torch.clamp(self.net(x) * 255.0, 0.0, 255.0)
 
 
-def load(path):
+def load(path, arch="compact"):
     sd = torch.load(path, map_location="cpu", weights_only=True)
     for key in ("params_ema", "params"):
         if isinstance(sd, dict) and key in sd:
             sd = sd[key]
             break
-    net = SRVGGNetCompact()
+    net = RRDBNet() if arch == "rrdb" else SRVGGNetCompact()
     net.load_state_dict(sd, strict=True)
     return net.eval()
 
@@ -65,11 +119,13 @@ def load(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("weights")
+    ap.add_argument("--arch", choices=["compact", "rrdb"], default="compact",
+                    help="compact = realesr-general-x4v3 (Cepat), rrdb = RealESRGAN_x4plus (Detail)")
     ap.add_argument("--check", action="store_true", help="hanya cek load + forward (tanpa coremltools)")
     ap.add_argument("--out", default="BaginCamSR_x4_256.mlpackage")
     args = ap.parse_args()
 
-    net = load(args.weights)
+    net = load(args.weights, args.arch)
     n_params = sum(p.numel() for p in net.parameters())
     x = torch.rand(1, 3, 64, 64)
     with torch.no_grad():
@@ -91,7 +147,8 @@ def main():
         compute_precision=ct.precision.FLOAT16,
         minimum_deployment_target=ct.target.iOS17,
     )
-    mlmodel.short_description = "BaginCam AI Zoom: Real-ESRGAN realesr-general-x4v3 (BSD-3-Clause), tile 256 -> 1024"
+    src = "RealESRGAN_x4plus" if args.arch == "rrdb" else "realesr-general-x4v3"
+    mlmodel.short_description = f"BaginCam AI Zoom: Real-ESRGAN {src} (BSD-3-Clause), tile 256 -> 1024"
     mlmodel.author = "Real-ESRGAN (Xintao Wang et al.), converted for BaginCam"
     mlmodel.license = "BSD-3-Clause"
     mlmodel.save(args.out)

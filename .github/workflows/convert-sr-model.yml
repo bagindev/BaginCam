@@ -1,7 +1,9 @@
 name: Convert SR model (Core ML)
 
-# Konversi Real-ESRGAN realesr-general-x4v3 -> Core ML (.mlpackage) lalu compile -> .mlmodelc.
-# Dijalankan manual. Hasil .mlmodelc di-commit ke ios-app/BaginCam/Models/.
+# Konversi Real-ESRGAN -> Core ML (.mlpackage) lalu compile -> .mlmodelc.
+#   Cepat : realesr-general-x4v3 (SRVGGNetCompact, 1.2 M param)
+#   Detail: RealESRGAN_x4plus    (RRDBNet, 16.7 M param)
+# Hasil .mlmodelc di-commit ke ios-app/BaginCam/Models/.
 
 on:
   workflow_dispatch:
@@ -13,7 +15,7 @@ on:
 jobs:
   convert:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -26,28 +28,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install "torch==2.5.1" "coremltools==8.3.0" "numpy==1.26.4" pillow
 
-      - name: Download weights (Real-ESRGAN v0.2.5.0, BSD-3-Clause)
+      - name: Download weights (Real-ESRGAN, BSD-3-Clause) + cek SHA-256
         run: |
           curl -fsSL -o realesr-general-x4v3.pth \
             https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
-          shasum -a 256 realesr-general-x4v3.pth
-          echo "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  realesr-general-x4v3.pth" | shasum -a 256 -c
+          curl -fsSL -o RealESRGAN_x4plus.pth \
+            https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+          cat > sums.txt <<'EOF'
+          8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  realesr-general-x4v3.pth
+          4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1  RealESRGAN_x4plus.pth
+          EOF
+          sed -i '' 's/^ *//' sums.txt
+          shasum -a 256 -c sums.txt
 
-      - name: Convert + verify
-        run: python tools/sr_model/convert_sr.py realesr-general-x4v3.pth --out BaginCamSR_x4_256.mlpackage
+      - name: Convert + verify (Cepat)
+        run: python tools/sr_model/convert_sr.py realesr-general-x4v3.pth --arch compact --out BaginCamSR_x4_256.mlpackage
+
+      - name: Convert + verify (Detail)
+        run: python tools/sr_model/convert_sr.py RealESRGAN_x4plus.pth --arch rrdb --out BaginCamSRplus_x4_256.mlpackage
 
       - name: Compile mlmodelc
         run: |
           mkdir -p out
           xcrun coremlcompiler compile BaginCamSR_x4_256.mlpackage out/
-          du -sh out/BaginCamSR_x4_256.mlmodelc
-          find out -type f | head -20
+          xcrun coremlcompiler compile BaginCamSRplus_x4_256.mlpackage out/
+          du -sh out/*
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: BaginCamSR-coreml
-          path: |
-            out/BaginCamSR_x4_256.mlmodelc
-            BaginCamSR_x4_256.mlpackage
+          path: out/
           retention-days: 30
