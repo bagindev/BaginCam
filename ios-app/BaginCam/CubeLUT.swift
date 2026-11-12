@@ -59,6 +59,8 @@ final class LUTLibrary: ObservableObject {
     @Published private(set) var items: [Item] = []
     @Published var selected: Item?
     @Published private(set) var filter: CIFilter?
+    /// data LUT terpilih (untuk dibakar ke foto)
+    private(set) var current: CubeLUT?
 
     static var importDir: URL {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -86,13 +88,13 @@ final class LUTLibrary: ObservableObject {
 
     func select(_ item: Item?) {
         selected = item
-        guard let item else { filter = nil; return }
+        guard let item else { filter = nil; current = nil; return }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let lut = try CubeLUT.load(url: item.url)
                 let f = lut.makeFilter()
                 DispatchQueue.main.async {
-                    if self.selected == item { self.filter = f }
+                    if self.selected == item { self.current = lut; self.filter = f }
                 }
                 Log.lut.info("LUT dimuat: \(lut.name, privacy: .public) size \(lut.size, privacy: .public)")
             } catch {

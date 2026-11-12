@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreML
 import CoreVideo
 import Foundation
@@ -11,7 +12,12 @@ final class SRUpscaler {
     static let scale = 4
     static let pad = 16
 
-    private let model: MLModel
+    private var model: MLModel
+    private let url: URL
+    /// urutan cadangan compute unit bila prediksi gagal (Neural Engine -> GPU -> CPU)
+    private var fallbacks: [MLComputeUnits] = [.cpuAndGPU, .cpuOnly]
+    /// pesan error terakhir (ditampilkan di status app)
+    private(set) var lastError: String?
 
     init?() {
         guard let url = Bundle.main.url(forResource: Self.modelName, withExtension: "mlmodelc", subdirectory: "Models")
@@ -19,14 +25,47 @@ final class SRUpscaler {
             Log.sr.error("Model SR tidak ada di bundle")
             return nil
         }
+        self.url = url
+        guard let m = Self.load(url, .all) else { return nil }
+        model = m
+    }
+
+    private static func load(_ url: URL, _ units: MLComputeUnits) -> MLModel? {
         let cfg = MLModelConfiguration()
-        cfg.computeUnits = .all
+        cfg.computeUnits = units
         do {
-            model = try MLModel(contentsOf: url, configuration: cfg)
-            Log.sr.info("Model SR dimuat")
+            let m = try MLModel(contentsOf: url, configuration: cfg)
+            let inDesc = m.modelDescription.inputDescriptionsByName.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
+            let outDesc = m.modelDescription.outputDescriptionsByName.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
+            Log.sr.info("Model SR dimuat (units \(units.rawValue, privacy: .public)) in[\(inDesc, privacy: .public)] out[\(outDesc, privacy: .public)]")
+            return m
         } catch {
-            Log.sr.error("Muat model SR gagal: \(String(describing: error), privacy: .public)")
+            Log.sr.error("Muat model SR gagal (units \(units.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)")
             return nil
+        }
+    }
+
+    /// Prediksi 1 tile; bila gagal, ganti compute unit dan coba lagi.
+    private func predict(_ input: CVPixelBuffer) -> CVPixelBuffer? {
+        while true {
+            do {
+                let provider = try MLDictionaryFeatureProvider(dictionary: ["input": MLFeatureValue(pixelBuffer: input)])
+                let result = try model.prediction(from: provider)
+                guard let fv = result.featureValue(for: "output") else {
+                    lastError = "output 'output' tidak ada (\(result.featureNames.sorted()))"
+                    Log.sr.error("\(self.lastError ?? "", privacy: .public)")
+                    return nil
+                }
+                if let pb = fv.imageBufferValue { return pb }
+                lastError = "output bukan gambar (tipe \(fv.type.rawValue))"
+                Log.sr.error("\(self.lastError ?? "", privacy: .public)")
+                return nil
+            } catch {
+                lastError = String(describing: error)
+                Log.sr.error("Prediksi SR gagal: \(self.lastError ?? "", privacy: .public)")
+                guard !fallbacks.isEmpty, let m = Self.load(url, fallbacks.removeFirst()) else { return nil }
+                model = m
+            }
         }
     }
 
@@ -85,11 +124,23 @@ final class SRUpscaler {
                 CVPixelBufferUnlockBaseAddress(inBuf, [])
 
                 // prediksi
-                guard let provider = try? MLDictionaryFeatureProvider(dictionary: ["input": MLFeatureValue(pixelBuffer: inBuf)]),
-                      let result = try? model.prediction(from: provider),
-                      let opb = result.featureValue(for: "output")?.imageBufferValue else {
+                guard var opb = predict(inBuf) else {
                     Log.sr.error("Prediksi tile \(tx, privacy: .public),\(ty, privacy: .public) gagal")
                     return nil
+                }
+                if CVPixelBufferGetWidth(opb) != tile * s || CVPixelBufferGetHeight(opb) != tile * s {
+                    lastError = "ukuran output SR \(CVPixelBufferGetWidth(opb))x\(CVPixelBufferGetHeight(opb)) tidak sesuai"
+                    Log.sr.error("\(self.lastError ?? "", privacy: .public)")
+                    return nil
+                }
+                if CVPixelBufferGetPixelFormatType(opb) != kCVPixelFormatType_32BGRA {
+                    // format lain (mis. ARGB/RGBA) -> konversi ke BGRA lewat Core Image
+                    guard let conv = toBGRA(opb) else {
+                        lastError = "format output SR \(CVPixelBufferGetPixelFormatType(opb)) gagal dikonversi"
+                        Log.sr.error("\(self.lastError ?? "", privacy: .public)")
+                        return nil
+                    }
+                    opb = conv
                 }
                 if done == 0 {
                     let fmt = CVPixelBufferGetPixelFormatType(opb)
@@ -114,6 +165,20 @@ final class SRUpscaler {
         let dt = CFAbsoluteTimeGetCurrent() - t0
         Log.sr.info("SR \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public): \(nx * ny, privacy: .public) tile, \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return octx.makeImage()
+    }
+
+    private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
+    private var bgraBuffer: CVPixelBuffer?
+
+    private func toBGRA(_ pb: CVPixelBuffer) -> CVPixelBuffer? {
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+        if bgraBuffer == nil {
+            let attrs: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()]
+            CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &bgraBuffer)
+        }
+        guard let out = bgraBuffer else { return nil }
+        ciContext.render(CIImage(cvPixelBuffer: pb), to: out)
+        return out
     }
 
     /// Resize kualitas tinggi supaya sisi panjang = longSide.

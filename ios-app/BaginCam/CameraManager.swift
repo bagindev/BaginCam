@@ -34,14 +34,16 @@ final class CameraManager: NSObject, ObservableObject {
         case ultraWide = "0.5x"
         case wide = "1x"
         case tele = "5x"
+        case front = "Depan"
         var id: String { rawValue }
         var deviceType: AVCaptureDevice.DeviceType {
             switch self {
             case .ultraWide: return .builtInUltraWideCamera
-            case .wide: return .builtInWideAngleCamera
+            case .wide, .front: return .builtInWideAngleCamera
             case .tele: return .builtInTelephotoCamera
             }
         }
+        var position: AVCaptureDevice.Position { self == .front ? .front : .back }
     }
 
     // MARK: state untuk UI
@@ -66,6 +68,10 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var use48MP = false                // HEIF / ProRAW resolusi penuh
     @Published var saveFrames = false             // HDR+: simpan juga frame mentah
     @Published var hdrNoiseReduction: Double = 18 // HDR+: 1..23
+    @Published var outputFormat: PhotoFormat = .heif  // format simpan HDR+
+    @Published var bakeLUT = false                // bakar LUT aktif ke HEIF/JPEG (HDR+, HEIF, AI Zoom)
+    /// LUT yang sedang dipilih (di-set dari UI); dipakai bila bakeLUT aktif
+    var captureLUT: CubeLUT?
     @Published private(set) var isCapturing = false
     @Published private(set) var status = "Menyiapkan kamera..."
     @Published private(set) var supportsBayer = false
@@ -98,6 +104,9 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstSaveFrames = false
     private var burstNR: Double = 18
     private var burstUse48 = false
+    private var burstFormat: PhotoFormat = .heif
+    private var burstLUT: CubeLUT?
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var savedCount = 0
     private var hdrFrames: [BayerFrame] = []
     private var hdrRef: AVCapturePhoto?
@@ -145,7 +154,7 @@ final class CameraManager: NSObject, ObservableObject {
         if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
         session.commitConfiguration()
 
-        let lenses = Lens.allCases.filter { AVCaptureDevice.default($0.deviceType, for: .video, position: .back) != nil }
+        let lenses = Lens.allCases.filter { AVCaptureDevice.default($0.deviceType, for: .video, position: $0.position) != nil }
         DispatchQueue.main.async { self.availableLenses = lenses }
         switchDevice(to: lenses.contains(lens) ? lens : (lenses.first ?? .wide), mode: mode)
     }
@@ -161,7 +170,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func switchDevice(to l: Lens, mode: Mode) {
-        guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: .back),
+        guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: l.position),
               let input = try? AVCaptureDeviceInput(device: d) else {
             setStatus("Lensa \(l.rawValue) tidak tersedia")
             return
@@ -176,8 +185,15 @@ final class CameraManager: NSObject, ObservableObject {
             session.addInput(cur)
         }
         for conn in [videoOutput.connection(with: .video), photoOutput.connection(with: .video)] {
-            if let c = conn, c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
+            guard let c = conn else { continue }
+            if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
+            // kamera depan: preview & foto dicerminkan (seperti kamera bawaan)
+            if c.isVideoMirroringSupported {
+                c.automaticallyAdjustsVideoMirroring = false
+                c.isVideoMirrored = l == .front
+            }
         }
+        rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: d, previewLayer: nil)
         // resolusi foto maksimum lensa ini (48MP di lensa utama / ultra wide)
         if let maxDims = maxDimensions(of: d) { photoOutput.maxPhotoDimensions = maxDims }
         photoOutput.maxPhotoQualityPrioritization = .quality
@@ -329,6 +345,7 @@ final class CameraManager: NSObject, ObservableObject {
         let m = mode
         let count = m == .aiZoom ? 1 : max(m == .hdrplus ? 2 : 1, burstCount)
         let auto = isAuto, z = zoom, keep = saveFrames, nr = hdrNoiseReduction, big = use48MP
+        let fmt = outputFormat, lut = bakeLUT ? captureLUT : nil
         sessionQueue.async {
             self.burstAuto = auto
             self.burstMode = m
@@ -336,6 +353,13 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstSaveFrames = keep
             self.burstNR = nr
             self.burstUse48 = big
+            self.burstFormat = fmt
+            self.burstLUT = lut
+            // orientasi foto mengikuti cara HP dipegang (potret/lanskap)
+            if let rc = self.rotationCoordinator, let c = self.photoOutput.connection(with: .video) {
+                let a = rc.videoRotationAngleForHorizonLevelCapture
+                if c.isVideoRotationAngleSupported(a) { c.videoRotationAngle = a }
+            }
             self.burstRemaining = count
             self.burstIndex = 0
             self.savedCount = 0
@@ -427,22 +451,48 @@ final class CameraManager: NSObject, ObservableObject {
             finish("HDR+ gagal saat merge (lihat log)")
             return
         }
-        var data: Data?
-        if let outPB = HDRPlusMerger.makePixelBuffer(from: r.buffer, width: r.width, height: r.height, like: refPB) {
-            data = ref.fileDataRepresentation(with: RawReplacer(buffer: outPB))
-        }
-        if data == nil {
-            Log.hdr.info("Fallback: tulis hasil ke buffer RAW referensi")
-            HDRPlusMerger.overwrite(refPB, with: r.buffer, width: r.width, height: r.height)
-            data = ref.fileDataRepresentation()
-        }
-        guard let dng = data else {
-            finish("HDR+ gagal menulis DNG")
+        // tulis DNG sendiri (replacementRawPixelBuffer diabaikan iOS untuk Bayer - bug v0.4.0)
+        guard let refDNG = ref.fileDataRepresentation() else {
+            finish("HDR+ gagal: DNG referensi kosong")
             return
         }
-        save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir)
+        let px = r.buffer.contents().bindMemory(to: UInt16.self, capacity: r.width * r.height)
+        let dng: Data
+        do {
+            dng = try DNGWriter.rewrite(original: refDNG, pixels: px, width: r.width, height: r.height,
+                                        software: "BaginCam HDR+ \(frames.count) frame")
+        } catch {
+            Log.hdr.error("Tulis DNG gagal: \(String(describing: error), privacy: .public)")
+            finish("HDR+ gagal menulis DNG: \(error)")
+            return
+        }
+        let fmt = burstFormat, lut = burstLUT
+        var saved: [String] = []
+        if fmt.wantsDNG {
+            save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir)
+            saved.append("DNG")
+        }
+        if fmt.wantsHEIF || fmt.wantsJPEG {
+            setStatus("HDR+: mengembangkan RAW...")
+            var rendered = false
+            if let img = RawDeveloper.develop(dng: dng) {
+                let final = RawDeveloper.applyLUT(img, lut)
+                if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
+                    let ext = fmt.wantsJPEG ? "jpg" : "heic"
+                    save(data, fileName: "HDRPLUS_\(frames.count)f\(lut != nil ? "_LUT" : "").\(ext)", dir: dir)
+                    saved.append(ext.uppercased())
+                    rendered = true
+                }
+            }
+            if !rendered && !fmt.wantsDNG {
+                // render gagal -> jangan hilangkan hasil: simpan DNG
+                save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir)
+                saved.append("DNG (render HEIF/JPEG gagal)")
+            }
+        }
         let w = r.meanWeights.isEmpty ? 0 : r.meanWeights.reduce(0, +) / Float(r.meanWeights.count)
-        finish(String(format: "HDR+ %d frame %.1f s, bobot %.2f -> DNG", frames.count, r.seconds, w))
+        finish(String(format: "HDR+ %d frame %.1f s, bobot %.2f -> %@", frames.count, r.seconds, w,
+                      saved.joined(separator: " + ")))
     }
 
     // MARK: AI Zoom
@@ -461,6 +511,7 @@ final class CameraManager: NSObject, ObservableObject {
         let target = 4032
         var result = crop
         var usedSR = false
+        var srError: String?
         if max(cw, ch) < target {
             if !upscalerTried { upscaler = SRUpscaler(); upscalerTried = true }
             if let sr = upscaler {
@@ -470,11 +521,18 @@ final class CameraManager: NSObject, ObservableObject {
                 }) {
                     result = SRUpscaler.resize(up, longSide: min(max(cw, ch) * SRUpscaler.scale, target)) ?? up
                     usedSR = true
+                } else {
+                    srError = sr.lastError ?? "prediksi gagal"
                 }
             } else {
+                srError = "model tidak bisa dimuat"
+            }
+            if !usedSR {
+                // jangan simpan potongan kecil: perbesar biasa ke 12MP
                 result = SRUpscaler.resize(crop, longSide: target) ?? crop
             }
         }
+        if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
         // simpan HEIC dengan metadata asli (orientasi, EXIF)
         var props = photo.metadata
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
@@ -493,7 +551,12 @@ final class CameraManager: NSObject, ObservableObject {
         let name = String(format: "AIZOOM_%.1fx%@.heic", Double(z), usedSR ? "_SR" : "")
         save(out as Data, fileName: name, dir: dir)
         Log.sr.info("AI Zoom \(Double(z), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public), crop \(cw, privacy: .public)x\(ch, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), SR \(usedSR, privacy: .public)")
-        finish(String(format: "AI Zoom %.1fx -> %dx%d%@", Double(z), result.width, result.height, usedSR ? " (SR)" : ""))
+        if let srError {
+            Log.sr.error("AI Zoom tanpa SR: \(srError, privacy: .public)")
+            finish(String(format: "AI Zoom %.1fx -> %dx%d (AI gagal: %@)", Double(z), result.width, result.height, srError))
+        } else {
+            finish(String(format: "AI Zoom %.1fx -> %dx%d%@", Double(z), result.width, result.height, usedSR ? " (AI)" : ""))
+        }
     }
 
     // MARK: simpan
@@ -559,7 +622,10 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                 let z = self.burstZoom, dir = self.burstDir
                 self.processQueue.async { self.processAIZoom(photo, zoom: z, dir: dir) }
             default:
-                if let data = photo.fileDataRepresentation() {
+                if var data = photo.fileDataRepresentation() {
+                    if !photo.isRawPhoto, let lut = self.burstLUT, let baked = RawDeveloper.bakeLUT(into: data, lut: lut) {
+                        data = baked
+                    }
                     self.save(data, fileName: String(format: "IMG_%04d.%@", idx, photo.isRawPhoto ? "dng" : "heic"),
                               dir: self.burstDir)
                 }

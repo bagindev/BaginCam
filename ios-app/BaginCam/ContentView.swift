@@ -50,7 +50,7 @@ struct ContentView: View {
                 luts.select(luts.items.first { $0.name.contains("STANDARD") } ?? luts.items.first)
             }
         }
-        .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter }
+        .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
         .onChange(of: cam.zoom) { _, z in renderer.zoom = z }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
@@ -111,7 +111,22 @@ struct ContentView: View {
                 toggleChip("\(cam.maxMP)MP", icon: "square.resize.up", isOn: $cam.use48MP)
             }
             if cam.mode == .hdrplus {
+                Menu {
+                    ForEach(PhotoFormat.allCases) { f in
+                        Button(f.rawValue) { cam.outputFormat = f }
+                    }
+                } label: {
+                    Label(cam.outputFormat.rawValue, systemImage: "photo")
+                        .font(.caption2).lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.white)
+                }
                 toggleChip("+Frame", icon: "square.stack", isOn: $cam.saveFrames)
+            }
+            if cam.mode != .bayer && cam.mode != .proraw && luts.selected != nil
+                && !(cam.mode == .hdrplus && cam.outputFormat == .dng) {
+                toggleChip("LUT", icon: "wand.and.stars", isOn: $cam.bakeLUT)
             }
             Spacer(minLength: 0)
         }
@@ -166,7 +181,9 @@ struct ContentView: View {
         HStack(spacing: 14) {
             ForEach(cam.availableLenses) { l in
                 Button { cam.setLens(l) } label: {
-                    Text(l.rawValue)
+                    Group {
+                        if l == .front { Image(systemName: "person.crop.circle") } else { Text(l.rawValue) }
+                    }
                         .font(.footnote.bold())
                         .frame(width: 44, height: 44)
                         .background(cam.lens == l ? Color.yellow : Color.white.opacity(0.15), in: Circle())
