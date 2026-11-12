@@ -262,7 +262,7 @@ struct ContentView: View {
     private var lockOptions: [CameraManager.Lens?] {
         var o: [CameraManager.Lens?] = [nil]
         for l in [CameraManager.Lens.ultraWide, .wide, .tele] where cam.availableLenses.contains(l) { o.append(l) }
-        if cam.mode == .heif && cam.availableLenses.contains(.front) { o.append(.front) }
+        if (cam.mode == .heif || cam.mode == .hdrplus) && cam.availableLenses.contains(.front) { o.append(.front) }
         return o
     }
 

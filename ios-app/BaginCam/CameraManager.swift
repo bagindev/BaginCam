@@ -21,7 +21,7 @@ final class CameraManager: NSObject, ObservableObject {
         var isBurst: Bool { self != .aiZoom && self != .heif }
         var detail: String {
             switch self {
-            case .hdrplus: return "Burst Bayer RAW -> align + merge di GPU (1 suara shutter), bisa zoom"
+            case .hdrplus: return "Burst Bayer RAW (lensa otomatis / kunci) -> align + merge GPU, 1 suara shutter, bisa zoom"
             case .bayer: return "Burst Bayer RAW (untuk pc-lab)"
             case .proraw: return "Burst Apple ProRAW"
             case .heif: return "Seperti kamera bawaan: zoom 0.5-50x, lensa otomatis / kunci lensa"
@@ -119,7 +119,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var minAutoZoom: CGFloat = 1
 
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
-    static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif }
+    static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = .fast
     @Published var aiStrength: Double = 0.5                  // 0 = pembesaran biasa, 1 = AI penuh
     @Published var textFocus = true                           // AI Zoom: area tulisan pakai AI lebih kuat
@@ -758,7 +758,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             var frames = count
             var delay = m.isBurst ? 0.15 : 0.0
-            if m == .hdrplus && tz > 1.01 {
+            if false && m == .hdrplus && tz > 1.01 {
                 // zoom di FOTO / HDR+: ambil resolusi penuh (zoom hardware 1x), crop + upscale sendiri
                 if let d = self.device, (try? d.lockForConfiguration()) != nil {
                     d.videoZoomFactor = 1
@@ -783,7 +783,7 @@ final class CameraManager: NSObject, ObservableObject {
                 }
                 fotoAI = z / base > 1.05     // ada zoom digital di atas lensa optik
             }
-            if m == .aiZoom || fotoAI {
+            if m == .aiZoom || fotoAI || m == .hdrplus {
                 self.burstZoomed = true
                 // Lensa dipilih iOS (kamera virtual: tele vs crop lensa utama). Untuk memotret, pindah
                 // sementara ke lensa FISIK itu: kamera virtual hanya memberi 12MP & tanpa Bayer RAW
@@ -837,9 +837,17 @@ final class CameraManager: NSObject, ObservableObject {
                 self.burstLensName = lensName
                 let bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 // multi-frame: lensa tele, atau crop >= 3x di lensa utama (48MP tunggal kalah oleh merge 8 frame)
-                self.burstAIMultiFrame = m == .aiZoom && mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
-                self.burstAIFull = !self.burstAIMultiFrame
-                frames = self.burstAIMultiFrame ? 8 : 1
+                if m == .hdrplus {
+                    // HDR+: selalu burst Bayer dari lensa fisik pilihan iOS; zoom hanya bila melewati lensa optik
+                    self.burstAIMultiFrame = true
+                    self.burstZoomed = self.burstCrop > 1.05
+                    self.burstAIFull = false
+                    frames = count
+                } else {
+                    self.burstAIMultiFrame = m == .aiZoom && mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
+                    self.burstAIFull = !self.burstAIMultiFrame
+                    frames = self.burstAIMultiFrame ? 8 : 1
+                }
             }
             self.burstRemaining = frames
             self.burstIndex = 0

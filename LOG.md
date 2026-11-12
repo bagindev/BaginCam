@@ -509,3 +509,16 @@ IMG_6906 AI ZOOM MF8 Detail (`data/bursts/dcim-1112-malam2/`, `data/output/v092_
   bahasa) dijalankan di versi AI & versi asli (MF/Lanczos); AI dipakai hanya bila keyakinan OCR > asli + 0.03,
   selain itu area itu memakai versi asli murni. Log: jumlah area, AI menang, skor ai/asli. Kecerahan develop diukur
   di area zoom (1/crop), target linear 0.26 bila > 0.30.
+
+## 2026-11-12 - Sesi 19: uji v0.9.3 -> v0.9.4 (HDR+ lensa otomatis)
+
+Log `syslog_20261112-180120.txt`:
+- HDR+ 1x 18:00-18:01 (gelap, ISO 800 1/15): **15 frame otomatis**, merge frekuensi **0.69 s** (GPU), NoiseProfile
+  S 0.0012 O 4e-6, black 2112 / range 14268 (14-bit). Develop: baseline +2.2 EV, kecerahan diturunkan -1.2 EV ->
+  hasil wajar (kecerahan 164, clip 0 %).
+- HDR+ zoom 13.1x 18:04: lensa **Utama** (tombol 1x aktif) -> crop **230x306 px** -> 24MP = sangat buram (MF 12 frame,
+  0.56 s). Fokus tulisan OCR: AI 0.30 vs asli 0.50 -> AI kalah, versi asli dipakai (anti huruf palsu bekerja).
+- Fix v0.9.4: **HDR+ memakai kamera virtual** seperti FOTO/AI ZOOM (lensa otomatis 0.5-50x + kunci lensa Auto/UW/
+  Utama/Tele/Depan). Capture: pindah ke lensa fisik pilihan iOS (transfer ISO/shutter/WB), burst Bayer (jumlah
+  otomatis), merge; zoom digital hanya bila melewati lensa optik (crop > 1.05) -> crop + AI/Lanczos. Tombol lensa
+  fisik kini hanya di mode BAYER/PRORAW.
