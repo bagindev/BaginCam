@@ -90,13 +90,24 @@ struct ContentView: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    processChip
-                    lutChip
-                    wbChip
-                    formatChip
-                    ratioChip
-                    if appleCapable && cam.flashAvailable { flashChip }
-                    if appleCapable && cam.liveAvailable { liveChip }
+                    if cam.shootMode == .video {
+                        videoFormatChip
+                        codecChip
+                        colorChip
+                        stabChip
+                        lutChip
+                        wbChip
+                        guideChip
+                        torchChip
+                    } else {
+                        processChip
+                        lutChip
+                        wbChip
+                        formatChip
+                        ratioChip
+                        if appleCapable && cam.flashAvailable { flashChip }
+                        if appleCapable && cam.liveAvailable { liveChip }
+                    }
                 }
             }
             Button { showSettings = true } label: {
@@ -144,6 +155,8 @@ struct ContentView: View {
             }
         case .night:
             chip("MALAM", icon: "moon.stars.fill", on: true)
+        case .video:
+            chip("VIDEO", icon: "video.fill", on: true)
         case .pro:
             Menu {
                 ForEach(CameraManager.ProFormat.allCases) { f in
@@ -162,7 +175,11 @@ struct ContentView: View {
                 Button { luts.select(item) } label: { check(item.name, luts.selected?.id == item.id) }
             }
             Divider()
-            Toggle("Bakar LUT ke foto", isOn: $cam.bakeLUT)
+            if cam.shootMode == .video {
+                Toggle("Bakar LUT ke video (keluaran Rec.709)", isOn: $cam.bakeLUTVideo)
+            } else {
+                Toggle("Bakar LUT ke foto", isOn: $cam.bakeLUT)
+            }
             Button("Import .cube...") { showImporter = true }
         } label: {
             chip(luts.selected.map { shortLUT($0.name) } ?? "LUT", icon: "camera.filters")
@@ -248,12 +265,147 @@ struct ContentView: View {
         .disabled(cam.isCapturing)
     }
 
+    // MARK: - chip VIDEO (ala Blackmagic + GCam)
+    private var videoFormatChip: some View {
+        Menu {
+            Section("Resolusi") {
+                ForEach(VideoRes.allCases) { r in
+                    Button { cam.videoRes = r } label: { check(r.rawValue, cam.videoRes == r) }
+                }
+            }
+            Section("Frame rate") {
+                ForEach(VideoFps.allCases) { f in
+                    Button { cam.videoFps = f; cam.timelapse = 1 } label: {
+                        check(f == .auto ? "Auto (60 terang / 30 gelap)" : (f.isSlowMo ? "\(f.label) slow-mo" : "\(f.label) fps"),
+                              cam.videoFps == f && cam.timelapse <= 1)
+                    }
+                }
+            }
+            if cam.videoFps.isSlowMo && cam.timelapse <= 1 {
+                Section("Slow-mo diputar di") {
+                    ForEach([24, 30], id: \.self) { p in
+                        Button { cam.slowPlayback = p } label: { check("\(p) fps (\(cam.videoFps.rawValue / p)x lebih lambat)", cam.slowPlayback == p) }
+                    }
+                }
+            }
+            Section("Time-lapse (diputar 30 fps)") {
+                ForEach([5, 10, 30, 60, 120], id: \.self) { k in
+                    Button { cam.timelapse = k } label: { check("\(k)x", cam.timelapse == k) }
+                }
+            }
+        } label: {
+            chip(cam.timelapse > 1 ? "\(cam.videoRes.rawValue) · TL \(cam.timelapse)x" : "\(cam.videoRes.rawValue) · \(cam.videoFps.label)",
+                 icon: "video", on: true)
+        }
+        .disabled(cam.isRecording)
+    }
+
+    private var codecChip: some View {
+        Menu {
+            ForEach(VideoCodec.allCases) { c in
+                Button { cam.videoCodec = c } label: { check(c.rawValue, cam.videoCodec == c) }
+            }
+            Text("ProRes 4K ~5-6 GB/menit")
+        } label: { chip(cam.videoCodec.short, icon: "film") }
+        .disabled(cam.isRecording)
+    }
+
+    private var colorChip: some View {
+        Menu {
+            ForEach(VideoColor.allCases) { c in
+                Button { cam.videoColor = c } label: { check(c.rawValue, cam.videoColor == c) }
+            }
+            Text("Log: preview otomatis dikonversi ke Rec.709")
+        } label: { chip(cam.videoColor.short, icon: "circle.lefthalf.filled") }
+        .disabled(cam.isRecording)
+    }
+
+    private var stabChip: some View {
+        Menu {
+            ForEach(VideoStab.allCases) { st in
+                Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st) }
+            }
+        } label: { chip(cam.videoStab == .off ? "Stabil off" : cam.videoStab.rawValue, icon: "hand.raised") }
+        .disabled(cam.isRecording)
+    }
+
+    private var guideChip: some View {
+        Menu {
+            ForEach(FrameGuide.allCases) { g in
+                Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
+            }
+        } label: { chip(cam.frameGuide == .off ? "" : cam.frameGuide.rawValue, icon: "rectangle.dashed") }
+    }
+
+    private var torchChip: some View {
+        Button { cam.torch.toggle() } label: {
+            chip("", icon: cam.torch ? "flashlight.on.fill" : "flashlight.off.fill", on: cam.torch)
+        }
+    }
+
+    /// garis bingkai (2.39 / 1.85 / ...), mengikuti cara HP dipegang
+    @ViewBuilder private var frameGuideOverlay: some View {
+        if cam.shootMode == .video, let r = cam.frameGuide.ratio {
+            GeometryReader { g in
+                let landscape = abs(cam.horizonAngle - 90) > 45 && abs(cam.horizonAngle - 270) > 45
+                let a = landscape ? 1 / r : r                      // lebar / tinggi di layar
+                let full = CGRect(origin: .zero, size: g.size)
+                let w = min(g.size.width, g.size.height * a), h = w / a
+                let box = CGRect(x: (g.size.width - w) / 2, y: (g.size.height - h) / 2, width: w, height: h)
+                ZStack {
+                    Path { p in p.addRect(full); p.addRect(box) }
+                        .fill(Color.black.opacity(0.45), style: FillStyle(eoFill: true))
+                    Path { p in p.addRect(box) }.stroke(Color.yellow.opacity(0.8), lineWidth: 1)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// meter level mikrofon (dB)
+    private var audioMeter: some View {
+        let v = CGFloat(max(0, min(1, (cam.audioLevel + 60) / 60)))
+        return HStack(spacing: 4) {
+            Image(systemName: "mic.fill").font(.caption2)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.2))
+                Capsule().fill(cam.audioLevel > -6 ? Color.red : (cam.audioLevel > -18 ? Color.yellow : Color.green))
+                    .frame(width: 50 * v)
+            }
+            .frame(width: 50, height: 6)
+        }
+        .padding(.horizontal, 7).padding(.vertical, 5)
+        .background(.black.opacity(0.55), in: Capsule())
+        .foregroundStyle(.white)
+    }
+
+    private var recordTimeText: String {
+        let s = Int(cam.recordSeconds)
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    private var videoInfoRow: some View {
+        HStack(spacing: 6) {
+            lensBadge
+            if cam.isRecording {
+                infoPill(recordTimeText, icon: "record.circle.fill", color: .red)
+            } else if !cam.videoInfo.isEmpty {
+                infoPill(cam.videoInfo, icon: "video")
+            }
+            Spacer(minLength: 0)
+            if cam.minutesLeft > 0 { infoPill("\(cam.minutesLeft) mnt", icon: "internaldrive") }
+            audioMeter
+        }
+        .padding(8)
+    }
+
     // MARK: - preview + baris 2 (info)
     private var preview: some View {
         MetalPreview(renderer: renderer, onHardwareShutter: { cam.shutterPressed() })
-            .aspectRatio(3.0 / 4.0, contentMode: .fit)
+            .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
             .overlay { ratioMask }
+            .overlay { frameGuideOverlay }
             .overlay(alignment: .bottomLeading) { readout }
             .overlay(alignment: .topTrailing) {
                 if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, 40).padding(8) }
@@ -263,12 +415,14 @@ struct ContentView: View {
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay { countdownLayer }
             .overlay { focusLayer }
-            .overlay(alignment: .top) { infoRow }
+            .overlay(alignment: .top) {
+                if cam.shootMode == .video { videoInfoRow } else { infoRow }
+            }
     }
 
     /// area di luar rasio foto digelapkan (seperti kamera bawaan)
     @ViewBuilder private var ratioMask: some View {
-        if cam.aspect != .r43 {
+        if cam.aspect != .r43 && cam.shootMode != .video {
             GeometryReader { g in
                 let full = CGRect(origin: .zero, size: g.size)
                 let r = cam.aspect.rect(in: full)
@@ -715,7 +869,15 @@ struct ContentView: View {
             Button(action: cam.shutterPressed) {
                 ZStack {
                     Circle().stroke(.white, lineWidth: 4).frame(width: 76, height: 76)
-                    Circle().fill(shutterColor).frame(width: 64, height: 64)
+                    if cam.shootMode == .video {
+                        if cam.isRecording {
+                            RoundedRectangle(cornerRadius: 6).fill(Color.red).frame(width: 30, height: 30)
+                        } else {
+                            Circle().fill(Color.red).frame(width: 62, height: 62)
+                        }
+                    } else {
+                        Circle().fill(shutterColor).frame(width: 64, height: 64)
+                    }
                     if cam.isCapturing {
                         ProgressView().tint(.white)
                     } else if cam.shootMode == .night {
@@ -732,7 +894,7 @@ struct ContentView: View {
                     .background(Color.white.opacity(0.12), in: Circle())
                     .foregroundStyle(isFront ? .yellow : .white)
             }
-            .disabled(cam.isCapturing || !cam.availableLenses.contains(.front))
+            .disabled(cam.isCapturing || cam.isRecording || !cam.availableLenses.contains(.front))
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
@@ -742,6 +904,7 @@ struct ContentView: View {
         switch cam.shootMode {
         case .night: return Color(red: 0.12, green: 0.12, blue: 0.3)
         case .pro: return .white
+        case .video: return .red
         case .photo: return cam.photoProcess == .apple ? .white : .yellow
         }
     }
@@ -770,7 +933,7 @@ struct ContentView: View {
                             .background(on ? Color.yellow.opacity(0.9) : Color.clear, in: Capsule())
                             .foregroundStyle(on ? .black : .white)
                     }
-                    .disabled(cam.isCapturing)
+                    .disabled(cam.isCapturing || cam.isRecording)
                 }
             }
             HStack {

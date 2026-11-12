@@ -36,7 +36,10 @@ struct SettingsSheet: View {
                     Text("Mode: \(modeTitle)")
                 }
 
+                if isVideo { videoSection }
+
                 // MARK: hasil foto
+                if !isVideo {
                 Section {
                     if mode == .hdrplus {
                         Picker("Format", selection: $cam.outputFormat) {
@@ -69,9 +72,10 @@ struct SettingsSheet: View {
                 } footer: {
                     Text(resultFooter)
                 }
+                }
 
                 // MARK: zoom FOTO / HDR+
-                if mode == .heif || mode == .hdrplus {
+                if (mode == .heif || mode == .hdrplus) && !isVideo {
                     Section {
                         Picker("Cara zoom", selection: $cam.zoomMethod) {
                             ForEach(CameraManager.ZoomMethod.allCases) { Text($0.rawValue).tag($0) }
@@ -199,8 +203,55 @@ struct SettingsSheet: View {
         .presentationDragIndicator(.visible)
     }
 
+    private var isVideo: Bool { cam.shootMode == .video }
+
+    @ViewBuilder private var videoSection: some View {
+        Section {
+            Picker("Resolusi", selection: $cam.videoRes) {
+                ForEach(VideoRes.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Picker("Frame rate", selection: $cam.videoFps) {
+                ForEach(VideoFps.allCases) { Text($0.label).tag($0) }
+            }
+            if cam.videoFps.isSlowMo {
+                Picker("Slow-mo diputar di", selection: $cam.slowPlayback) {
+                    Text("24 fps").tag(24)
+                    Text("30 fps").tag(30)
+                }
+                .pickerStyle(.segmented)
+            }
+            Picker("Time-lapse", selection: $cam.timelapse) {
+                Text("Mati").tag(1)
+                ForEach([5, 10, 30, 60, 120], id: \.self) { Text("\($0)x").tag($0) }
+            }
+            Picker("Codec", selection: $cam.videoCodec) {
+                ForEach(VideoCodec.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Warna", selection: $cam.videoColor) {
+                ForEach(VideoColor.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Stabilisasi", selection: $cam.videoStab) {
+                ForEach(VideoStab.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Toggle("Shutter 180° otomatis (1/2x fps, ISO menyesuaikan)", isOn: $cam.shutter180)
+            Toggle("Bakar LUT ke video (keluaran Rec.709)", isOn: $cam.bakeLUTVideo)
+            Picker("Frame guide", selection: $cam.frameGuide) {
+                ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Simpan ke", selection: $cam.videoSaveTo) {
+                ForEach(VideoSaveTo.allCases) { Text($0.rawValue).tag($0) }
+            }
+        } header: {
+            Text("Video")
+        } footer: {
+            Text("HEVC = H.265. Apple Log & HLG direkam 10-bit (HEVC / ProRes; H.264 otomatis jadi HEVC). Log tampil di layar sebagai Rec.709 supaya mudah dilihat, file tetap Log untuk di-grade. Slow-mo 120/240 & time-lapse tanpa suara. FPS Auto: 60 saat terang, 30 saat gelap (dipilih saat mulai rekam). Files (app) = folder Videos di app, bisa diambil lewat kabel. ProRes 4K ~5-6 GB/menit.")
+        }
+    }
+
     private var modeTitle: String {
         switch cam.shootMode {
+        case .video: return "VIDEO · \(cam.videoInfo)"
         case .night: return "MALAM"
         case .photo: return "FOTO · \(cam.photoProcess.rawValue)"
         case .pro: return "PRO · \(cam.proFormat.rawValue)"
@@ -209,6 +260,7 @@ struct SettingsSheet: View {
 
     private var modeDetail: String {
         switch cam.shootMode {
+        case .video: return "Video ala Blackmagic Camera: 4K/1080p, 24-60 fps, slow-mo 120/240, time-lapse, HEVC / H.264 / ProRes, Rec.709 / HLG / Apple Log, stabilisasi, shutter 180°, frame guide, meter audio, senter. Laci Pro: ISO, shutter, WB, fokus manual."
         case .night: return "HDR+ dengan shutter lebih lama (genggam 1/4 s, tele 1/8 s, HP diam/tripod sampai 1 s) dan ISO lebih rendah, 6-15 frame, lalu dicerahkan. Tahan HP sampai selesai."
         case .photo: return cam.photoProcess.detail
         case .pro: return cam.proFormat.detail + ". Laci Pro (ikon slider kanan bawah): EV, ISO, shutter, WB, fokus manual per bagian."

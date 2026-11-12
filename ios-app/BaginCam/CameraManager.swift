@@ -63,6 +63,7 @@ final class CameraManager: NSObject, ObservableObject {
     enum ShootMode: String, CaseIterable, Identifiable {
         case night = "MALAM"
         case photo = "FOTO"
+        case video = "VIDEO"
         case pro = "PRO"
         var id: String { rawValue }
     }
@@ -252,6 +253,29 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var flash: FlashSetting = Prefs.raw("flash", .off) { didSet { Prefs.set("flash", flash.rawValue) } }
     @Published private(set) var livePhoto: Bool = Prefs.get("livePhoto", false) { didSet { Prefs.set("livePhoto", livePhoto) } }
     @Published var zoomMethod: ZoomMethod = Prefs.raw("zoomMethod", .auto) { didSet { Prefs.set("zoomMethod", zoomMethod.rawValue) } }
+
+    // MARK: video (ala Blackmagic Camera + GCam)
+    @Published var videoRes: VideoRes = Prefs.raw("videoRes", .uhd) { didSet { Prefs.set("videoRes", videoRes.rawValue); videoChanged() } }
+    @Published var videoFps: VideoFps = Prefs.raw("videoFps", .f30) { didSet { Prefs.set("videoFps", videoFps.rawValue); videoChanged() } }
+    @Published var videoCodec: VideoCodec = Prefs.raw("videoCodec", .hevc) { didSet { Prefs.set("videoCodec", videoCodec.rawValue); videoChanged() } }
+    @Published var videoColor: VideoColor = Prefs.raw("videoColor", .sdr) { didSet { Prefs.set("videoColor", videoColor.rawValue); videoChanged() } }
+    @Published var videoStab: VideoStab = Prefs.raw("videoStab", .standard) { didSet { Prefs.set("videoStab", videoStab.rawValue); videoChanged() } }
+    @Published var slowPlayback: Int = Prefs.get("slowPlayback", 30) { didSet { Prefs.set("slowPlayback", slowPlayback) } }
+    @Published var timelapse: Int = Prefs.get("timelapse", 1) { didSet { Prefs.set("timelapse", timelapse); videoChanged() } }
+    @Published var shutter180: Bool = Prefs.get("shutter180", true) { didSet { Prefs.set("shutter180", shutter180) } }
+    @Published var videoSaveTo: VideoSaveTo = Prefs.raw("videoSaveTo", .photos) { didSet { Prefs.set("videoSaveTo", videoSaveTo.rawValue) } }
+    @Published var bakeLUTVideo: Bool = Prefs.get("bakeLUTVideo", false) { didSet { Prefs.set("bakeLUTVideo", bakeLUTVideo) } }
+    @Published var frameGuide: FrameGuide = Prefs.raw("frameGuide", .off) { didSet { Prefs.set("frameGuide", frameGuide.rawValue) } }
+    @Published var torch = false { didSet { applyTorch() } }
+    @Published private(set) var isRecording = false
+    @Published private(set) var recordSeconds: Double = 0
+    @Published private(set) var audioLevel: Float = -160        // dB (meter)
+    @Published private(set) var videoInfo = ""                   // mis. "4K · 30 · HEVC · Log"
+    @Published private(set) var minutesLeft = 0
+    @Published private(set) var horizonAngle: CGFloat = 90       // 0/180 = HP lanskap
+    private var recordStart = Date()
+    private var recordTimer: Timer?
+    private var readoutTick = 0
     @Published private(set) var flashAvailable = false
     @Published private(set) var liveAvailable = false
     /// iOS memakai ultra wide untuk objek dekat (makro) padahal zoom >= 1x
@@ -287,6 +311,14 @@ final class CameraManager: NSObject, ObservableObject {
     private let processQueue = DispatchQueue(label: "bagincam.process", qos: .userInitiated)
     private let videoOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
+    private let audioOutput = AVCaptureAudioDataOutput()
+    private var audioInput: AVCaptureDeviceInput?
+    private var inVideo = false                 // sessionQueue
+    private var fpsApplied = 30                 // sessionQueue
+    private var videoSnap = VideoSnap()         // sessionQueue: pengaturan video terakhir
+    private var recorder: VideoRecorder?        // videoQueue
+    private var previewLog = false              // videoQueue: preview Apple Log -> Rec.709
+    private lazy var logPreviewFilter = AppleLogLUT.makeFilter()   // videoQueue
     private var device: AVCaptureDevice?
     private var currentInput: AVCaptureDeviceInput?
     private var readoutTimer: Timer?
@@ -351,11 +383,14 @@ final class CameraManager: NSObject, ObservableObject {
         let mode = self.mode, lens = self.lens
         let live = liveWanted
         sessionQueue.async { self.liveWantedS = live }
+        let video = shootMode == .video
+        if video { AVCaptureDevice.requestAccess(for: .audio) { _ in }; videoSnap = makeVideoSnap() }
         AVCaptureDevice.requestAccess(for: .video) { granted in
             guard granted else { self.setStatus("Izin kamera ditolak"); return }
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { _ in }
             self.sessionQueue.async {
                 if !self.configured { self.configure(mode: mode, lens: lens) }
+                if video { self.enterVideo() }
                 if !self.session.isRunning { self.session.startRunning() }
                 self.setStatus("Siap")
             }
@@ -451,8 +486,10 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: d, previewLayer: nil)
-        if let maxDims = maxDimensions(of: d) { photoOutput.maxPhotoDimensions = maxDims }
-        photoOutput.maxPhotoQualityPrioritization = .quality
+        if session.outputs.contains(photoOutput) {
+            if let maxDims = maxDimensions(of: d) { photoOutput.maxPhotoDimensions = maxDims }
+            photoOutput.maxPhotoQualityPrioritization = .quality
+        }
         session.commitConfiguration()
         applyLive()
         let flashOK = photoOutput.supportedFlashModes.contains(.on)
@@ -504,11 +541,12 @@ final class CameraManager: NSObject, ObservableObject {
             self.totalZoom = min(max(1, startZoom), maxZ)
         }
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
+        if inVideo { applyVideoFormat() }
     }
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
     func setAILensLock(_ l: Lens?) {
-        guard Self.usesVirtual(mode), !isCapturing, l != aiLensLock else { return }
+        guard Self.usesVirtual(mode), !isCapturing, !isRecording, l != aiLensLock else { return }
         aiLensLock = l
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
@@ -535,6 +573,7 @@ final class CameraManager: NSObject, ObservableObject {
                 self.previewExtraZoom = max(1, (tz / native) / max(d.maxAvailableVideoZoomFactor, 1))
             }
             self.publishCapabilities(d, label: l.displayName, mode: .aiZoom)
+            if self.inVideo { self.applyVideoFormat() }
         }
     }
 
@@ -603,6 +642,14 @@ final class CameraManager: NSObject, ObservableObject {
             let applied = min(max(want, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             d.videoZoomFactor = applied
             d.unlockForConfiguration()
+            if self.inVideo {
+                // video: crop preview di atas batas hardware tidak ikut terekam -> zoom dibatasi hardware
+                DispatchQueue.main.async {
+                    self.previewExtraZoom = 1
+                    if want > applied * 1.001 { self.totalZoom = applied / base }
+                }
+                return
+            }
             let extra = max(1, want / applied)
             DispatchQueue.main.async { self.previewExtraZoom = extra }
         }
@@ -725,6 +772,7 @@ final class CameraManager: NSObject, ObservableObject {
         switch s {
         case .night: return .hdrplus
         case .photo: return p == .apple ? .heif : .hdrplus
+        case .video: return .heif          // kamera virtual; sesi video diatur enterVideo()
         case .pro: return f == .proraw ? .proraw : (f == .bayer ? .bayer : .hdrplus)
         }
     }
@@ -735,12 +783,19 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// ganti mode/proses/format; Live dimatikan SEBELUM ganti mesin (ProRAW/Bayer), dinyalakan sesudahnya
     private func applyUI(_ change: () -> Void) {
-        guard !isCapturing else { return }
+        guard !isCapturing, !isRecording else { return }
+        let wasVideo = shootMode == .video
         change()
+        let isVideo = shootMode == .video
+        if wasVideo && !isVideo {
+            torch = false
+            sessionQueue.async { self.leaveVideo() }      // sebelum mesin foto dipasang lagi
+        }
         let want = liveWanted
         if !want { applyLiveSoon(want) }
         setMode(Self.internalMode(shootMode, photoProcess, proFormat))
         if want { applyLiveSoon(want) }
+        if isVideo && !wasVideo { beginVideo() }
     }
 
     func setShootMode(_ s: ShootMode) { applyUI { shootMode = s } }
@@ -901,6 +956,11 @@ final class CameraManager: NSObject, ObservableObject {
         activeLensLabel = lensLabel(for: d)
         let macro = d.isVirtualDevice && d.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && totalZoom >= 0.95
         if macro != macroActive { macroActive = macro }
+        if let rc = rotationCoordinator {
+            let a = rc.videoRotationAngleForHorizonLevelCapture
+            if a != horizonAngle { horizonAngle = a }
+        }
+        if shootMode == .video { videoReadout() }
         let maxGain = d.maxWhiteBalanceGain
         let g = d.deviceWhiteBalanceGains
         guard maxGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 else { return }
@@ -933,9 +993,345 @@ final class CameraManager: NSObject, ObservableObject {
         return z > 1.05 ? String(format: "%@ · crop %.1fx", n, Double(z)) : (l == .front ? n : "\(n) \(l.rawValue)")
     }
 
+    // MARK: video
+    struct VideoSnap {
+        var res: VideoRes = .uhd
+        var fps: VideoFps = .f30
+        var codec: VideoCodec = .hevc
+        var color: VideoColor = .sdr
+        var stab: VideoStab = .standard
+        var timelapse = 1
+        var zoom: CGFloat = 1
+    }
+
+    private func makeVideoSnap() -> VideoSnap {
+        VideoSnap(res: videoRes, fps: videoFps, codec: videoCodec, color: videoColor, stab: videoStab,
+                  timelapse: timelapse, zoom: totalZoom)
+    }
+
+    /// pengaturan video berubah -> format kamera diatur ulang (tidak saat merekam)
+    private func videoChanged() {
+        guard shootMode == .video, !isRecording else { return }
+        let snap = makeVideoSnap()
+        sessionQueue.async {
+            self.videoSnap = snap
+            self.applyVideoFormat()
+        }
+    }
+
+    /// main: masuk mode VIDEO (izin mikrofon dulu)
+    private func beginVideo() {
+        let snap = makeVideoSnap()
+        AVCaptureDevice.requestAccess(for: .audio) { _ in
+            self.sessionQueue.async {
+                self.videoSnap = snap
+                self.enterVideo()
+            }
+        }
+    }
+
+    /// sessionQueue: photo output dilepas (format video bebas), mikrofon dipasang
+    private func enterVideo() {
+        guard !inVideo else { applyVideoFormat(); return }
+        inVideo = true
+        session.beginConfiguration()
+        if session.outputs.contains(photoOutput) { session.removeOutput(photoOutput) }
+        session.automaticallyConfiguresCaptureDeviceForWideColor = false
+        if audioInput == nil, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+           let mic = AVCaptureDevice.default(for: .audio), let inp = try? AVCaptureDeviceInput(device: mic),
+           session.canAddInput(inp) {
+            session.addInput(inp)
+            audioInput = inp
+        }
+        if !session.outputs.contains(audioOutput), session.canAddOutput(audioOutput) {
+            session.addOutput(audioOutput)
+            audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
+        }
+        session.commitConfiguration()
+        Log.camera.info("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
+        applyVideoFormat()
+    }
+
+    /// sessionQueue: kembali ke sesi foto
+    private func leaveVideo() {
+        guard inVideo else { return }
+        inVideo = false
+        session.beginConfiguration()
+        if let a = audioInput { session.removeInput(a); audioInput = nil }
+        if session.outputs.contains(audioOutput) { session.removeOutput(audioOutput) }
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        if !session.outputs.contains(photoOutput), session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
+        session.automaticallyConfiguresCaptureDeviceForWideColor = true
+        if session.canSetSessionPreset(.photo) { session.sessionPreset = .photo }
+        if let c = videoOutput.connection(with: .video), c.isVideoStabilizationSupported { c.preferredVideoStabilizationMode = .off }
+        session.commitConfiguration()
+        if let d = device {
+            if session.outputs.contains(photoOutput), let maxDims = maxDimensions(of: d) { photoOutput.maxPhotoDimensions = maxDims }
+            applyAuto()
+        }
+        videoQueue.async { self.previewLog = false }
+        Log.camera.info("VIDEO: keluar")
+        DispatchQueue.main.async { self.videoInfo = "" }
+    }
+
+    private static let tenBitFmt: FourCharCode = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+
+    private func maxFps(_ f: AVCaptureDevice.Format) -> Double {
+        f.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
+    }
+
+    /// format kamera untuk resolusi / fps / warna; 10-bit (x420) untuk HLG & Log
+    private func pickVideoFormat(_ d: AVCaptureDevice, res: VideoRes, fps: Int, color: VideoColor,
+                                 stab: VideoStab) -> AVCaptureDevice.Format? {
+        let want = res.size
+        let c = d.formats.filter { f in
+            let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            guard dim.width == want.w, dim.height == want.h else { return false }
+            guard maxFps(f) >= Double(fps) - 0.01, f.supportedColorSpaces.contains(color.avSpace) else { return false }
+            let sub = CMFormatDescriptionGetMediaSubType(f.formatDescription)
+            return color.tenBit ? sub == Self.tenBitFmt
+                : (sub == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        }
+        return c.sorted { a, b in
+            let sa = a.isVideoStabilizationModeSupported(stab.av) ? 0 : 1
+            let sb = b.isVideoStabilizationModeSupported(stab.av) ? 0 : 1
+            if sa != sb { return sa < sb }
+            return maxFps(a) < maxFps(b)
+        }.first
+    }
+
+    /// sessionQueue: pasang format video sesuai pengaturan (dengan cadangan bila tidak tersedia)
+    private func applyVideoFormat() {
+        guard inVideo, let d = device else { return }
+        let s = videoSnap
+        var fps = s.timelapse > 1 ? 30 : (s.fps == .auto ? 30 : s.fps.rawValue)
+        let needFps = s.fps == .auto && s.timelapse <= 1 ? 60 : fps
+        var res = s.res, color = s.color
+        var note = ""
+        var f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
+        if f == nil && s.fps == .auto { f = pickVideoFormat(d, res: res, fps: 30, color: color, stab: s.stab) }
+        if f == nil && needFps > 60 && res == .uhd {
+            res = .fhd
+            f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
+            if f != nil { note = "\(needFps) fps hanya 1080p" }
+        }
+        if f == nil && needFps > 60 {
+            for alt in [120, 60] where alt < needFps && f == nil {
+                f = pickVideoFormat(d, res: res, fps: alt, color: color, stab: s.stab)
+                if f != nil { fps = alt; note = "maks \(alt) fps di lensa ini" }
+            }
+        }
+        if f == nil && color != .sdr {
+            color = .sdr
+            f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
+            if f != nil { note = "\(s.color.short) tidak tersedia di lensa ini -> Rec.709" }
+        }
+        guard let fmt = f else {
+            Log.camera.error("VIDEO: tidak ada format \(s.res.rawValue, privacy: .public) \(needFps, privacy: .public) fps \(s.color.short, privacy: .public)")
+            setStatus("Format video \(s.res.rawValue) \(needFps) fps \(s.color.short) tidak tersedia")
+            return
+        }
+        session.beginConfiguration()
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String:
+                                        color.tenBit ? Self.tenBitFmt : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        if (try? d.lockForConfiguration()) != nil {
+            d.activeFormat = fmt
+            if fmt.supportedColorSpaces.contains(color.avSpace) { d.activeColorSpace = color.avSpace }
+            let dur = CMTime(value: 1, timescale: CMTimeScale(fps))
+            d.activeVideoMinFrameDuration = dur
+            d.activeVideoMaxFrameDuration = dur
+            let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
+            d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+            d.unlockForConfiguration()
+        }
+        if let c = videoOutput.connection(with: .video) {
+            if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
+            if c.isVideoStabilizationSupported { c.preferredVideoStabilizationMode = s.stab.av }
+        }
+        session.commitConfiguration()
+        fpsApplied = fps
+        applyAuto()
+        let log = color == .log
+        videoQueue.async { self.previewLog = log }
+        let fpsText = s.timelapse > 1 ? "TL \(s.timelapse)x" : (s.fps == .auto ? "Auto" : "\(fps)")
+        let info = "\(res.rawValue) · \(fpsText) · \(s.codec.short) · \(color.short)"
+        Log.camera.info("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(s.stab.rawValue, privacy: .public) \(note, privacy: .public)")
+        DispatchQueue.main.async {
+            self.videoInfo = info
+            if !note.isEmpty { self.status = note }
+        }
+    }
+
+    private func applyTorch() {
+        let on = torch
+        sessionQueue.async {
+            guard let d = self.device, d.hasTorch, d.isTorchModeSupported(on ? .on : .off),
+                  (try? d.lockForConfiguration()) != nil else { return }
+            d.torchMode = on ? .on : .off
+            d.unlockForConfiguration()
+        }
+    }
+
+    /// main: tombol rekam
+    func toggleRecording() {
+        if isRecording { stopRecording(); return }
+        guard shootMode == .video, !isCapturing else { return }
+        var snap = makeVideoSnap()
+        snap.zoom = totalZoom
+        let gain = Double(liveISO) * liveShutter
+        let lut = bakeLUTVideo ? captureLUT : nil
+        let slow = slowPlayback
+        isRecording = true
+        recordSeconds = 0
+        sessionQueue.async { self.startRecording(snap, gain: gain, lut: lut, slowPlayback: slow) }
+    }
+
+    /// sessionQueue
+    private func startRecording(_ s: VideoSnap, gain: Double, lut: CubeLUT?, slowPlayback: Int) {
+        guard inVideo, let d = device else {
+            DispatchQueue.main.async { self.isRecording = false; self.status = "VIDEO belum siap" }
+            return
+        }
+        // FPS Auto (GCam): 60 bila terang, 30 bila gelap
+        var fps = fpsApplied
+        if s.fps == .auto && s.timelapse <= 1 {
+            let want = gain < 1.5 ? 60 : 30
+            if want != fpsApplied, maxFps(d.activeFormat) >= Double(want), (try? d.lockForConfiguration()) != nil {
+                let dur = CMTime(value: 1, timescale: CMTimeScale(want))
+                d.activeVideoMinFrameDuration = dur
+                d.activeVideoMaxFrameDuration = dur
+                d.unlockForConfiguration()
+                fpsApplied = want
+            }
+            fps = fpsApplied
+        }
+        let dims = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+        let tenBit = CMFormatDescriptionGetMediaSubType(d.activeFormat.formatDescription) == Self.tenBitFmt
+        let color: VideoColor = tenBit ? (d.activeColorSpace == .appleLog ? .log : .hlg) : .sdr
+        var codec = s.codec
+        if codec == .h264 && tenBit && lut == nil { codec = .hevc }      // H.264 tidak 10-bit
+        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        let transform = CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180)
+        let playback = s.fps.isSlowMo && s.timelapse <= 1 ? slowPlayback : fps
+        let audio = audioInput != nil && playback == fps && s.timelapse <= 1
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd_HHmmss"
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Videos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tag = s.timelapse > 1 ? "TL\(s.timelapse)x" : (playback != fps ? "\(fps)to\(playback)" : "\(fps)")
+        let name = "BaginCam_\(f.string(from: Date()))_\(dims.width >= 3840 ? "4K" : "1080p")\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
+        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: Int(dims.height), height: Int(dims.width),
+                              sensorFps: fps, playbackFps: playback, timelapse: max(1, s.timelapse), codec: codec,
+                              color: color, audio: audio, transform: transform, bake: lut, bakeLog: lut != nil && color == .log)
+        do {
+            let r = try VideoRecorder(cfg)
+            videoQueue.async { self.recorder = r }
+            Log.camera.info("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public)")
+            DispatchQueue.main.async {
+                self.recordStart = Date()
+                self.status = "Merekam \(name)"
+                self.recordTimer?.invalidate()
+                self.recordTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    self.recordSeconds = Date().timeIntervalSince(self.recordStart)
+                }
+            }
+        } catch {
+            Log.camera.error("VIDEO: perekam gagal \(String(describing: error), privacy: .public)")
+            DispatchQueue.main.async { self.isRecording = false; self.status = "Rekam gagal: \(error.localizedDescription)" }
+        }
+    }
+
+    /// main
+    private func stopRecording() {
+        recordTimer?.invalidate()
+        recordTimer = nil
+        let saveTo = videoSaveTo
+        status = "Menyimpan video..."
+        videoQueue.async {
+            guard let r = self.recorder else { DispatchQueue.main.async { self.isRecording = false }; return }
+            self.recorder = nil
+            let dur = r.seconds, dropped = r.droppedFrames
+            r.stop { url, err in
+                DispatchQueue.main.async { self.isRecording = false }
+                guard let url else {
+                    Log.camera.error("VIDEO: simpan gagal \(String(describing: err), privacy: .public)")
+                    self.setStatus("Video gagal disimpan: \(err?.localizedDescription ?? "-")")
+                    return
+                }
+                Log.camera.info("VIDEO: selesai \(url.lastPathComponent, privacy: .public), \(dur, privacy: .public) s, frame hilang \(dropped, privacy: .public)")
+                self.saveVideo(url, to: saveTo, seconds: dur, dropped: dropped)
+            }
+        }
+    }
+
+    private func saveVideo(_ url: URL, to: VideoSaveTo, seconds: Double, dropped: Int) {
+        // thumbnail untuk tombol galeri
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 240, height: 240)
+        if let cg = try? gen.copyCGImage(at: .zero, actualTime: nil) {
+            let t = UIImage(cgImage: cg)
+            DispatchQueue.main.async { self.lastThumb = t; self.lastImageData = nil; self.lastFileName = url.lastPathComponent }
+        }
+        let mins = Int(seconds) / 60, secs = Int(seconds) % 60
+        let summary = String(format: "%02d:%02d", mins, secs) + (dropped > 0 ? " · \(dropped) frame hilang" : "")
+        guard to != .files else {
+            setStatus("Video tersimpan di Files: \(url.lastPathComponent) (\(summary))")
+            return
+        }
+        PHPhotoLibrary.shared().performChanges({
+            let req = PHAssetCreationRequest.forAsset()
+            let opt = PHAssetResourceCreationOptions()
+            opt.shouldMoveFile = to == .photos
+            req.addResource(with: .video, fileURL: url, options: opt)
+        }) { ok, err in
+            if ok {
+                self.setStatus("Video tersimpan (\(to.rawValue)): \(summary)")
+            } else {
+                Log.camera.error("VIDEO: simpan ke Foto gagal \(String(describing: err), privacy: .public)")
+                self.setStatus("Simpan ke Foto gagal, file tetap di Files: \(url.lastPathComponent)")
+            }
+        }
+    }
+
+    /// main (~4x/detik): meter audio, ISO otomatis untuk shutter 180 derajat, sisa waktu rekam
+    private func videoReadout() {
+        if let ch = audioOutput.connections.first?.audioChannels.first { audioLevel = ch.averagePowerLevel }
+        readoutTick += 1
+        if readoutTick % 8 == 0 {
+            let free = (try? URL(fileURLWithPath: NSHomeDirectory())
+                .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage ?? 0
+            let fps = videoFps == .auto ? 60 : videoFps.rawValue
+            let mbps = videoCodec.mbps(videoRes, fps: timelapse > 1 ? 1 : fps, tenBit: videoColor.tenBit)
+            minutesLeft = Int(Double(free) * 8 / (mbps * 1_000_000) / 60) * (timelapse > 1 ? timelapse : 1)
+        }
+        guard shutter180, !manualExposure else { return }
+        sessionQueue.async {
+            guard self.inVideo, let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
+            defer { d.unlockForConfiguration() }
+            let fmt = d.activeFormat
+            let t = min(max(1.0 / (2 * Double(self.fpsApplied)), fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
+            var iso: Float
+            if d.exposureMode != .custom {
+                let cur = d.exposureDuration.seconds
+                iso = d.iso * Float((cur.isFinite && cur > 0 ? cur : t) / t)
+            } else {
+                let off = d.exposureTargetOffset
+                guard off.isFinite, abs(off) > 0.1 else { return }
+                iso = d.iso * pow(2, -max(-0.33, min(0.33, off)))
+            }
+            iso = min(max(iso, fmt.minISO), fmt.maxISO)
+            guard iso.isFinite else { return }
+            d.setExposureModeCustom(duration: CMTime(seconds: t, preferredTimescale: 1_000_000_000), iso: iso, completionHandler: nil)
+        }
+    }
+
     // MARK: capture
     /// Tombol shutter / tombol volume: pakai timer bila diatur.
     func shutterPressed() {
+        if shootMode == .video { toggleRecording(); return }
         guard !isCapturing, countdown == 0 else { return }
         guard timerSeconds > 0 else { startBurst(); return }
         countdown = timerSeconds
@@ -1654,10 +2050,24 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
 }
 
 // MARK: - delegate video (preview)
-extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+    /// antrean video (audio juga dikirim ke antrean ini supaya perekam aman satu thread)
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output === audioOutput {
+            recorder?.appendAudio(sampleBuffer)
+            return
+        }
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrame?(CIImage(cvPixelBuffer: pb))
+        recorder?.appendVideo(pb, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        if previewLog {
+            // Apple Log: nilai mentah (tanpa manajemen warna) -> LUT Log -> Rec.709 untuk dilihat
+            let raw = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])
+            logPreviewFilter.setValue(raw, forKey: kCIInputImageKey)
+            let out = logPreviewFilter.outputImage ?? raw
+            onFrame?(out.matchedToWorkingSpace(from: CGColorSpace(name: CGColorSpace.sRGB)!) ?? out)
+        } else {
+            onFrame?(CIImage(cvPixelBuffer: pb))
+        }
     }
 }
 
