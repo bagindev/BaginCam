@@ -695,4 +695,4 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   - Durasi di-clamp dengan `CMTimeClampToRange` ke min/max format; fps minimal 1.
   - `supportsFps()` baru: fps harus masuk rentang format sebelum set `activeVideoMin/MaxFrameDuration`
     (dipakai di pickVideoFormat, applyVideoFormat, FPS Auto saat mulai rekam).
-- Versi 0.11.1 (build 25).
+- Versi 0.11.1 (build 25). Build run 43300383606 sukses -> `data/builds/BaginCam-v0.11.1-unsigned.ipa`.
