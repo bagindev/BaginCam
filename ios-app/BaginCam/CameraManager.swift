@@ -794,12 +794,33 @@ final class CameraManager: NSObject, ObservableObject {
                 if let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
                     base = self.lensBase[p.deviceType] ?? 1
                     lensName = Self.name(of: p.deviceType)
+                    // ambil eksposur & WB yang sedang dipakai preview (sensor sama) SEBELUM pindah:
+                    // v0.9.1: AWB lensa fisik belum stabil 0.9 s -> foto kemerahan (R-G +26 vs Apple +12)
+                    let iso = d.iso, dur = d.exposureDuration
+                    var tt: AVCaptureDevice.WhiteBalanceTemperatureAndTintValues?
+                    let g = d.deviceWhiteBalanceGains
+                    if d.maxWhiteBalanceGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 {
+                        tt = d.temperatureAndTintValues(for: Self.clamp(g, d.maxWhiteBalanceGain))
+                    }
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
-                    self.applyAuto()
+                    if (try? p.lockForConfiguration()) != nil {
+                        let fmt = p.activeFormat
+                        if p.isExposureModeSupported(.custom) {
+                            let s = min(max(dur.seconds, fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
+                            p.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
+                                                    iso: min(max(iso, fmt.minISO), fmt.maxISO), completionHandler: nil)
+                        }
+                        if let tt, p.isWhiteBalanceModeSupported(.locked), p.maxWhiteBalanceGain >= 1 {
+                            p.setWhiteBalanceModeLocked(with: Self.clamp(p.deviceWhiteBalanceGains(for: tt), p.maxWhiteBalanceGain),
+                                                        completionHandler: nil)
+                        }
+                        if p.isFocusModeSupported(.continuousAutoFocus) { p.focusMode = .continuousAutoFocus }
+                        p.unlockForConfiguration()
+                    }
                     self.switchedToPhysicalForMF = true
-                    delay = 0.9   // beri waktu AE/AF/AWB lensa fisik stabil
+                    delay = 0.5   // eksposur & WB sudah sama; cukup waktu untuk fokus
                     Log.camera.info("AI Zoom: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
                 } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
                     // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x

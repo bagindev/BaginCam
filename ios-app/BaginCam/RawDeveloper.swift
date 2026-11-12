@@ -39,7 +39,28 @@ enum RawDeveloper {
             let ev = log2(0.9 / hl) - Double(f.baselineExposure)
             f.exposure = Float(max(-3, min(0, ev)))
         }
-        if f.isLocalToneMapSupported { f.localToneMapAmount = 1 }
+        if f.isLocalToneMapSupported { f.localToneMapAmount = 0.8 }
+        // kecerahan: develop kecil dulu, ukur rata-rata (linear); bila jauh di atas foto Apple
+        // (~0.42 gamma = 0.17 linear) turunkan eksposur (v0.9.1: MF 139 vs Apple 108)
+        let fullScale = f.scaleFactor
+        f.scaleFactor = 0.125
+        if let small = f.outputImage {
+            let avg = CIFilter.areaAverage()
+            avg.inputImage = small
+            avg.extent = small.extent
+            if let px = avg.outputImage {
+                var v = [Float](repeating: 0, count: 4)
+                context.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                               format: .RGBAf, colorSpace: nil)
+                let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
+                if lum > 0.21 {
+                    let adj = max(-1.2, log2(0.17 / lum))
+                    f.exposure += Float(adj)
+                    Log.hdr.info("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
+                }
+            }
+        }
+        f.scaleFactor = fullScale
         Log.hdr.info("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")
         guard let img = f.outputImage else { return nil }
         // piksel sudah tegak -> orientasi metadata harus 1 supaya tidak diputar dua kali

@@ -476,3 +476,18 @@ v0.8.1: **kunci lensa di AI ZOOM** (Auto / Utama 1x / Tele 5x; terkunci = lensa 
   dihaluskan (Gaussian). Status/log menyebut jumlah area teks. Default aktif.
 - Penjelasan HDR+ "tanpa AI": merge multi-frame (6-15 frame, frekuensi) di resolusi sensor -> crop -> Lanczos.
   Bukan Super Res Zoom (MFSR menaruh sampel di grid lebih halus; prototipe sesi 15 belum lebih tajam).
+
+## 2026-11-12 - Sesi 17: uji v0.9.1 (tulisan) -> v0.9.2
+
+Sampel 17:42-17:43 (adegan kantor, plang "AVP SALES REGION 4A" + tulisan tangan kardus "BARU tgl 23/10"):
+| File | Metode | Hasil | kardus putih R-G | kecerahan |
+|---|---|---|---|---|
+| IMG_6901/6902 | FOTO AI mati (Apple, 263mm ~11x, ISO 2000-2500) | 12MP | +12 | 108 |
+| IMG_6903 | FOTO AI Cepat (tele crop 2x) | 24MP | **+26 (pink)** | 115 |
+| IMG_6904 | AI ZOOM MF8 Detail | 12MP | +14 | **139 (terlalu terang)** |
+- Tulisan terbaca di semua; Apple paling berbintik, MF paling bersih (huruf sedikit lebih lembut), AI Cepat paling
+  kontras. `data/output/v091_plang.jpg`, `v091_kardus.jpg`, `v091_compare_full.jpg`.
+- Penyebab pink: pindah ke lensa fisik lalu capture 0.9 s -> AWB lensa fisik belum stabil.
+- Fix v0.9.2: ISO/shutter + suhu/tint WB kamera virtual (sensor sama) disalin & dikunci di lensa fisik sebelum
+  capture (delay 0.5 s); develop RAW mengukur kecerahan dari pratinjau 1/8 (CIAreaAverage) dan menurunkan eksposur
+  bila rata-rata linear > 0.21 (target 0.17 ~ foto Apple); tone map lokal 0.8.
