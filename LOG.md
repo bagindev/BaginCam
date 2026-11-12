@@ -427,3 +427,40 @@ Analisa 18 set DNG (frame 1 Apple Bayer + hasil merge app bila ada), `tools`-skr
 
 v0.8.1: **kunci lensa di AI ZOOM** (Auto / Utama 1x / Tele 5x; terkunci = lensa fisik + zoom digital, penanda
 "(kunci)"), **kompensasi EV** -3..+3 di panel Manual saat Auto, **grid 3x3** (Pengaturan > Bantuan bidik).
+
+## 2026-11-12 - Sesi 15: v0.9.0 (merge frekuensi, frame otomatis, WB, timer, tombol volume, waterpass, preview beku) + uji Super Res Zoom
+
+### Merge domain frekuensi (permintaan #1)
+- Prototipe `pc-lab/freq_merge.py` (Wiener per tile 16x16 stride 8, Hann, noise dari NoiseProfile DNG, torch.fft
+  presisi tunggal per pita - RAM PC hanya ~3 GB bebas). Center crop 2048x1536, 8 frame:
+  | set | tunggal | spasial (nr18) | frek c4 | c8 | **c16** |
+  |---|---|---|---|---|---|
+  | utama 124839 | 1.47 | 0.72 | 0.88 | 0.79 | 0.74 |
+  | tele 124926 | 1.84 | 0.83 | 0.99 | 0.86 | **0.79** |
+  | depan 125024 (gerak) | 2.27 | 1.19 | 1.52 | 1.37 | 1.26 |
+  Visual: frekuensi menjaga helai rambut/kulit pada subjek bergerak (spasial meng-kabur-kan); 3x lebih cepat di CPU.
+  `data/output/freq_vs_spatial_*.jpg`.
+- Port Metal (`HDRPlus.metal`: freq_ref / freq_add_frame / freq_inverse, threadgroup 16x16 = DFT separable,
+  pita 24 baris tile, overlap-add 4 paritas). `HDRPlusMerger.merge(freq:)`; c = 2^((NR-10)/2) (NR 18 -> 16);
+  NoiseProfile + black/white dari DNG referensi (`DNGWriter.info`), dikonversi ke satuan pixel buffer 14-bit.
+  Default **Frekuensi**, pilihan Spasial di Pengaturan > HDR+.
+- **Jumlah frame otomatis** (ISO x waktu): <0.25 -> 6, <2 -> 8, <10 -> 12, lainnya 15.
+
+### Fitur lain
+- **WB preset**: Auto / Cerah 5500K / Berawan 6500K / Teduh 7500K / Pijar 3000K / Neon 4000K / **Kunci** (terpisah
+  dari AE/AF); burst tidak menimpa preset.
+- **Timer** 3/10 s (hitung mundur besar, ketuk = batal) + **shutter tombol volume** (AVCaptureEventInteraction, iOS 17.2+).
+- **Waterpass** (CoreMotion gravity, kuning bila +-1 derajat, potret/lanskap).
+- **Fix "zoom lalu jepret jadi 1x & goyang"**: preview **dibekukan** di frame terakhir saat capture (zoom hardware
+  diset 1x / ganti lensa di belakang layar), label "Memotret - tahan HP...", lepas setelah frame terakhir.
+
+### Super Res Zoom (#7) - prototipe, BELUM dimasukkan ke app
+- `pc-lab/mfsr.py`: splat sampel Bayer 8 frame ke grid 2x (Wronski 2019 disederhanakan): align global (phase corr)
+  + tile SAD + parabola, opsi Lucas-Kanade, kernel isotropik lalu anisotropik (tensor struktur).
+- Tele 132656 (handheld, geser 14-49 px, fase sub-piksel tersebar merata = kondisi ideal):
+  lebar tepi tiang (10-90 %, px di skala 2x): HDR+ merge + Lanczos **6**, SRZ SAD 7, SRZ LK 7-8, SRZ anisotropik 7;
+  noise SRZ 0.53-0.56 vs 0.66 (lebih bersih) tapi **tidak lebih tajam** -> ketajaman tele dibatasi lensa.
+  Tidak di-ship agar kualitas tidak turun. Gambar `data/output/mfsr*_*.jpg`.
+
+### Build
+- v0.9.0 run 43198315588 SUCCESS (percobaan pertama). IPA `data/builds/BaginCam-v0.9.0-unsigned.ipa`. Belum diuji di HP.
