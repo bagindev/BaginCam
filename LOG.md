@@ -347,3 +347,21 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
 - HDR+ HEIF 12MP x3 (08:11): eksposur & warna normal, clip 0-5.5 % (langit) (`data/output/v063_hdrplus.jpg`).
 - User tidak menemukan menu format/+Frame (screenshot tidak sampai ke PC/iPhone DCIM): baris alat terlalu panjang ->
   tombol format & +Frame terpotong di kanan layar. Fix v0.6.4: baris alat bisa digeser, pengaturan mode di depan.
+
+## 2026-11-12 - Sesi 11: verifikasi HDR+ final + menu baru (v0.7.0)
+
+### Verifikasi HDR+ di HP (v0.6.3, `HDRPLUS_20261112-082117`, DNG+HEIF + 8 frame mentah)
+- Kecerahan DNG hasil vs frame 1 Apple: rasio **1.001** (mean 805.0 vs 804.6, maks 2358 vs 2364) -> skala 14->12 bit benar.
+- Bandingkan dengan merge PC (`robust_merge.py`, 8 frame asli Apple yang sama): beda rata-rata **0.83 DN** (skala 4095)
+  -> port Metal identik dengan pipeline PC.
+- Noise turun **42 / 51 / 61 %** (3 crop). Gambar: `data/output/v063_hdrplus_frame_vs_merge.jpg`.
+- Screenshot user `data/screenshots/IMG_6724.PNG`: label tombol terpotong jadi "..." (bukan keluar layar).
+  Catatan: daftar file iPhone via Windows Shell/MTP ter-cache -> pakai `pymobiledevice3 afc ls/pull` untuk file terbaru.
+
+### Menu baru v0.7.0 (permintaan user: lebih interaktif / dikelompokkan)
+- **Strip mode** di atas shutter: AI ZOOM · HDR+ · FOTO · PRORAW · BAYER (ketuk, otomatis ke tengah).
+- **Ringkasan pengaturan + ikon gear** di kanan atas (mis. "HEIF · 12MP · 8 frame") -> buka **panel Pengaturan**
+  (sheet) berkelompok: Hasil foto (format, resolusi, jumlah frame, frame mentah, bakar LUT), HDR+ (noise reduction),
+  AI Zoom (model, kekuatan, multi-frame), Bantuan bidik (histogram, zebra, peaking), Info (lensa aktif, versi);
+  tiap kelompok ada penjelasan singkat; hanya opsi yang relevan dengan mode aktif yang tampil.
+- Baris tombol kecil dihapus; baris AI Zoom tinggal preset + slider; tombol Manual berlabel.
