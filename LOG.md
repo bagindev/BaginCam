@@ -276,3 +276,33 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
   Rencana: zoom total 1-25x dengan pindah lensa otomatis (seperti stock), <=2x crop 48MP tanpa SR,
   SR lebih halus (blend / denoise strength rendah) hanya di atas 5x/10x, multi-frame super-resolution,
   perbaiki artefak tepi, output selalu 12MP.
+
+## 2026-11-12 - Sesi 7: v0.6.0 (AI Zoom pilih lensa otomatis, x4plus, 24MP)
+
+### Analisa lensa kamera bawaan (permintaan user)
+EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
+| Foto | Zoom | Lensa fisik | Jarak fokus | BV |
+|---|---|---|---|---|
+| IMG_6641 | 5x | Tele 15.7mm | 0.30-1.12 m | -3.2 |
+| IMG_6645/6646 | 20x | **Utama 6.8mm, crop** | 0.06-0.96 m | -0.4 |
+| IMG_6647/6659/6662 | 28x | **Utama 6.8mm, crop** | 0.07-0.66 m | -0.4..-0.7 |
+| IMG_6664 | 3x | Utama crop | 0.20-0.59 m | -0.2 |
+- Kesimpulan: iOS pakai **crop lensa utama bila subjek lebih dekat dari jarak fokus minimum tele**
+  (bahkan di 28x); di gelap tapi subjek jauh tetap tele. BaginCam v0.5 memaksa tele >= 5x -> tele
+  tidak bisa fokus pada dinding dekat -> hasil 50x buruk (SR "melukis" blur).
+
+### Perubahan v0.6.0 (run 43128720663 SUCCESS, 0 warning kode, IPA 35 MB)
+- **AI Zoom pakai kamera virtual Apple** (`builtInTripleCamera`, switching `.auto`): iOS memilih tele
+  vs crop lensa utama (jarak fokus/cahaya). Saat memotret: lensa dikunci (`.locked`), zoom diset ke
+  native lensa itu -> foto resolusi penuh (48MP lensa utama), crop + upscale oleh BaginCam.
+- **Penanda lensa** di preview (`activePrimaryConstituent`): "Tele 5x", "Utama 1x · crop 7.0x" (oranye bila crop).
+- Zoom total **1-25x** (slider log + tombol 1/2/5/10/25x).
+- Model **Cepat** (general-x4v3) / **Detail** (RealESRGAN_x4plus, RRDBNet 16.7 M param, Core ML 33 MB,
+  PSNR **46.0 dB** vs PyTorch, weights SHA-256 4fa0d389...82f1).
+- AI hanya bila pembesaran >= 1.4x, dicampur Lanczos (**Kekuatan AI**, default 50 %).
+- **Multi-frame zoom**: tele (atau crop >= 3x) -> burst Bayer 8 frame -> HDR+ merge -> develop -> crop -> SR.
+- SR: tile memakai piksel asli di luar crop (fix artefak blok tepi), output langsung ke skala akhir
+  (tanpa kanvas x4 raksasa), ruang warna sumber (P3) dipertahankan.
+- **Resolusi output 12/24/48MP**: HEIF (ambil 48MP, 24MP = diperkecil dari 48MP), ProRAW (48MP),
+  HDR+ HEIF/JPEG (Bayer 12MP diperbesar AI Cepat + Lanczos), AI Zoom.
+- IPA: `data/builds/BaginCam-v0.6.0-unsigned.ipa`. **Belum diuji di HP.**
