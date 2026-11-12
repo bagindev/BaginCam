@@ -319,3 +319,8 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
 - Fix v0.6.1: progress bar + persen + sisa waktu tiap tile, peringatan "jangan tinggalkan app",
   `beginBackgroundTask` (proses lanjut ~30 s saat app ditinggal); MF: sementara pindah ke lensa fisik
   yang dipilih iOS (activePrimaryConstituent) untuk burst Bayer 8 frame, lalu kembali ke kamera virtual.
+- Log 07:55 (v0.6.0, `syslog_20261112-075214.txt`): AI Zoom 10x -> iOS pilih **Utama crop 10x** (subjek dekat, benar),
+  tapi sumber hanya **4032x3024** (kamera virtual tidak memberi 48MP) -> crop 402x302, SR Detail 4 tile 0.76 s,
+  lalu Lanczos ke 5712 -> lembek.
+- Fix v0.6.2: setiap capture AI Zoom pindah sementara ke **lensa fisik** pilihan iOS (48MP lensa utama + Bayer
+  untuk MF), kembali ke kamera virtual setelahnya; kunci AE/AWB/AF setelah lensa stabil (0.9 s).

@@ -502,44 +502,34 @@ final class CameraManager: NSObject, ObservableObject {
             var frames = count
             var delay = m.isBurst ? 0.15 : 0.0
             if m == .aiZoom {
-                // kunci lensa yang dipilih iOS, set zoom ke native lensa itu -> foto resolusi penuh
+                // Lensa dipilih iOS (kamera virtual: tele vs crop lensa utama). Untuk memotret, pindah
+                // sementara ke lensa FISIK itu: kamera virtual hanya memberi 12MP & tanpa Bayer RAW
+                // (log v0.6.0: lensa utama crop 10x -> sumber cuma 4032x3024).
                 var base: CGFloat = 1
                 var lensName = self.lens.displayName
+                let virtualWide = self.isVirtual ? self.wideBase : 1
                 if let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
                     base = self.lensBase[p.deviceType] ?? 1
                     lensName = Self.name(of: p.deviceType)
-                    if (try? d.lockForConfiguration()) != nil {
-                        d.setPrimaryConstituentDeviceSwitchingBehavior(.locked, restrictedSwitchingBehaviorConditions: [])
-                        d.videoZoomFactor = min(max(base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
-                        d.unlockForConfiguration()
-                    }
-                    self.restoreZoomAfterBurst = true
-                    delay = 0.35
-                } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
-                    d.videoZoomFactor = 1
-                    d.unlockForConfiguration()
-                    self.restoreZoomAfterBurst = true
-                    delay = 0.25
-                }
-                let virtualWide = self.isVirtual ? self.wideBase : 1
-                self.burstCrop = max(1, tz * virtualWide / base)
-                self.burstLensName = lensName
-                var bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
-                // multi-frame: lensa tele, atau crop besar di lensa utama (48MP tunggal kalah oleh merge 8 frame)
-                let wantMF = mf && (lensName == "Tele" || self.burstCrop >= 3)
-                if wantMF && !bayer, let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
-                    // Bayer RAW tidak tersedia di kamera virtual -> sementara pakai lensa fisik yang dipilih iOS
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
                     self.applyAuto()
                     self.switchedToPhysicalForMF = true
-                    bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
-                    delay = 0.9   // beri waktu AE/AF lensa fisik
-                    Log.camera.info("MF: pindah ke lensa fisik \(p.localizedName, privacy: .public), Bayer \(bayer, privacy: .public)")
+                    delay = 0.9   // beri waktu AE/AF/AWB lensa fisik stabil
+                    Log.camera.info("AI Zoom: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
+                } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
+                    d.videoZoomFactor = 1
+                    d.unlockForConfiguration()
+                    self.restoreZoomAfterBurst = true
+                    delay = 0.3
                 }
-                self.burstAIMultiFrame = wantMF && bayer
-                self.burstAIFull = !self.burstAIMultiFrame && lensName != "Tele"
+                self.burstCrop = max(1, tz * virtualWide / base)
+                self.burstLensName = lensName
+                let bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+                // multi-frame: lensa tele, atau crop >= 3x di lensa utama (48MP tunggal kalah oleh merge 8 frame)
+                self.burstAIMultiFrame = mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
+                self.burstAIFull = !self.burstAIMultiFrame
                 frames = self.burstAIMultiFrame ? 8 : 1
             }
             self.burstRemaining = frames
@@ -549,10 +539,13 @@ final class CameraManager: NSObject, ObservableObject {
             self.hdrRef = nil
             self.burstDir = Self.makeBurstDir(prefix: m == .hdrplus ? "HDRPLUS" : m == .aiZoom ? "AIZOOM" : "BURST")
             let isMulti = m.isBurst || self.burstAIMultiFrame
-            if auto && isMulti { self.lockCurrent() }
             Log.camera.info("Capture mulai: \(frames, privacy: .public) frame, mode \(m.rawValue, privacy: .public), zoom total \(Double(tz), privacy: .public)x, lensa \(self.burstLensName, privacy: .public), crop \(Double(self.burstCrop), privacy: .public)x, MF \(self.burstAIMultiFrame, privacy: .public)")
             self.setStatus(isMulti ? "Burst 0/\(frames)" : "Memotret...")
-            self.sessionQueue.asyncAfter(deadline: .now() + delay) { self.captureNext() }
+            // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
+            self.sessionQueue.asyncAfter(deadline: .now() + delay) {
+                if auto && isMulti { self.lockCurrent() }
+                self.sessionQueue.asyncAfter(deadline: .now() + (auto && isMulti ? 0.15 : 0)) { self.captureNext() }
+            }
         }
     }
 
