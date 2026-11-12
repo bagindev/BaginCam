@@ -544,3 +544,5 @@ Sampel `data/bursts/dcim-1112-malam3/` (IMG_6910-6919), app `data/bursts/app-doc
 - Fix v0.9.5 (TextBoost): kotak teks dideteksi di versi AI **dan** versi asli (gabungan, maks 32); AI dipakai hanya
   bila keyakinan OCR > asli + 0.03 **dan isi teks OCR AI mirip teks versi asli** (Levenshtein, kemiripan >= 0.75).
   Log menampilkan `ai/asli~mirip` per area.
+
+- Build v0.9.5: run 43208302285 sukses -> `data/builds/BaginCam-v0.9.5-unsigned.ipa`.
