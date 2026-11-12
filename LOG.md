@@ -256,3 +256,23 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - **Kamera depan** (dicerminkan), orientasi foto dari `RotationCoordinator` (potret/lanskap).
 - AI Zoom: error Core ML dicatat & ditampilkan, fallback compute unit (ANE -> GPU -> CPU), konversi format output, bila tetap gagal -> resize biasa ke 12MP.
 - IPA `data/builds/BaginCam-v0.5.0-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 6: uji v0.5.0 di HP, perbandingan dengan kamera bawaan
+
+- Terpasang v0.5.0 build 4 (dicek via pymobiledevice3). Syslog baru mulai 07:18:36 (sebagian tes sebelumnya).
+- File app diambil langsung dari container (`pymobiledevice3 apps pull --documents ... /Documents/Bursts`
+  -> `data/bursts/app-docs/`), foto DCIM -> `data/bursts/app-v050-test/`.
+- **Koreksi diagnosis "AI Zoom 2MP"**: nama file `AIZOOM_10.0x_SR.heic` -> SR **berhasil**. Ukuran ~1608x1208
+  karena zoom 10x di lensa 5x (= 50x, crop 403x302) dan kode membatasi SR maks 4x (desain, bukan crash).
+- Log AI Zoom 3x (IMG_6663): sumber 48MP 8064x6048, crop 2654x1990, SR 108 tile **2.91 s** (Neural Engine,
+  output BGRA), simpan 4032x3023.
+- Kamera depan: burst HEIF 8 frame OK (IMG_6650-6657). HDR+ v0.5.0 **belum diuji**.
+- Perbandingan (gambar `data/output/cmp_3x_full.jpg`, `cmp_3x_crop100.jpg`, `cmp_50x.jpg`):
+  - **3x** (BaginCam AI IMG_6663 vs stock 73mm IMG_6664): **stock lebih baik** - tekstur dinding natural & tajam;
+    BaginCam terlihat seperti lukisan cat air (Real-ESRGAN general menghapus tekstur halus).
+  - **50x** BaginCam (IMG_6661) vs stock 28x di-crop ke FOV sama (IMG_6662): keduanya jelek; BaginCam
+    berhalusinasi pola palsu + artefak blok di tepi kiri/kanan; stock blur tapi natural.
+- Kesimpulan: SR GAN satu-frame tidak cocok untuk zoom rendah (<=5x) dan berlebihan di zoom ekstrem.
+  Rencana: zoom total 1-25x dengan pindah lensa otomatis (seperti stock), <=2x crop 48MP tanpa SR,
+  SR lebih halus (blend / denoise strength rendah) hanya di atas 5x/10x, multi-frame super-resolution,
+  perbaiki artefak tepi, output selalu 12MP.
