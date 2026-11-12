@@ -394,3 +394,18 @@ Sampel: 18 AI Zoom + 12 HDR+ di container app (`data/bursts/app-docs-v070/`), DC
 - SR: tile non-x4 digambar penuh (dengan margin) lalu di-clip ke batas piksel bulat -> tanpa garis sambungan.
 - HDR+ develop: persentil 99.9 data merge -> `exposure` CIRAWFilter diturunkan agar p99.9 = 0.9 (highlight aman),
   `localToneMapAmount = 1` (angkat bayangan), NR Apple x0.6 (warna x0.8). DNGWriter juga mengembalikan black level.
+
+## 2026-11-12 - Sesi 13: v0.8.0 (1 suara shutter, sentuh fokus, zoom FOTO/HDR+ AI on/off, zoom 50x)
+
+- **GCam -> iOS?** Data GCam lokal (`Documents\gcam-taoyao\configs`): XML/AGC = angka tuning (lib_luma*/chroma* per ISO,
+  sharpening, hdr on/off), algoritma HDR+ ada di libgcam.so (Android ARM64, tertutup) -> tidak bisa/boleh dikonversi.
+  Yang bisa: implementasi metode publikasi Google (HDR+ 2016, Night Sight 2019, Super Res Zoom 2019) + pakai nilai
+  tuning AGC sebagai patokan.
+- **1 suara shutter**: frame 2..N `isShutterSoundSuppressionEnabled` (iOS 18, bila wilayah mengizinkan). FOTO = 1 jepretan.
+- **Sentuh fokus** (sebelumnya belum diimplementasi): ketuk = fokus + eksposur di titik (mapping potret: x_s = y_v,
+  y_s = 1 - x_v, depan dicerminkan; dikoreksi zoom), tekan lama = kunci AE/AF ("AE/AF TERKUNCI"), subjek berubah ->
+  kembali otomatis ke tengah.
+- **Zoom di FOTO & HDR+** (lensa belakang): zoom digital di atas lensa terpilih; capture resolusi penuh (FOTO 48MP,
+  HDR+ merge 8 frame Bayer) -> crop -> upscale **AI atau tanpa AI (Lanczos)** (toggle "Pakai AI saat zoom" / chip
+  AI di baris zoom) untuk membandingkan. Nama file `FOTO_ZOOM_*` / `HDRPLUS_ZOOM_*` (+ DNG tanpa crop).
+- **Zoom maks 50x** (AI Zoom & FOTO/HDR+ lensa utama; tele 5x x10): di atas batas hardware preview di-crop tambahan.

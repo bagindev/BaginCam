@@ -18,13 +18,13 @@ final class CameraManager: NSObject, ObservableObject {
         case aiZoom = "AI Zoom"
         var id: String { rawValue }
         var usesBayer: Bool { self == .bayer || self == .hdrplus }
-        var isBurst: Bool { self != .aiZoom }
+        var isBurst: Bool { self != .aiZoom && self != .heif }
         var detail: String {
             switch self {
-            case .hdrplus: return "Burst Bayer RAW -> align + merge di GPU"
+            case .hdrplus: return "Burst Bayer RAW -> align + merge di GPU (1 suara shutter), bisa zoom"
             case .bayer: return "Burst Bayer RAW (untuk pc-lab)"
             case .proraw: return "Burst Apple ProRAW"
-            case .heif: return "Burst HEIF (12/24/48MP)"
+            case .heif: return "Foto tunggal Apple (12/24/48MP), bisa zoom"
             case .aiZoom: return "Zoom 1-25x, pilih lensa otomatis seperti kamera bawaan"
             }
         }
@@ -93,6 +93,12 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var isCapturing = false
     /// progres pemrosesan berat (0..1), nil = tidak ada
     @Published private(set) var progress: Double?
+    /// zoom di FOTO/HDR+: pakai AI (true) atau pembesaran biasa Lanczos (false) - untuk membandingkan
+    @Published var zoomAIEnabled = true
+    /// zoom preview tambahan di luar batas zoom hardware (dipakai renderer)
+    @Published private(set) var previewExtraZoom: CGFloat = 1
+    /// fokus/eksposur dikunci (tekan lama di preview)
+    @Published private(set) var aeafLocked = false
     @Published private(set) var progressText = ""
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @Published private(set) var status = "Menyiapkan kamera..."
@@ -136,6 +142,9 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstLUT: CubeLUT?
     private var burstTotalZoom: CGFloat = 1
     private var burstCrop: CGFloat = 1            // crop digital di atas lensa native
+    private var burstZoomed = false               // capture ini di-crop + upscale (AI Zoom / zoom FOTO-HDR+)
+    private var burstDisplayZoom: CGFloat = 1     // zoom total untuk nama file / status
+    private var subjectObserver: NSObjectProtocol?
     private var burstLensName = "Utama"
     private var burstAIFull = false               // AI Zoom: minta resolusi penuh
     private var burstAIMultiFrame = false
@@ -179,6 +188,10 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configure(mode: Mode, lens: Lens) {
         configured = true
+        subjectObserver = NotificationCenter.default.addObserver(forName: AVCaptureDevice.subjectAreaDidChangeNotification,
+                                                                 object: nil, queue: nil) { [weak self] _ in
+            self?.sessionQueue.async { self?.resetFocusToCenter() }
+        }
         merger = HDRPlusMerger()
         if merger == nil { Log.hdr.error("HDRPlusMerger tidak tersedia (Metal)") }
 
@@ -220,6 +233,13 @@ final class CameraManager: NSObject, ObservableObject {
         install(d, mirrored: l == .front)
         applyRawMode(mode)
         applyAuto()
+        let maxDigital: CGFloat = l == .wide ? 50 : 10   // total maks 50x (utama) / 50x (tele 5x x10)
+        DispatchQueue.main.async {
+            self.totalZoom = 1
+            self.maxTotalZoom = maxDigital
+            self.previewExtraZoom = 1
+            self.aeafLocked = false
+        }
         publishCapabilities(d, label: l.displayName, mode: mode)
     }
 
@@ -272,7 +292,7 @@ final class CameraManager: NSObject, ObservableObject {
         for (i, c) in cons.enumerated() { bases[c.deviceType] = i == 0 ? 1 : (i - 1 < sw.count ? sw[i - 1] : 1) }
         lensBase = bases
         wideBase = bases[.builtInWideAngleCamera] ?? 1
-        let maxZ = min(25, vd.maxAvailableVideoZoomFactor / wideBase)
+        let maxZ: CGFloat = 50   // di atas batas hardware: preview di-crop tambahan, capture tetap crop sendiri
         if (try? vd.lockForConfiguration()) != nil {
             vd.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
             vd.videoZoomFactor = min(max(startZoom * wideBase, vd.minAvailableVideoZoomFactor), vd.maxAvailableVideoZoomFactor)
@@ -297,9 +317,69 @@ final class CameraManager: NSObject, ObservableObject {
         sessionQueue.async {
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
             let base = self.isVirtual ? self.wideBase : 1
-            d.videoZoomFactor = min(max(zz * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+            let want = zz * base
+            let applied = min(max(want, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+            d.videoZoomFactor = applied
             d.unlockForConfiguration()
+            let extra = max(1, want / applied)
+            DispatchQueue.main.async { self.previewExtraZoom = extra }
         }
+    }
+
+    // MARK: sentuh untuk fokus
+    /// `p`: titik di preview potret, 0..1. Tekan lama (`lock`) = kunci AE/AF di titik itu.
+    func focus(atViewPoint p: CGPoint, lock: Bool) {
+        guard isAuto, !isCapturing else { return }
+        let front = lens == .front && mode != .aiZoom
+        let extra = previewExtraZoom
+        aeafLocked = false
+        sessionQueue.async {
+            guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
+            // potret (rotasi 90): x sensor = y layar, y sensor = 1 - x layar (depan dicerminkan: = x layar)
+            var x = Double(p.y), y = front ? Double(p.x) : 1 - Double(p.x)
+            let z = Double(d.videoZoomFactor / max(d.minAvailableVideoZoomFactor, 1) * extra)
+            x = 0.5 + (x - 0.5) / z
+            y = 0.5 + (y - 0.5) / z
+            let pt = CGPoint(x: min(max(x, 0), 1), y: min(max(y, 0), 1))
+            if d.isFocusPointOfInterestSupported, d.isFocusModeSupported(.autoFocus) {
+                d.focusPointOfInterest = pt
+                d.focusMode = .autoFocus
+            }
+            if d.isExposurePointOfInterestSupported, d.isExposureModeSupported(.continuousAutoExposure) {
+                d.exposurePointOfInterest = pt
+                d.exposureMode = .continuousAutoExposure
+            }
+            d.isSubjectAreaChangeMonitoringEnabled = !lock
+            d.unlockForConfiguration()
+            Log.camera.info("Fokus di layar (\(Double(p.x), privacy: .public), \(Double(p.y), privacy: .public)) -> sensor (\(pt.x, privacy: .public), \(pt.y, privacy: .public)), kunci \(lock, privacy: .public)")
+            if lock {
+                self.sessionQueue.asyncAfter(deadline: .now() + 0.8) {
+                    guard let d2 = self.device, d2 === d, (try? d2.lockForConfiguration()) != nil else { return }
+                    if d2.isFocusModeSupported(.locked) { d2.focusMode = .locked }
+                    if d2.isExposureModeSupported(.locked) { d2.exposureMode = .locked }
+                    d2.unlockForConfiguration()
+                    DispatchQueue.main.async { self.aeafLocked = true }
+                }
+            }
+        }
+    }
+
+    /// subjek berubah -> kembali ke fokus/eksposur otomatis di tengah (kecuali sedang dikunci)
+    private func resetFocusToCenter() {
+        guard !aeafLockedSnapshot, let d = device, (try? d.lockForConfiguration()) != nil else { return }
+        let c = CGPoint(x: 0.5, y: 0.5)
+        if d.isFocusPointOfInterestSupported { d.focusPointOfInterest = c }
+        if d.isFocusModeSupported(.continuousAutoFocus) { d.focusMode = .continuousAutoFocus }
+        if d.isExposurePointOfInterestSupported { d.exposurePointOfInterest = c }
+        if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
+        d.isSubjectAreaChangeMonitoringEnabled = false
+        d.unlockForConfiguration()
+    }
+
+    private var aeafLockedSnapshot: Bool {
+        var v = false
+        DispatchQueue.main.sync { v = self.aeafLocked }
+        return v
     }
 
     private func maxDimensions(of d: AVCaptureDevice) -> CMVideoDimensions? {
@@ -478,7 +558,9 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         let m = mode
-        let count = max(m == .hdrplus ? 2 : 1, burstCount)
+        let count = m == .heif ? 1 : max(m == .hdrplus ? 2 : 1, burstCount)
+        let useAI = zoomAIEnabled
+        let lensNative: CGFloat = lens == .tele ? 5 : (lens == .ultraWide ? 0.5 : 1)
         let auto = isAuto, keep = saveFrames, nr = hdrNoiseReduction, res = outputMP
         let fmt = outputFormat, lut = bakeLUT ? captureLUT : nil
         let tz = totalZoom, model = srModel, strength = aiStrength, mf = multiFrameZoom
@@ -492,8 +574,10 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstLUT = lut
             self.burstTotalZoom = tz
             self.burstSRModel = model
-            self.burstStrength = strength
+            self.burstStrength = (m == .aiZoom || useAI) ? strength : 0
             self.restoreZoomAfterBurst = false
+            self.burstZoomed = m == .aiZoom
+            self.burstDisplayZoom = m == .aiZoom ? tz : tz * lensNative
             // orientasi foto mengikuti cara HP dipegang (potret/lanskap)
             if let rc = self.rotationCoordinator, let c = self.photoOutput.connection(with: .video) {
                 let a = rc.videoRotationAngleForHorizonLevelCapture
@@ -501,6 +585,20 @@ final class CameraManager: NSObject, ObservableObject {
             }
             var frames = count
             var delay = m.isBurst ? 0.15 : 0.0
+            if (m == .heif || m == .hdrplus) && tz > 1.01 {
+                // zoom di FOTO / HDR+: ambil resolusi penuh (zoom hardware 1x), crop + upscale sendiri
+                if let d = self.device, (try? d.lockForConfiguration()) != nil {
+                    d.videoZoomFactor = 1
+                    d.unlockForConfiguration()
+                }
+                self.restoreZoomAfterBurst = true
+                self.burstZoomed = true
+                self.burstCrop = tz
+                self.burstLensName = self.lens.displayName
+                self.burstAIFull = true
+                self.burstAIMultiFrame = false
+                delay = max(delay, 0.3)
+            }
             if m == .aiZoom {
                 // Lensa dipilih iOS (kamera virtual: tele vs crop lensa utama). Untuk memotret, pindah
                 // sementara ke lensa FISIK itu: kamera virtual hanya memberi 12MP & tanpa Bayer RAW
@@ -580,7 +678,7 @@ final class CameraManager: NSObject, ObservableObject {
             hdrFrames = []
             hdrRef = nil
             processQueue.async { self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai) }
-        } else if burstMode != .aiZoom {
+        } else if !burstZoomed {
             finish("Tersimpan \(n) frame (\(dir?.lastPathComponent ?? "-"))")
         }
     }
@@ -629,11 +727,15 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let settings = s ?? AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
         if s == nil { settings.photoQualityPrioritization = m == .aiZoom ? .quality : .balanced }
+        // burst: hanya frame pertama yang berbunyi (bila iOS / wilayah mengizinkan)
+        if #available(iOS 18.0, *), burstIndex > 1, photoOutput.isShutterSoundSuppressionSupported {
+            settings.isShutterSoundSuppressionEnabled = true
+        }
 
         // resolusi: HEIF/ProRAW 24/48MP -> sensor penuh; AI Zoom lensa utama -> penuh; Bayer ~12MP
         if let d = device {
             let full = maxDimensions(of: d), std = standardDimensions(of: d)
-            let wantFull = !wantBayer && ((m == .aiZoom && burstAIFull)
+            let wantFull = !wantBayer && ((m == .aiZoom && burstAIFull) || (m == .heif && burstZoomed)
                                           || (burstOutputMP != .mp12 && (m == .heif || m == .proraw)))
             if let dims = wantFull ? full : std,
                Int(dims.width) * Int(dims.height) <= Int(photoOutput.maxPhotoDimensions.width) * Int(photoOutput.maxPhotoDimensions.height) {
@@ -713,8 +815,9 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let w = r.meanWeights.isEmpty ? 0 : r.meanWeights.reduce(0, +) / Float(r.meanWeights.count)
 
-        if forAIZoom {
-            // AI Zoom multi-frame: kembangkan hasil merge -> crop -> upscale
+        if forAIZoom || burstZoomed {
+            if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
+            // AI Zoom multi-frame / HDR+ zoom: kembangkan hasil merge -> crop -> upscale
             guard let img = RawDeveloper.develop(dng: dng, highlight: highlight), let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
@@ -817,14 +920,16 @@ final class CameraManager: NSObject, ObservableObject {
             finish("AI Zoom gagal encode")
             return
         }
-        let tz = Double(burstTotalZoom)
+        let tz = Double(burstDisplayZoom)
+        let prefix = burstMode == .aiZoom ? "AIZOOM" : (burstMode == .hdrplus ? "HDRPLUS_ZOOM" : "FOTO_ZOOM")
         let mfTag = multiFrame > 0 ? "_MF\(multiFrame)" : ""
         let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(burstSRModel == .detail ? "D" : "C")" : ""
-        let name = String(format: "AIZOOM_%.1fx_%@%@%@_%@.heic", tz, burstLensName, mfTag, aiTag, res.label)
+        let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, burstLensName, mfTag, aiTag, res.label)
         save(out as Data, fileName: name, dir: dir)
         Log.sr.info("AI Zoom \(tz, privacy: .public)x lensa \(self.burstLensName, privacy: .public) crop \(Double(self.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")
         let mfText = multiFrame > 0 ? " · MF \(multiFrame)" : ""
-        finish(String(format: "AI Zoom %.1fx · %@ crop %.1fx%@ · %@ -> %dx%d", tz, burstLensName,
+        let label = burstMode == .aiZoom ? "AI Zoom" : (burstMode == .hdrplus ? "HDR+ zoom" : "Foto zoom")
+        finish(String(format: "%@ %.1fx · %@ crop %.1fx%@ · %@ -> %dx%d", label, tz, burstLensName,
                       Double(burstCrop), mfText, note, result.width, result.height))
     }
 
@@ -886,7 +991,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                 if self.burstSaveFrames && self.burstMode == .hdrplus, let data = photo.fileDataRepresentation() {
                     self.save(data, fileName: String(format: "IMG_%04d.dng", idx), dir: self.burstDir)
                 }
-            } else if self.burstMode == .aiZoom {
+            } else if self.burstMode == .aiZoom || (self.burstZoomed && !photo.isRawPhoto) {
                 let dir = self.burstDir
                 self.processQueue.async { self.processAIZoom(photo, dir: dir) }
             } else if var data = photo.fileDataRepresentation() {

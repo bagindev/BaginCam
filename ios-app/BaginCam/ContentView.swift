@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var showHistogram = true
     @State private var zebra = false
     @State private var peaking = false
+    @State private var focusPoint: CGPoint?      // posisi kotak fokus di preview (piksel view)
+    @State private var focusTick = 0
 
     /// urutan mode di strip (seperti kamera bawaan)
     private let modeOrder: [CameraManager.Mode] = [.aiZoom, .hdrplus, .heif, .proraw, .bayer]
@@ -30,7 +32,8 @@ struct ContentView: View {
                     }
                     .overlay(alignment: .topLeading) { lensBadge }
                     .overlay(alignment: .bottomTrailing) { assistBadges }
-                if cam.mode == .aiZoom { zoomRow }
+                    .overlay { focusLayer }
+                if showsZoom { zoomRow }
                 Spacer(minLength: 0)
                 if showManual { manualPanel }
                 if cam.mode != .aiZoom { lensRow }
@@ -53,6 +56,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
+        .onChange(of: cam.previewExtraZoom) { _, z in renderer.zoom = z }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
@@ -162,28 +166,107 @@ struct ContentView: View {
 
     // MARK: AI Zoom
     /// slider 0..1 -> zoom 1..max skala logaritmik
+    /// zoom tersedia di AI Zoom, FOTO dan HDR+ (lensa belakang)
+    private var showsZoom: Bool {
+        cam.mode == .aiZoom || ((cam.mode == .heif || cam.mode == .hdrplus) && cam.lens != .front)
+    }
+
+    /// faktor optik lensa terpilih relatif lensa utama (AI Zoom: 1, karena totalZoom sudah total)
+    private var lensNative: Double {
+        if cam.mode == .aiZoom { return 1 }
+        switch cam.lens {
+        case .tele: return 5
+        case .ultraWide: return 0.5
+        default: return 1
+        }
+    }
+
+    private var displayZoom: Double { Double(cam.totalZoom) * lensNative }
+    private var minZoom: Double { lensNative }
+    private var maxZoom: Double { Double(cam.maxTotalZoom) * lensNative }
+
+    private func setDisplayZoom(_ z: Double) {
+        cam.setTotalZoom(CGFloat(max(1, z / lensNative)))
+    }
+
+    /// slider 0..1 -> zoom min..max skala logaritmik
     private var zoomBinding: Binding<Double> {
         Binding(
-            get: { log(Double(cam.totalZoom)) / log(Double(max(cam.maxTotalZoom, 1.01))) },
-            set: { t in cam.setTotalZoom(CGFloat(pow(Double(max(cam.maxTotalZoom, 1.01)), t))) })
+            get: { log(displayZoom / minZoom) / log(max(maxZoom / minZoom, 1.01)) },
+            set: { t in setDisplayZoom(minZoom * pow(max(maxZoom / minZoom, 1.01), t)) })
+    }
+
+    private var zoomPresets: [Double] {
+        [1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
     }
 
     private var zoomRow: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
-                ForEach([1.0, 2.0, 5.0, 10.0, 25.0].filter { CGFloat($0) <= cam.maxTotalZoom + 0.01 }, id: \.self) { z in
-                    let on = abs(Double(cam.totalZoom) - z) < 0.05
-                    Button(z == 1 ? "1x" : String(format: "%.0fx", z)) { cam.setTotalZoom(CGFloat(z)) }
+                ForEach(zoomPresets, id: \.self) { z in
+                    let on = abs(displayZoom - z) < 0.05
+                    Button(String(format: "%.0fx", z)) { setDisplayZoom(z) }
                         .font(.caption.bold())
                         .frame(width: 40, height: 28)
                         .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
                         .foregroundStyle(on ? .black : .white)
                 }
                 Spacer(minLength: 0)
-                Text(String(format: "%.1fx", Double(cam.totalZoom)))
+                if cam.mode != .aiZoom && displayZoom > minZoom + 0.05 {
+                    Text(cam.zoomAIEnabled ? "AI" : "tanpa AI")
+                        .font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(cam.zoomAIEnabled ? Color.yellow.opacity(0.85) : Color.white.opacity(0.2), in: Capsule())
+                        .foregroundStyle(cam.zoomAIEnabled ? .black : .white)
+                        .onTapGesture { cam.zoomAIEnabled.toggle() }
+                }
+                Text(String(format: "%.1fx", displayZoom))
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
             Slider(value: zoomBinding, in: 0...1).tint(.yellow)
+        }
+    }
+
+    // MARK: sentuh fokus
+    private var focusLayer: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(coordinateSpace: .local) { loc in
+                        tapFocus(loc, size: geo.size, lock: false)
+                    }
+                    .gesture(LongPressGesture(minimumDuration: 0.6).sequenced(before: DragGesture(minimumDistance: 0))
+                        .onEnded { value in
+                            if case .second(true, let drag?) = value {
+                                tapFocus(drag.location, size: geo.size, lock: true)
+                            }
+                        })
+                if let p = focusPoint {
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.yellow, lineWidth: 1.5)
+                        .frame(width: 76, height: 76)
+                        .position(p)
+                        .allowsHitTesting(false)
+                }
+                if cam.aeafLocked {
+                    Text("AE/AF TERKUNCI")
+                        .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.yellow, in: Capsule()).foregroundStyle(.black)
+                        .position(x: geo.size.width / 2, y: 52)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    }
+
+    private func tapFocus(_ loc: CGPoint, size: CGSize, lock: Bool) {
+        guard size.width > 0, size.height > 0 else { return }
+        focusPoint = loc
+        focusTick += 1
+        let tick = focusTick
+        cam.focus(atViewPoint: CGPoint(x: loc.x / size.width, y: loc.y / size.height), lock: lock)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (lock ? 2.5 : 1.2)) {
+            if focusTick == tick { focusPoint = nil }
         }
     }
 
