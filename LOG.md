@@ -593,3 +593,4 @@ Sampel `data/bursts/dcim-1112-malam5/` (IMG_6927 HDR+ 13x Tele Cepat 24MP, IMG_6
   Super Res Zoom selalu otomatis, chip cepat atas, zoom chip di atas shutter, laci Pro bawah, settings berkelompok.
   Usulan susunan baru BaginCam (MALAM · FOTO · PRO, chip proses HDR+/Apple/Auto, AI zoom otomatis):
   `docs/usulan-ui-gcam.md`. Menunggu keputusan pengguna sebelum eksekusi.
+- Inventaris fitur v0.9.6 untuk penggabungan menu ditulis ke `docs/usulan-ui-gcam.md`.

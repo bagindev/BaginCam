@@ -66,3 +66,30 @@ peaking) · **Tombol** (volume = shutter, timer) · **Info**.
 - **Auto**: HDR+ saat gelap / zoom melewati lensa / ada wajah backlit, Apple saat terang & 1x (instan).
 - Haptic saat ganti lensa; semua kontrol di separuh bawah (satu tangan).
 - Tidak bisa: Night Mode Apple (tidak dibuka untuk app pihak ketiga); Portrait bokeh mungkin nanti (depth data).
+
+## Inventaris fitur yang sudah berjalan (v0.9.6)
+
+### Mesin proses
+| Proses | Cara kerja | Dipakai di |
+|---|---|---|
+| HDR+ BaginCam | burst Bayer RAW 6-15 frame -> align piramida (tile 16) -> merge GPU (Frekuensi/Spasial) -> DNG sendiri -> develop RAW Apple (lindung highlight, tone map lokal, metering zoom/wajah) | mode HDR+, AI ZOOM (MF) |
+| Apple (Smart HDR / Deep Fusion) | 1 jepretan diproses Apple | mode FOTO |
+| Apple ProRAW | DNG komputasional Apple 12/24/48MP | mode PRORAW |
+| Bayer mentah | DNG per frame tanpa proses | mode BAYER (untuk PC) |
+
+### Pembesaran saat zoom melewati lensa optik
+Apple digital zoom (FOTO, AI mati) · Lanczos/tanpa AI (HDR+, AI mati) · AI Cepat (x4v3, ~1.4 s) · AI Detail
+(x4plus, ~10 s/12MP) · Multi-frame + AI (AI ZOOM, tele atau crop >= 3x) · Fokus tulisan (OCR per paragraf).
+Semua AI di Neural Engine; kekuatan AI 0-100 % (campuran dengan Lanczos).
+
+### Opsi per mode (sekarang)
+- HDR+: format HEIF/JPEG/DNG/DNG+HEIF, resolusi 12/24/48MP, frame otomatis atau 2-16, simpan frame mentah, bake LUT,
+  metode merge, NR 1-23, AI saat zoom + model + kekuatan + fokus tulisan.
+- FOTO: resolusi, AI saat zoom digital + model + kekuatan + fokus tulisan, bake LUT.
+- AI ZOOM: model, kekuatan, multi-frame, fokus tulisan, resolusi, bake LUT.
+- PRORAW: resolusi, jumlah frame. BAYER: jumlah frame. Keduanya: pilih lensa fisik UW/Utama/Tele/Depan.
+- Semua: WB preset (Auto/Cerah/Berawan/Teduh/Pijar/Neon/Kunci), timer 0/3/10, tombol volume, panel Manual (Auto,
+  EV, ISO, shutter, suhu WB, fokus), ketuk fokus / tekan lama kunci AE/AF, LUT (3 SonyLook + import .cube).
+- Zoom: preset .5/1/2/5/10/25/50, slider log, maks 50x, kunci lensa Auto/UW/Utama/Tele/Depan, badge lensa (oranye
+  bila crop), preview dibekukan saat capture.
+- Bantuan bidik: histogram, zebra, peaking, grid 3x3, waterpass, readout ISO/shutter/K/fokus.
