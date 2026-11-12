@@ -244,7 +244,7 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 
 ### Temuan uji v0.4.0 (file DCIM 6627-6648, `data/bursts/app-v040-test/`)
 - **HDR+ tidak bekerja**: DNG hasil (IMG_6638) identik byte-per-byte dengan frame referensi (IMG_6629) -> `replacementRawPixelBuffer` diabaikan iOS untuk Bayer RAW.
-- Merge Bayer yang sama di PC (9 frame ultra-wide ISO 400, `app-hdrplus-uw-9f`): bobot ~0.82, noise turun 39-58 %% -> algoritma benar, masalah di penulisan file.
+- Merge Bayer yang sama di PC (9 frame ultra-wide ISO 400, `app-hdrplus-uw-9f`): bobot ~0.82, noise turun 39-58 % -> algoritma benar, masalah di penulisan file.
 - **AI Zoom 2MP**: IMG_6642/6643/6644/6648 = 1608x1208 (crop 2.5x lensa 5x) -> SR gagal tanpa pesan, crop disimpan apa adanya. Penyebab Core ML belum diketahui (log 3 menit kosong, app tidak dibuka).
 - Foto kamera bawaan: IMG_6627 (ProRAW UW), IMG_6641 (ProRAW 5x), IMG_6647 (HEIC zoom 14x). AI Zoom IMG_6640 (1x) sebanding dengan stock.
 - Burst Bayer di app sangat cepat: 9-10 frame dalam ~0.75 s. Bayer ultra-wide 4224x3024, white 4095, black 528.
