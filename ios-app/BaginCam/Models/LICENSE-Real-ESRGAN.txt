@@ -1,4 +1,4 @@
-Model AI Zoom (BaginCamSR_x4_256) dikonversi dari Real-ESRGAN "realesr-general-x4v3"
+Model AI Zoom dikonversi dari Real-ESRGAN: BaginCamSR_x4_256 = "realesr-general-x4v3" (Cepat), BaginCamSRplus_x4_256 = "RealESRGAN_x4plus" (Detail, release v0.1.0, SHA-256 4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1)
 https://github.com/xinntao/Real-ESRGAN  (release v0.2.5.0)
 SHA-256 weights: 8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292
 

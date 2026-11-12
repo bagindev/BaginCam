@@ -1,4 +1,5 @@
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -63,11 +64,42 @@ enum RawDeveloper {
                                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])
     }
 
-    /// Bakar LUT ke HEIC/JPEG yang sudah jadi (orientasi tetap di metadata, piksel tidak diputar).
-    static func bakeLUT(into encoded: Data, lut: CubeLUT, asJPEG: Bool = false) -> Data? {
-        guard let src = CIImage(data: encoded, options: [.applyOrientationProperty: false]) else { return nil }
-        let img = applyLUT(src, lut)
-        return asJPEG ? encodeJPEG(img) : encodeHEIF(img)
+    /// Proses ulang HEIC/JPEG yang sudah jadi: perkecil ke `longSide` (mis. 48MP -> 24MP) dan/atau
+    /// bakar LUT. Orientasi tetap di metadata (piksel tidak diputar). nil = tidak perlu / gagal.
+    static func reprocess(_ encoded: Data, longSide: Int?, lut: CubeLUT?) -> Data? {
+        guard longSide != nil || lut != nil,
+              let src = CIImage(data: encoded, options: [.applyOrientationProperty: false]) else { return nil }
+        var img = src
+        if let longSide {
+            let k = Double(longSide) / Double(max(src.extent.width, src.extent.height))
+            if k < 0.999 {
+                let f = CIFilter.lanczosScaleTransform()
+                f.inputImage = img
+                f.scale = Float(k)
+                f.aspectRatio = 1
+                if let o = f.outputImage { img = o.settingProperties(src.properties) }
+            }
+        }
+        img = applyLUT(img, lut)
+        return encodeHEIF(img)
+    }
+
+    /// CIImage -> CGImage (Display P3, 8 bit).
+    static func cgImage(_ image: CIImage) -> CGImage? {
+        context.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: p3)
+    }
+
+    /// Campur hasil AI dengan pembesaran biasa: strength 0 = biasa, 1 = AI penuh.
+    static func blend(plain: CGImage, ai: CGImage, strength: Double) -> CGImage? {
+        if strength >= 0.999 { return ai }
+        let a = CIImage(cgImage: plain), b = CIImage(cgImage: ai)
+        let f = CIFilter.dissolveTransition()
+        f.inputImage = a
+        f.targetImage = b
+        f.time = Float(max(0, min(1, strength)))
+        guard let out = f.outputImage?.cropped(to: a.extent) else { return nil }
+        return context.createCGImage(out, from: a.extent, format: .RGBA8,
+                                     colorSpace: plain.colorSpace ?? p3)
     }
 
     /// CGImage -> CIImage -> LUT -> CGImage (untuk AI Zoom).

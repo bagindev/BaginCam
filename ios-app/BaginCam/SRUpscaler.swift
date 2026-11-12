@@ -4,14 +4,38 @@ import CoreML
 import CoreVideo
 import Foundation
 
-/// AI Zoom: super-resolution x4 dengan Core ML (Real-ESRGAN realesr-general-x4v3, BSD-3-Clause),
-/// diproses per tile 256 px (overlap 16 px) supaya muat di Neural Engine dan tanpa sambungan.
+/// Model AI Zoom.
+enum SRModel: String, CaseIterable, Identifiable {
+    case fast = "Cepat"     // realesr-general-x4v3 (SRVGGNetCompact, 1.2 M param)
+    case detail = "Detail"  // RealESRGAN_x4plus (RRDBNet, 16.7 M param)
+    var id: String { rawValue }
+    var fileName: String { self == .fast ? "BaginCamSR_x4_256" : "BaginCamSRplus_x4_256" }
+}
+
+/// Resolusi output (4:3, sisi panjang).
+enum OutputMP: Int, CaseIterable, Identifiable {
+    case mp12 = 12, mp24 = 24, mp48 = 48
+    var id: Int { rawValue }
+    var label: String { "\(rawValue)MP" }
+    var longSide: Int {
+        switch self {
+        case .mp12: return 4032
+        case .mp24: return 5712
+        case .mp48: return 8064
+        }
+    }
+}
+
+/// Super-resolution x4 dengan Core ML (Real-ESRGAN, BSD-3-Clause), per tile 256 px (overlap 16 px).
+/// - Tepi tile memakai piksel ASLI di luar area crop (bukan piksel tepi yang diulang) -> tanpa artefak blok.
+/// - Output langsung ke skala akhir (outScale <= 4): tiap tile hasil diperkecil ke kanvas akhir,
+///   jadi tidak perlu kanvas raksasa x4 di memori (mis. 4032 px x4 = 780 MB).
 final class SRUpscaler {
-    static let modelName = "BaginCamSR_x4_256"
     static let tile = 256
     static let scale = 4
     static let pad = 16
 
+    let modelKind: SRModel
     private var model: MLModel
     private let url: URL
     /// urutan cadangan compute unit bila prediksi gagal (Neural Engine -> GPU -> CPU)
@@ -19,12 +43,19 @@ final class SRUpscaler {
     /// pesan error terakhir (ditampilkan di status app)
     private(set) var lastError: String?
 
-    init?() {
-        guard let url = Bundle.main.url(forResource: Self.modelName, withExtension: "mlmodelc", subdirectory: "Models")
-                ?? Bundle.main.url(forResource: Self.modelName, withExtension: "mlmodelc") else {
-            Log.sr.error("Model SR tidak ada di bundle")
+    static func url(for m: SRModel) -> URL? {
+        Bundle.main.url(forResource: m.fileName, withExtension: "mlmodelc", subdirectory: "Models")
+            ?? Bundle.main.url(forResource: m.fileName, withExtension: "mlmodelc")
+    }
+
+    static func isBundled(_ m: SRModel) -> Bool { url(for: m) != nil }
+
+    init?(model kind: SRModel) {
+        guard let url = Self.url(for: kind) else {
+            Log.sr.error("Model SR \(kind.rawValue, privacy: .public) tidak ada di bundle")
             return nil
         }
+        self.modelKind = kind
         self.url = url
         guard let m = Self.load(url, .all) else { return nil }
         model = m
@@ -34,13 +65,12 @@ final class SRUpscaler {
         let cfg = MLModelConfiguration()
         cfg.computeUnits = units
         do {
+            let t0 = CFAbsoluteTimeGetCurrent()
             let m = try MLModel(contentsOf: url, configuration: cfg)
-            let inDesc = m.modelDescription.inputDescriptionsByName.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
-            let outDesc = m.modelDescription.outputDescriptionsByName.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
-            Log.sr.info("Model SR dimuat (units \(units.rawValue, privacy: .public)) in[\(inDesc, privacy: .public)] out[\(outDesc, privacy: .public)]")
+            Log.sr.info("Model \(url.lastPathComponent, privacy: .public) dimuat (units \(units.rawValue, privacy: .public)) \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
             return m
         } catch {
-            Log.sr.error("Muat model SR gagal (units \(units.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)")
+            Log.sr.error("Muat model gagal (units \(units.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)")
             return nil
         }
     }
@@ -69,29 +99,38 @@ final class SRUpscaler {
         }
     }
 
-    static var isBundled: Bool {
-        Bundle.main.url(forResource: modelName, withExtension: "mlmodelc", subdirectory: "Models") != nil
-            || Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") != nil
-    }
-
     private static let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     /// BGRA8 di memori (noneSkipFirst + little endian) = sama dengan kCVPixelFormatType_32BGRA
     private static let bitmapInfo = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
 
-    /// Upscale x4. progress(selesai, total) dipanggil per tile.
-    func upscale(_ image: CGImage, progress: ((Int, Int) -> Void)? = nil) -> CGImage? {
-        let w = image.width, h = image.height
+    /// Upscale area `crop` dari `image` dengan faktor `outScale` (<= 4).
+    func upscale(_ image: CGImage, crop: CGRect, outScale: Double,
+                 progress: ((Int, Int) -> Void)? = nil) -> CGImage? {
         let tile = Self.tile, pad = Self.pad, s = Self.scale, core = tile - 2 * pad
-        guard let sctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                   space: Self.colorSpace, bitmapInfo: Self.bitmapInfo) else { return nil }
-        sctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let crop = crop.integral
+        let w = Int(crop.width), h = Int(crop.height)
+        guard w > 0, h > 0, outScale > 0 else { return nil }
+        let k = min(outScale, Double(s))
+        let exact = abs(k - Double(s)) < 1e-6
+        let cs = Self.space(of: image)
+
+        // sumber = crop + margin pad (piksel asli), dipotong ke batas gambar
+        let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let srcRect = crop.insetBy(dx: CGFloat(-pad), dy: CGFloat(-pad)).intersection(bounds).integral
+        guard let srcImg = image.cropping(to: srcRect) else { return nil }
+        let sw = Int(srcRect.width), sh = Int(srcRect.height)
+        let ox = Int(crop.minX - srcRect.minX), oy = Int(crop.minY - srcRect.minY)
+        guard let sctx = CGContext(data: nil, width: sw, height: sh, bitsPerComponent: 8, bytesPerRow: 0,
+                                   space: cs, bitmapInfo: Self.bitmapInfo) else { return nil }
+        sctx.draw(srcImg, in: CGRect(x: 0, y: 0, width: sw, height: sh))
         guard let src = sctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
         let sbpr = sctx.bytesPerRow
 
-        let ow = w * s, oh = h * s
+        let ow = max(1, Int((Double(w) * k).rounded())), oh = max(1, Int((Double(h) * k).rounded()))
         guard let octx = CGContext(data: nil, width: ow, height: oh, bitsPerComponent: 8, bytesPerRow: 0,
-                                   space: Self.colorSpace, bitmapInfo: Self.bitmapInfo),
+                                   space: cs, bitmapInfo: Self.bitmapInfo),
               let dst = octx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        octx.interpolationQuality = .high
         let dbpr = octx.bytesPerRow
 
         var inPB: CVPixelBuffer?
@@ -104,26 +143,25 @@ final class SRUpscaler {
         let t0 = CFAbsoluteTimeGetCurrent()
         for ty in 0..<ny {
             for tx in 0..<nx {
-                let cx = tx * core, cy = ty * core          // posisi inti tile di input
-                let ix0 = cx - pad, iy0 = cy - pad          // posisi tile (boleh negatif -> clamp tepi)
+                let cx = tx * core, cy = ty * core              // inti tile, koordinat crop
+                let bx = cx - pad + ox, by = cy - pad + oy      // awal tile, koordinat sumber
 
-                // isi tile input (clamp tepi)
+                // isi tile input; hanya di batas gambar asli piksel tepi diulang
                 CVPixelBufferLockBaseAddress(inBuf, [])
                 if let ib = CVPixelBufferGetBaseAddress(inBuf)?.assumingMemoryBound(to: UInt8.self) {
                     let ibpr = CVPixelBufferGetBytesPerRow(inBuf)
+                    let x0 = max(0, -bx), x1 = min(tile, sw - bx)
                     for y in 0..<tile {
-                        let sy = min(max(iy0 + y, 0), h - 1)
+                        let sy = min(max(by + y, 0), sh - 1)
                         let srow = src + sy * sbpr
                         let drow = ib + y * ibpr
-                        let x0 = max(0, -ix0), x1 = min(tile, w - ix0)   // rentang yang ada di dalam gambar
-                        if x1 > x0 { memcpy(drow + x0 * 4, srow + (ix0 + x0) * 4, (x1 - x0) * 4) }
-                        if x0 > 0 { for x in 0..<x0 { memcpy(drow + x * 4, srow, 4) } }
-                        if x1 < tile { for x in max(x1, 0)..<tile { memcpy(drow + x * 4, srow + (w - 1) * 4, 4) } }
+                        if x1 > x0 { memcpy(drow + x0 * 4, srow + (bx + x0) * 4, (x1 - x0) * 4) }
+                        if x0 > 0 { for x in 0..<min(x0, tile) { memcpy(drow + x * 4, srow, 4) } }
+                        if x1 < tile { for x in max(x1, 0)..<tile { memcpy(drow + x * 4, srow + (sw - 1) * 4, 4) } }
                     }
                 }
                 CVPixelBufferUnlockBaseAddress(inBuf, [])
 
-                // prediksi
                 guard var opb = predict(inBuf) else {
                     Log.sr.error("Prediksi tile \(tx, privacy: .public),\(ty, privacy: .public) gagal")
                     return nil
@@ -134,7 +172,6 @@ final class SRUpscaler {
                     return nil
                 }
                 if CVPixelBufferGetPixelFormatType(opb) != kCVPixelFormatType_32BGRA {
-                    // format lain (mis. ARGB/RGBA) -> konversi ke BGRA lewat Core Image
                     guard let conv = toBGRA(opb) else {
                         lastError = "format output SR \(CVPixelBufferGetPixelFormatType(opb)) gagal dikonversi"
                         Log.sr.error("\(self.lastError ?? "", privacy: .public)")
@@ -142,19 +179,29 @@ final class SRUpscaler {
                     }
                     opb = conv
                 }
-                if done == 0 {
-                    let fmt = CVPixelBufferGetPixelFormatType(opb)
-                    Log.sr.info("Output SR \(CVPixelBufferGetWidth(opb), privacy: .public)x\(CVPixelBufferGetHeight(opb), privacy: .public) format \(fmt, privacy: .public)")
-                }
 
-                // salin inti tile hasil ke kanvas output
+                // salin inti tile hasil ke kanvas
+                let coreW = min(core, w - cx), coreH = min(core, h - cy)
                 CVPixelBufferLockBaseAddress(opb, .readOnly)
                 if let ob = CVPixelBufferGetBaseAddress(opb)?.assumingMemoryBound(to: UInt8.self) {
                     let obpr = CVPixelBufferGetBytesPerRow(opb)
-                    let copyW = min(core, w - cx) * s, copyH = min(core, h - cy) * s
-                    for y in 0..<copyH {
-                        memcpy(dst + (cy * s + y) * dbpr + cx * s * 4,
-                               ob + (pad * s + y) * obpr + pad * s * 4, copyW * 4)
+                    if exact {
+                        for y in 0..<(coreH * s) {
+                            memcpy(dst + (cy * s + y) * dbpr + cx * s * 4, ob + (pad * s + y) * obpr + pad * s * 4, coreW * s * 4)
+                        }
+                    } else if let tctx = CGContext(data: nil, width: coreW * s, height: coreH * s, bitsPerComponent: 8,
+                                                   bytesPerRow: 0, space: cs, bitmapInfo: Self.bitmapInfo),
+                              let tdst = tctx.data?.assumingMemoryBound(to: UInt8.self) {
+                        let tbpr = tctx.bytesPerRow
+                        for y in 0..<(coreH * s) {
+                            memcpy(tdst + y * tbpr, ob + (pad * s + y) * obpr + pad * s * 4, coreW * s * 4)
+                        }
+                        if let timg = tctx.makeImage() {
+                            // posisi di kanvas akhir (CG: origin kiri-bawah)
+                            let rx = Double(cx) * k, ryTop = Double(cy) * k
+                            let rw = Double(coreW) * k, rh = Double(coreH) * k
+                            octx.draw(timg, in: CGRect(x: rx, y: Double(oh) - ryTop - rh, width: rw, height: rh))
+                        }
                     }
                 }
                 CVPixelBufferUnlockBaseAddress(opb, .readOnly)
@@ -163,7 +210,7 @@ final class SRUpscaler {
             }
         }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        Log.sr.info("SR \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public): \(nx * ny, privacy: .public) tile, \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        Log.sr.info("SR \(self.modelKind.rawValue, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public) (x\(k, format: .fixed(precision: 2), privacy: .public)): \(nx * ny, privacy: .public) tile, \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return octx.makeImage()
     }
 
@@ -181,14 +228,24 @@ final class SRUpscaler {
         return out
     }
 
+    /// Ruang warna asli gambar (mis. Display P3 dari iPhone) bila RGB, selain itu sRGB.
+    static func space(of image: CGImage) -> CGColorSpace {
+        if let c = image.colorSpace, c.model == .rgb { return c }
+        return colorSpace
+    }
+
     /// Resize kualitas tinggi supaya sisi panjang = longSide.
     static func resize(_ image: CGImage, longSide: Int) -> CGImage? {
         let w = image.width, h = image.height
         let k = Double(longSide) / Double(max(w, h))
         guard abs(k - 1) > 0.001 else { return image }
-        let nw = max(1, Int((Double(w) * k).rounded())), nh = max(1, Int((Double(h) * k).rounded()))
+        return resize(image, width: max(1, Int((Double(w) * k).rounded())), height: max(1, Int((Double(h) * k).rounded())))
+    }
+
+    static func resize(_ image: CGImage, width nw: Int, height nh: Int) -> CGImage? {
+        if image.width == nw && image.height == nh { return image }
         guard let ctx = CGContext(data: nil, width: nw, height: nh, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: colorSpace, bitmapInfo: bitmapInfo) else { return nil }
+                                  space: space(of: image), bitmapInfo: bitmapInfo) else { return nil }
         ctx.interpolationQuality = .high
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: nw, height: nh))
         return ctx.makeImage()

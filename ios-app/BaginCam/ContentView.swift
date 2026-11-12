@@ -25,18 +25,11 @@ struct ContentView: View {
                     .overlay(alignment: .topTrailing) {
                         if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(8) }
                     }
-                    .overlay(alignment: .top) {
-                        if cam.mode == .aiZoom && cam.zoom > 1.01 {
-                            Text(String(format: "AI Zoom %.1fx", Double(cam.zoom)))
-                                .font(.caption.bold()).padding(6)
-                                .background(.black.opacity(0.5), in: Capsule())
-                                .foregroundStyle(.yellow).padding(8)
-                        }
-                    }
+                    .overlay(alignment: .topLeading) { lensBadge }
                 if cam.mode == .aiZoom { zoomRow }
                 Spacer(minLength: 0)
                 if showManual { manualPanel }
-                lensRow
+                if cam.mode != .aiZoom { lensRow }
                 bottomBar
             }
             .padding(.horizontal, 12)
@@ -51,7 +44,6 @@ struct ContentView: View {
             }
         }
         .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
-        .onChange(of: cam.zoom) { _, z in renderer.zoom = z }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
@@ -107,8 +99,18 @@ struct ContentView: View {
             toggleChip("Histo", icon: "chart.bar.fill", isOn: $showHistogram)
             toggleChip("Zebra", icon: "line.diagonal", isOn: $zebra)
             toggleChip("Peaking", icon: "scope", isOn: $peaking)
-            if (cam.mode == .heif || cam.mode == .proraw) && cam.maxMP > 20 {
-                toggleChip("\(cam.maxMP)MP", icon: "square.resize.up", isOn: $cam.use48MP)
+            if showsResolution {
+                Menu {
+                    ForEach(OutputMP.allCases) { r in
+                        Button(r.label) { cam.outputMP = r }
+                    }
+                } label: {
+                    Label(cam.outputMP.label, systemImage: "square.resize.up")
+                        .font(.caption2).lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.white)
+                }
             }
             if cam.mode == .hdrplus {
                 Menu {
@@ -162,18 +164,74 @@ struct ContentView: View {
     }
 
     // MARK: AI Zoom
-    private var zoomRow: some View {
-        HStack {
-            Image(systemName: "plus.magnifyingglass").foregroundStyle(.white)
-            Slider(value: $cam.zoom, in: 1...10)
-            Text(String(format: "%.1fx", Double(cam.zoom)))
-                .font(.caption.monospacedDigit()).foregroundStyle(.white).frame(width: 44)
+    private var showsResolution: Bool {
+        switch cam.mode {
+        case .heif, .proraw: return cam.maxMP > 20
+        case .hdrplus: return cam.outputFormat != .dng
+        case .aiZoom: return true
+        case .bayer: return false
         }
-        .overlay(alignment: .bottom) {
-            if !cam.srAvailable {
-                Text("model AI belum ada di build ini - zoom biasa").font(.caption2).foregroundStyle(.orange).offset(y: 14)
+    }
+
+    /// penanda lensa fisik yang sedang dipakai (mis. "Tele 5x", "Utama 1x · crop 7.0x")
+    private var lensBadge: some View {
+        Label(cam.activeLensLabel, systemImage: "camera.aperture")
+            .font(.caption.bold())
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(.black.opacity(0.55), in: Capsule())
+            .foregroundStyle(cam.activeLensLabel.contains("crop") ? .orange : .yellow)
+            .padding(8)
+    }
+
+    /// slider 0..1 -> zoom 1..max skala logaritmik
+    private var zoomBinding: Binding<Double> {
+        Binding(
+            get: { log(Double(cam.totalZoom)) / log(Double(max(cam.maxTotalZoom, 1.01))) },
+            set: { t in cam.setTotalZoom(CGFloat(pow(Double(max(cam.maxTotalZoom, 1.01)), t))) })
+    }
+
+    private var zoomRow: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                ForEach([1.0, 2.0, 5.0, 10.0, 25.0].filter { CGFloat($0) <= cam.maxTotalZoom + 0.01 }, id: \.self) { z in
+                    Button(z == 1 ? "1x" : String(format: "%.0fx", z)) { cam.setTotalZoom(CGFloat(z)) }
+                        .font(.caption.bold())
+                        .frame(width: 40, height: 28)
+                        .background(abs(Double(cam.totalZoom) - z) < 0.05 ? Color.yellow : Color.white.opacity(0.15),
+                                    in: Capsule())
+                        .foregroundStyle(abs(Double(cam.totalZoom) - z) < 0.05 ? .black : .white)
+                }
+                Spacer(minLength: 0)
+                Text(String(format: "%.1fx", Double(cam.totalZoom)))
+                    .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
+            }
+            Slider(value: zoomBinding, in: 0...1)
+            HStack(spacing: 8) {
+                Picker("Model", selection: $cam.srModel) {
+                    ForEach(SRModel.allCases) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+                .disabled(!cam.srDetailAvailable)
+                if cam.supportsBayer {
+                    toggleChip("Multi-frame", icon: "square.stack.3d.down.right", isOn: $cam.multiFrameZoom)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack {
+                Text("Kekuatan AI").font(.caption).foregroundStyle(.white)
+                Slider(value: $cam.aiStrength, in: 0...1)
+                Text("\(Int((cam.aiStrength * 100).rounded()))%")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.white).frame(width: 40)
+            }
+            if !cam.srFastAvailable {
+                Text("model AI belum ada di build ini - pembesaran biasa").font(.caption2).foregroundStyle(.orange)
             }
         }
+        .padding(8)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: lensa
