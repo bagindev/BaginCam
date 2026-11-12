@@ -658,3 +658,4 @@ Sampel `data/bursts/dcim-1112-v0100/` (IMG_6929-6937), log `syslog_20261112-1929
   kamera yang belum valid (shutter NaN/0) -> `Int(NaN)` trap. v0.10.0 juga crash 4x berturut-turut saat masuk MALAM.
 - Fix v0.10.2: masukan nightPlan disaring (shutter/ISO/minISO NaN atau 0 -> nilai aman, frame dari n terbatas);
   nilai live (ISO, shutter, fokus, suhu WB) disaring isFinite di sumbernya (updateReadout).
+- Build v0.10.2: run 43224020401 sukses -> `data/builds/BaginCam-v0.10.2-unsigned.ipa`.
