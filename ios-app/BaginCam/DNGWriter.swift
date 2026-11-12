@@ -145,6 +145,31 @@ enum DNGWriter {
         o.bytes += values
     }
 
+    /// White/black level & NoiseProfile (S, O ternormalisasi) dari DNG Bayer asli.
+    static func info(_ original: Data) -> (white: Int, black: Int, noiseS: Double, noiseO: Double)? {
+        let src = [UInt8](original)
+        guard src.count > 8 else { return nil }
+        let big = src[0] == 0x4D
+        let r = Reader(d: src, big: big)
+        guard let off = try? r.u32(4), let ifd0 = try? parseIFD(r, at: Int(off)) else { return nil }
+        let raw = ([ifd0] + ifd0.subIFDs).first {
+            (firstValue($0.entries[254], big: big) ?? 0) == 0 && firstValue($0.entries[262], big: big) == 32803
+        } ?? ifd0
+        let white = Int(firstValue(raw.entries[50717] ?? ifd0.entries[50717], big: big) ?? 65535)
+        let black = Int(firstValue(raw.entries[50714] ?? ifd0.entries[50714], big: big) ?? 0)
+        var s = 0.0, o = 0.0
+        if let e = raw.entries[51041] ?? ifd0.entries[51041], e.type == 12, e.data.count >= 16 {
+            let b = [UInt8](e.data)
+            func dbl(_ i: Int) -> Double {
+                var v: UInt64 = 0
+                for k in 0..<8 { v = v << 8 | UInt64(big ? b[i + k] : b[i + 7 - k]) }
+                return Double(bitPattern: v)
+            }
+            s = dbl(0); o = dbl(8)
+        }
+        return (white, black, s, o)
+    }
+
     /// Buat DNG baru: metadata dari `original` + data CFA `pixels` (uint16 host order, w x h, tanpa padding).
     /// `sourceFullScale`: nilai maksimum skala data piksel (mis. 16383 untuk pixel buffer 14-bit).
     /// Bila lebih besar dari WhiteLevel DNG (Apple Bayer = 12-bit, white 4095), data diskalakan

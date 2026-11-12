@@ -8,6 +8,7 @@ struct SettingsSheet: View {
     @Binding var zebra: Bool
     @Binding var peaking: Bool
     @Binding var showGrid: Bool
+    @Binding var showLevel: Bool
     let hasLUT: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -51,7 +52,10 @@ struct SettingsSheet: View {
                             .pickerStyle(.segmented)
                         }
                     }
-                    if mode.isBurst {
+                    if mode == .hdrplus {
+                        Toggle("Jumlah frame otomatis (6-15, menurut cahaya)", isOn: $cam.autoFrames)
+                    }
+                    if mode.isBurst && !(mode == .hdrplus && cam.autoFrames) {
                         Stepper("Jumlah frame: \(cam.burstCount)", value: $cam.burstCount, in: 2...16)
                     }
                     if mode == .hdrplus {
@@ -96,6 +100,10 @@ struct SettingsSheet: View {
                 // MARK: HDR+
                 if mode == .hdrplus {
                     Section {
+                        Picker("Metode merge", selection: $cam.mergeMethod) {
+                            ForEach(CameraManager.MergeMethod.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
                         VStack(alignment: .leading) {
                             HStack {
                                 Text("Noise reduction")
@@ -107,7 +115,7 @@ struct SettingsSheet: View {
                     } header: {
                         Text("HDR+")
                     } footer: {
-                        Text("Lebih tinggi = frame lebih banyak digabung (lebih halus), tapi risiko bayangan ganda pada objek bergerak. Default 18.")
+                        Text("Frekuensi (default): metode asli HDR+ Google, per tile di domain frekuensi - lebih tahan gerak & detail. Spasial: metode lama. Noise reduction lebih tinggi = lebih halus, risiko bayangan ganda pada objek bergerak. Default 18.")
                     }
                 }
 
@@ -138,12 +146,30 @@ struct SettingsSheet: View {
                     }
                 }
 
+                // MARK: eksposur & WB
+                Section {
+                    Picker("White balance", selection: Binding(get: { cam.wbPreset }, set: { cam.setWBPreset($0) })) {
+                        ForEach(CameraManager.WBPreset.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Picker("Timer", selection: $cam.timerSeconds) {
+                        Text("Mati").tag(0)
+                        Text("3 detik").tag(3)
+                        Text("10 detik").tag(10)
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("WB & shutter")
+                } footer: {
+                    Text("Kunci = WB saat ini dikunci (terpisah dari AE/AF). Cerah 5500K, Berawan 6500K, Teduh 7500K, Pijar 3000K, Neon 4000K. Tombol volume juga bisa dipakai sebagai shutter.")
+                }
+
                 // MARK: bantuan bidik
                 Section {
                     Toggle(isOn: $showHistogram) { Label("Histogram", systemImage: "chart.bar.fill") }
                     Toggle(isOn: $zebra) { Label("Zebra (area hampir putih)", systemImage: "line.diagonal") }
                     Toggle(isOn: $peaking) { Label("Focus peaking (tepi tajam merah)", systemImage: "scope") }
                     Toggle(isOn: $showGrid) { Label("Grid 3x3", systemImage: "grid") }
+                    Toggle(isOn: $showLevel) { Label("Waterpass (level horizon)", systemImage: "level") }
                 } header: {
                     Text("Bantuan bidik")
                 } footer: {

@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var focusPoint: CGPoint?      // posisi kotak fokus di preview (piksel view)
     @State private var focusTick = 0
     @State private var showGrid = false
+    @State private var showLevel = true
+    @StateObject private var level = LevelMonitor()
 
     /// urutan mode di strip (seperti kamera bawaan)
     private let modeOrder: [CameraManager.Mode] = [.aiZoom, .hdrplus, .heif, .proraw, .bayer]
@@ -24,7 +26,7 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
             VStack(spacing: 8) {
                 topBar
-                MetalPreview(renderer: renderer)
+                MetalPreview(renderer: renderer, onHardwareShutter: { cam.shutterPressed() })
                     .aspectRatio(3.0 / 4.0, contentMode: .fit)
                     .clipped()
                     .overlay(alignment: .bottomLeading) { readout }
@@ -34,6 +36,8 @@ struct ContentView: View {
                     .overlay(alignment: .topLeading) { lensBadge }
                     .overlay(alignment: .bottomTrailing) { assistBadges }
                     .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
+                    .overlay { if showLevel { LevelOverlay(level: level) } }
+                    .overlay { countdownLayer }
                     .overlay { focusLayer }
                 if showsZoom { zoomRow }
                 Spacer(minLength: 0)
@@ -46,19 +50,21 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
-                          showGrid: $showGrid, hasLUT: luts.selected != nil)
+                          showGrid: $showGrid, showLevel: $showLevel, hasLUT: luts.selected != nil)
         }
         .onAppear {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
             r.onHistogram = { bins in histogram = bins }
             cam.start()
+            level.start()
             if luts.selected == nil {
                 luts.select(luts.items.first { $0.name.contains("STANDARD") } ?? luts.items.first)
             }
         }
         .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
         .onChange(of: cam.previewExtraZoom) { _, z in renderer.zoom = z }
+        .onChange(of: cam.previewFrozen) { _, v in renderer.frozen = v }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
@@ -243,6 +249,23 @@ struct ContentView: View {
         }
     }
 
+    // MARK: timer
+    @ViewBuilder private var countdownLayer: some View {
+        if cam.countdown > 0 {
+            Text("\(cam.countdown)")
+                .font(.system(size: 96, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(radius: 8)
+                .onTapGesture { cam.cancelCountdown() }
+        } else if cam.previewFrozen {
+            Text("Memotret - tahan HP...")
+                .font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 5)
+                .background(.black.opacity(0.6), in: Capsule()).foregroundStyle(.yellow)
+                .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 44)
+                .allowsHitTesting(false)
+        }
+    }
+
     // MARK: sentuh fokus
     private var focusLayer: some View {
         GeometryReader { geo in
@@ -424,7 +447,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(action: cam.startBurst) {
+            Button(action: cam.shutterPressed) {
                 ZStack {
                     Circle().stroke(.white, lineWidth: 4).frame(width: 74, height: 74)
                     Circle().fill(cam.isCapturing ? .red : (cam.mode == .hdrplus ? .yellow : .white))

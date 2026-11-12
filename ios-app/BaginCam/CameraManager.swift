@@ -30,6 +30,35 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// metode merge HDR+
+    enum MergeMethod: String, CaseIterable, Identifiable {
+        case frequency = "Frekuensi"
+        case spatial = "Spasial"
+        var id: String { rawValue }
+    }
+
+    /// preset white balance
+    enum WBPreset: String, CaseIterable, Identifiable {
+        case auto = "Auto"
+        case daylight = "Cerah"
+        case cloudy = "Berawan"
+        case shade = "Teduh"
+        case tungsten = "Pijar"
+        case fluorescent = "Neon"
+        case locked = "Kunci"
+        var id: String { rawValue }
+        var kelvin: Float? {
+            switch self {
+            case .daylight: return 5500
+            case .cloudy: return 6500
+            case .shade: return 7500
+            case .tungsten: return 3000
+            case .fluorescent: return 4000
+            default: return nil
+            }
+        }
+    }
+
     enum Lens: String, CaseIterable, Identifiable {
         case ultraWide = "0.5x"
         case wide = "1x"
@@ -103,6 +132,13 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var aiLensLock: Lens?
     /// kompensasi eksposur (EV) saat mode Auto
     @Published private(set) var evBias: Float = 0
+    @Published var mergeMethod: MergeMethod = .frequency
+    @Published var autoFrames = true                 // HDR+: jumlah frame menurut kecerahan
+    @Published private(set) var wbPreset: WBPreset = .auto
+    @Published var timerSeconds = 0                  // 0 / 3 / 10
+    @Published private(set) var countdown = 0        // sisa hitungan timer (0 = tidak berjalan)
+    /// preview dibekukan saat capture (zoom/lensa diganti di belakang layar)
+    @Published private(set) var previewFrozen = false
     @Published private(set) var progressText = ""
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @Published private(set) var status = "Menyiapkan kamera..."
@@ -151,6 +187,8 @@ final class CameraManager: NSObject, ObservableObject {
     private var subjectObserver: NSObjectProtocol?
     private var aiLockNative: CGFloat = 0           // sessionQueue: faktor optik lensa terkunci (0 = tidak dikunci)
     private var evBiasSession: Float = 0
+    private var wbPresetSession: WBPreset = .auto
+    private var burstMerge: MergeMethod = .frequency
     private var burstLensName = "Utama"
     private var burstAIFull = false               // AI Zoom: minta resolusi penuh
     private var burstAIMultiFrame = false
@@ -350,6 +388,35 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// Preset white balance (Auto / Kelvin tetap / Kunci WB saat ini). Panggil dari main thread.
+    func setWBPreset(_ p: WBPreset) {
+        wbPreset = p
+        sessionQueue.async {
+            self.wbPresetSession = p
+            guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
+            self.applyWB(d)
+            d.unlockForConfiguration()
+        }
+    }
+
+    /// dipanggil di sessionQueue dengan device sudah di-lock
+    private func applyWB(_ d: AVCaptureDevice) {
+        switch wbPresetSession {
+        case .auto:
+            if d.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { d.whiteBalanceMode = .continuousAutoWhiteBalance }
+        case .locked:
+            if d.isWhiteBalanceModeSupported(.locked) {
+                d.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+            }
+        default:
+            if let k = wbPresetSession.kelvin, d.isWhiteBalanceModeSupported(.locked), d.maxWhiteBalanceGain >= 1 {
+                let tv = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: k, tint: 0)
+                d.setWhiteBalanceModeLocked(with: Self.clamp(d.deviceWhiteBalanceGains(for: tv), d.maxWhiteBalanceGain),
+                                            completionHandler: nil)
+            }
+        }
+    }
+
     /// Kompensasi eksposur (-3..+3 EV) untuk mode Auto. Panggil dari main thread.
     func setEVBias(_ v: Float) {
         evBias = v
@@ -512,7 +579,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func applyAuto() {
         guard let d = device, (try? d.lockForConfiguration()) != nil else { return }
         if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
-        if d.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { d.whiteBalanceMode = .continuousAutoWhiteBalance }
+        applyWB(d)
         if d.isFocusModeSupported(.continuousAutoFocus) { d.focusMode = .continuousAutoFocus }
         d.setExposureTargetBias(min(max(evBiasSession, d.minExposureTargetBias), d.maxExposureTargetBias), completionHandler: nil)
         d.unlockForConfiguration()
@@ -554,7 +621,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func lockCurrent() {
         guard let d = device, (try? d.lockForConfiguration()) != nil else { return }
         if d.isExposureModeSupported(.locked) { d.exposureMode = .locked }
-        if d.isWhiteBalanceModeSupported(.locked) {
+        if wbPresetSession == .auto, d.isWhiteBalanceModeSupported(.locked) {
             d.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
         }
         if d.isFocusModeSupported(.locked) { d.focusMode = .locked }
@@ -602,9 +669,38 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     // MARK: capture
+    /// Tombol shutter / tombol volume: pakai timer bila diatur.
+    func shutterPressed() {
+        guard !isCapturing, countdown == 0 else { return }
+        guard timerSeconds > 0 else { startBurst(); return }
+        countdown = timerSeconds
+        func tick() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                guard self.countdown > 0 else { return }
+                self.countdown -= 1
+                if self.countdown == 0 { self.startBurst() } else { tick() }
+            }
+        }
+        tick()
+    }
+
+    func cancelCountdown() { countdown = 0 }
+
+    /// jumlah frame HDR+ menurut kecerahan (ISO x waktu eksposur saat ini)
+    private func autoFrameCount() -> Int {
+        let iso = Double(liveISO), t = liveShutter
+        guard iso > 0, t > 0 else { return 8 }
+        let gain = iso * t          // makin besar = makin gelap
+        if gain < 0.25 { return 6 }   // terang (mis. ISO 50 @ 1/500)
+        if gain < 2 { return 8 }
+        if gain < 10 { return 12 }
+        return 15
+    }
+
     func startBurst() {
         guard !isCapturing else { return }
         isCapturing = true
+        previewFrozen = true
         // proses tetap jalan sebentar bila app ditinggal (iOS memberi ~30 detik)
         if backgroundTask == .invalid {
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BaginCam processing") { [weak self] in
@@ -612,7 +708,8 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         let m = mode
-        let count = m == .heif ? 1 : max(m == .hdrplus ? 2 : 1, burstCount)
+        let count = m == .heif ? 1 : (m == .hdrplus && autoFrames ? autoFrameCount() : max(m == .hdrplus ? 2 : 1, burstCount))
+        let merge = mergeMethod
         let useAI = zoomAIEnabled
         let lensNative: CGFloat = lens == .tele ? 5 : (lens == .ultraWide ? 0.5 : 1)
         let auto = isAuto, keep = saveFrames, nr = hdrNoiseReduction, res = outputMP
@@ -623,6 +720,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstMode = m
             self.burstSaveFrames = keep
             self.burstNR = nr
+            self.burstMerge = merge
             self.burstOutputMP = res
             self.burstFormat = fmt
             self.burstLUT = lut
@@ -731,6 +829,7 @@ final class CameraManager: NSObject, ObservableObject {
             d.unlockForConfiguration()
         }
         let n = burstIndex, dir = burstDir
+        DispatchQueue.main.async { self.previewFrozen = false }
         Log.camera.info("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
         if collectsBayer {
             let frames = hdrFrames, ref = hdrRef, nr = burstNR, ai = burstMode == .aiZoom
@@ -745,6 +844,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func finish(_ message: String) {
         DispatchQueue.main.async {
             self.isCapturing = false
+            self.previewFrozen = false
             self.status = message
             self.progress = nil
             self.progressText = ""
@@ -845,20 +945,29 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         setStatus("Memproses HDR+ \(frames.count) frame...")
+        // DNG referensi dulu: butuh NoiseProfile & black/white untuk merge frekuensi
+        guard let refDNG = ref.fileDataRepresentation() else {
+            finish("HDR+ gagal: DNG referensi kosong")
+            return
+        }
+        let fs = HDRPlusMerger.fullScale(format: CVPixelBufferGetPixelFormatType(refPB), frame: frames[0])
+        var freq: FreqConfig?
+        if burstMerge == .frequency, let inf = DNGWriter.info(refDNG), inf.noiseS > 0 {
+            // satuan DNG (12-bit) -> satuan pixel buffer (mis. 14-bit): bagi skala
+            let k = fs.full > Double(inf.white) * 1.5 ? (fs.full + 1) / Double(inf.white + 1) : 1
+            let c = Float(pow(2.0, (noiseReduction - 10) / 2))     // NR 18 -> c 16 (hasil uji PC)
+            freq = FreqConfig(noiseS: Float(inf.noiseS), noiseO: Float(inf.noiseO),
+                              black: Float(Double(inf.black) * k), range: Float(Double(inf.white - inf.black) * k), c: c)
+        }
         let tm = CFAbsoluteTimeGetCurrent()
-        guard let r = merger.merge(frames, noiseReduction: noiseReduction, progress: { i, n in
-            self.report("Merge HDR+", i, n, since: tm)
+        guard let r = merger.merge(frames, noiseReduction: noiseReduction, freq: freq, progress: { i, n in
+            self.report("Merge HDR+ \(freq != nil ? "frekuensi" : "spasial")", i, n, since: tm)
         }) else {
             finish("HDR+ gagal saat merge (lihat log)")
             return
         }
         // tulis DNG sendiri (replacementRawPixelBuffer diabaikan iOS untuk Bayer - bug v0.4.0)
-        guard let refDNG = ref.fileDataRepresentation() else {
-            finish("HDR+ gagal: DNG referensi kosong")
-            return
-        }
         let px = r.buffer.contents().bindMemory(to: UInt16.self, capacity: r.width * r.height)
-        let fs = HDRPlusMerger.fullScale(format: CVPixelBufferGetPixelFormatType(refPB), frame: frames[0])
         let dng: Data
         var highlight: Double?
         do {
@@ -918,7 +1027,8 @@ final class CameraManager: NSObject, ObservableObject {
                 saved.append("DNG (render HEIF/JPEG gagal)")
             }
         }
-        finish(String(format: "HDR+ %d frame %.1f s, bobot %.2f -> %@", frames.count, r.seconds, w,
+        let how = r.meanWeights.isEmpty ? "frekuensi" : String(format: "spasial bobot %.2f", w)
+        finish(String(format: "HDR+ %d frame %.1f s (%@) -> %@", frames.count, r.seconds, how,
                       saved.joined(separator: " + ")))
     }
 

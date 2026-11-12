@@ -17,6 +17,19 @@ private struct AlignParams {
 }
 private struct WarpParams { var W: UInt32, H: UInt32, ntx: UInt32, nty: UInt32 }
 private struct MergeParams { var count: UInt32, maxDiff: Float, invN: Float }
+private struct FreqParams {
+    var W: UInt32, H: UInt32, ntx: UInt32, row0: UInt32, rows: UInt32, antx: UInt32, anty: UInt32
+    var black: Float, range: Float, noiseS: Float, noiseO: Float, c: Float, invN: Float
+}
+
+/// Konfigurasi merge domain frekuensi (Wiener). black/range dalam satuan data pixel buffer.
+struct FreqConfig {
+    var noiseS: Float
+    var noiseO: Float
+    var black: Float
+    var range: Float
+    var c: Float
+}
 
 /// HDR+ di GPU: align piramida + spatial robust merge untuk burst Bayer RAW.
 /// Port dari pc-lab/robust_merge.py (sudah diuji pada burst iPhone 16 PM).
@@ -40,7 +53,8 @@ final class HDRPlusMerger {
         device = d
         queue = q
         for name in ["bayer_grey", "downsample2", "align_level", "warp_planes",
-                     "blur_h", "blur_v", "merge_accumulate", "planes_to_bayer"] {
+                     "blur_h", "blur_v", "merge_accumulate", "planes_to_bayer",
+                     "freq_ref", "freq_add_frame", "freq_inverse"] {
             guard let f = lib.makeFunction(name: name),
                   let p = try? d.makeComputePipelineState(function: f) else {
                 Log.hdr.error("Pipeline Metal gagal: \(name, privacy: .public)")
@@ -69,7 +83,7 @@ final class HDRPlusMerger {
 
     // MARK: merge
     func merge(_ frames: [BayerFrame], noiseReduction: Double = 18, tile: Int = 16, search: Int = 2,
-               progress: ((Int, Int) -> Void)? = nil) -> Result? {
+               freq: FreqConfig? = nil, progress: ((Int, Int) -> Void)? = nil) -> Result? {
         guard let ref = frames.first, frames.count >= 1 else { return nil }
         let t0 = CFAbsoluteTimeGetCurrent()
         let W = ref.width, H = ref.height, pw = W / 2, ph = H / 2, np = pw * ph
@@ -191,10 +205,34 @@ final class HDRPlusMerger {
 
         // --- 2. tiap frame pembanding ---
         var weights: [Float] = []
+        var frameAligns: [(Int, MTLBuffer)] = []     // mode frekuensi: alignment layer 0 per frame
         for (i, comp) in frames.enumerated() where i > 0 {
             progress?(i, N - 1)
             guard comp.width == W, comp.height == H else { continue }
             wsum.contents().storeBytes(of: UInt32(0), as: UInt32.self)
+            if freq != nil {
+                let ok = run { enc in
+                    encodePyramid(enc, comp.buffer, compPyr)
+                    for l in stride(from: dims.count - 1, through: 0, by: -1) {
+                        let hasPrev = l + 1 < dims.count
+                        var p = AlignParams(
+                            w: UInt32(dims[l].0), h: UInt32(dims[l].1),
+                            ntx: UInt32(tiles[l].0), nty: UInt32(tiles[l].1),
+                            pntx: hasPrev ? UInt32(tiles[l + 1].0) : 0, pnty: hasPrev ? UInt32(tiles[l + 1].1) : 0,
+                            tile: Int32(tile), search: Int32(search), prevScale: 2)
+                        enc.setBuffer(refPyr[l], offset: 0, index: 0)
+                        enc.setBuffer(compPyr[l], offset: 0, index: 1)
+                        enc.setBuffer(hasPrev ? aligns[l + 1] : zeroAlign, offset: 0, index: 2)
+                        enc.setBuffer(aligns[l], offset: 0, index: 3)
+                        enc.setBytes(&p, length: MemoryLayout<AlignParams>.stride, index: 4)
+                        dispatch(enc, "align_level", tiles[l].0, tiles[l].1)
+                    }
+                }
+                guard ok, let copy = buf(aligns[0].length) else { return nil }
+                memcpy(copy.contents(), aligns[0].contents(), aligns[0].length)
+                frameAligns.append((i, copy))
+                continue
+            }
             let ok = run { enc in
                 encodePyramid(enc, comp.buffer, compPyr)
                 for l in stride(from: dims.count - 1, through: 0, by: -1) {
@@ -218,6 +256,68 @@ final class HDRPlusMerger {
             guard ok else { return nil }
             let ws = wsum.contents().load(as: UInt32.self)
             weights.append(Float(ws) / (255.0 * Float(np)))
+        }
+
+        // --- 2b. merge domain frekuensi (Wiener per tile), per pita baris tile ---
+        if let fc = freq {
+            memset(acc.contents(), 0, acc.length)
+            let ntx = (pw + 7) / 8 + 1, nty = (ph + 7) / 8 + 1
+            let band = 24
+            let tileBytes = 4 * 256 * MemoryLayout<SIMD2<Float>>.stride
+            guard let specRef = buf(band * ntx * tileBytes), let specAcc = buf(band * ntx * tileBytes),
+                  let noiseVar = buf(band * ntx * 4),
+                  let fRef = pso["freq_ref"], let fAdd = pso["freq_add_frame"], let fInv = pso["freq_inverse"] else {
+                Log.hdr.error("Alokasi buffer merge frekuensi gagal")
+                return nil
+            }
+            let tg16 = MTLSize(width: 16, height: 16, depth: 1)
+            var r0 = 0
+            let nBands = (nty + band - 1) / band
+            var bi = 0
+            while r0 < nty {
+                let rows = min(band, nty - r0)
+                var fp = FreqParams(W: UInt32(W), H: UInt32(H), ntx: UInt32(ntx), row0: UInt32(r0), rows: UInt32(rows),
+                                    antx: UInt32(tiles[0].0), anty: UInt32(tiles[0].1),
+                                    black: fc.black, range: fc.range, noiseS: fc.noiseS, noiseO: fc.noiseO,
+                                    c: fc.c, invN: 1.0 / Float(1 + frameAligns.count))
+                let ok = run { enc in
+                    enc.setComputePipelineState(fRef)
+                    enc.setBuffer(ref.buffer, offset: 0, index: 0)
+                    enc.setBuffer(specRef, offset: 0, index: 1)
+                    enc.setBuffer(specAcc, offset: 0, index: 2)
+                    enc.setBuffer(noiseVar, offset: 0, index: 3)
+                    enc.setBytes(&fp, length: MemoryLayout<FreqParams>.stride, index: 4)
+                    enc.dispatchThreadgroups(MTLSize(width: ntx, height: rows, depth: 1), threadsPerThreadgroup: tg16)
+                    for (i, al) in frameAligns {
+                        enc.setComputePipelineState(fAdd)
+                        enc.setBuffer(frames[i].buffer, offset: 0, index: 0)
+                        enc.setBuffer(al, offset: 0, index: 1)
+                        enc.setBuffer(specRef, offset: 0, index: 2)
+                        enc.setBuffer(specAcc, offset: 0, index: 3)
+                        enc.setBuffer(noiseVar, offset: 0, index: 4)
+                        enc.setBytes(&fp, length: MemoryLayout<FreqParams>.stride, index: 5)
+                        enc.dispatchThreadgroups(MTLSize(width: ntx, height: rows, depth: 1), threadsPerThreadgroup: tg16)
+                    }
+                    enc.setComputePipelineState(fInv)
+                    for py in 0..<2 {
+                        for px in 0..<2 {
+                            var par = SIMD2<UInt32>(UInt32(px), UInt32(py))
+                            enc.setBuffer(specAcc, offset: 0, index: 0)
+                            enc.setBuffer(acc, offset: 0, index: 1)
+                            enc.setBytes(&fp, length: MemoryLayout<FreqParams>.stride, index: 2)
+                            enc.setBytes(&par, length: MemoryLayout<SIMD2<UInt32>>.size, index: 3)
+                            enc.dispatchThreadgroups(MTLSize(width: (ntx + 1) / 2, height: (rows + 1) / 2, depth: 1),
+                                                     threadsPerThreadgroup: tg16)
+                        }
+                    }
+                }
+                guard ok else { return nil }
+                r0 += rows
+                bi += 1
+                progress?(N - 1 + bi, N - 1 + nBands)
+            }
+            weights = []
+            Log.hdr.info("Merge frekuensi: \(1 + frameAligns.count, privacy: .public) frame, c \(fc.c, privacy: .public), noise S \(fc.noiseS, privacy: .public) O \(fc.noiseO, privacy: .public), black \(fc.black, privacy: .public) range \(fc.range, privacy: .public)")
         }
 
         // --- 3. kembali ke Bayer uint16 ---

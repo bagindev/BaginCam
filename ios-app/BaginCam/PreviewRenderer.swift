@@ -1,3 +1,5 @@
+import AVKit
+import CoreMotion
 import SwiftUI
 import MetalKit
 import CoreImage
@@ -14,6 +16,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     private var latest: CIImage?
 
     var lutFilter: CIFilter?
+    /// beku = frame terakhir tetap tampil (saat capture mengganti zoom/lensa di belakang layar)
+    var frozen = false
     var zoom: CGFloat = 1
     var zebra = false
     var zebraLevel: Float = 0.95
@@ -34,7 +38,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
 
     /// Dipanggil dari antrean video kamera.
     func push(_ image: CIImage) {
-        lock.lock(); latest = image; lock.unlock()
+        lock.lock(); if !frozen { latest = image }; lock.unlock()
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -148,6 +152,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
 
 struct MetalPreview: UIViewRepresentable {
     let renderer: PreviewRenderer
+    /// tombol volume / Camera Control ditekan (iOS 17.2+)
+    var onHardwareShutter: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> MTKView {
         let v = MTKView(frame: .zero, device: renderer.device)
@@ -156,6 +162,12 @@ struct MetalPreview: UIViewRepresentable {
         v.preferredFramesPerSecond = 30
         v.delegate = renderer
         v.backgroundColor = .black
+        if #available(iOS 17.2, *), let action = onHardwareShutter {
+            let interaction = AVCaptureEventInteraction { event in
+                if event.phase == .ended { action() }
+            }
+            v.addInteraction(interaction)
+        }
         return v
     }
 
@@ -198,5 +210,53 @@ struct GridOverlay: View {
             }
             .stroke(Color.white.opacity(0.35), lineWidth: 0.8)
         }
+    }
+}
+
+/// Waterpass: kemiringan HP (roll) dari CoreMotion.
+final class LevelMonitor: ObservableObject {
+    @Published private(set) var roll: Double = 0      // derajat, 0 = datar (potret / lanskap)
+    @Published private(set) var flat = false          // HP rebah (menghadap atas/bawah)
+    private let motion = CMMotionManager()
+
+    func start() {
+        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
+        motion.deviceMotionUpdateInterval = 1.0 / 20
+        motion.startDeviceMotionUpdates(to: .main) { [weak self] m, _ in
+            guard let self, let g = m?.gravity else { return }
+            self.flat = abs(g.z) > 0.85
+            var a = atan2(g.x, -g.y) * 180 / .pi          // potret tegak = 0
+            // pegang lanskap: ukur terhadap 90 derajat terdekat
+            if a > 45 && a <= 135 { a -= 90 } else if a < -45 && a >= -135 { a += 90 } else if a > 135 { a -= 180 } else if a < -135 { a += 180 }
+            self.roll = a
+        }
+    }
+
+    func stop() { motion.stopDeviceMotionUpdates() }
+}
+
+/// Garis waterpass di tengah preview (kuning bila datar +-1 derajat).
+struct LevelOverlay: View {
+    @ObservedObject var level: LevelMonitor
+    var body: some View {
+        let ok = abs(level.roll) < 1
+        GeometryReader { g in
+            ZStack {
+                Rectangle().fill(Color.white.opacity(0.5)).frame(width: 40, height: 1)
+                    .position(x: g.size.width / 2 - 70, y: g.size.height / 2)
+                Rectangle().fill(Color.white.opacity(0.5)).frame(width: 40, height: 1)
+                    .position(x: g.size.width / 2 + 70, y: g.size.height / 2)
+                Rectangle().fill(ok ? Color.yellow : Color.white)
+                    .frame(width: 100, height: ok ? 2 : 1.5)
+                    .rotationEffect(.degrees(-level.roll))
+                    .position(x: g.size.width / 2, y: g.size.height / 2)
+                if !ok {
+                    Text(String(format: "%.0f°", level.roll)).font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white).position(x: g.size.width / 2, y: g.size.height / 2 + 14)
+                }
+            }
+            .opacity(level.flat || abs(level.roll) > 30 ? 0 : 1)
+        }
+        .allowsHitTesting(false)
     }
 }
