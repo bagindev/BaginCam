@@ -575,3 +575,5 @@ Sampel `data/bursts/dcim-1112-malam4/` (IMG_6920-6926), log `syslog_20261112-183
     linear 0.24, koreksi -1.2..+0.8 EV, mengalahkan metering rata-rata (hanya bila tidak zoom crop).
   - Pengaturan disimpan (UserDefaults): resolusi, format, LUT bake, NR, frame, model AI, kekuatan, fokus tulisan,
     multi-frame, AI zoom on/off, metode merge, frame otomatis, timer.
+
+- Build v0.9.6: run 43211070140 sukses -> `data/builds/BaginCam-v0.9.6-unsigned.ipa`.
