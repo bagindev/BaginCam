@@ -699,10 +699,12 @@ final class CameraManager: NSObject, ObservableObject {
         let px = r.buffer.contents().bindMemory(to: UInt16.self, capacity: r.width * r.height)
         let fs = HDRPlusMerger.fullScale(format: CVPixelBufferGetPixelFormatType(refPB), frame: frames[0])
         let dng: Data
+        var highlight: Double?
         do {
             let w = try DNGWriter.rewrite(original: refDNG, pixels: px, width: r.width, height: r.height,
                                           software: "BaginCam HDR+ \(frames.count) frame", sourceFullScale: fs.full)
             dng = w.data
+            highlight = Self.highlightLevel(px, count: r.width * r.height, scale: w.scale, black: w.black, white: w.white)
             Log.hdr.info("RAW \(fs.bits, privacy: .public), maks data \(fs.maxValue, privacy: .public), DNG white \(w.white, privacy: .public) -> skala \(w.scale, privacy: .public)")
         } catch {
             Log.hdr.error("Tulis DNG gagal: \(String(describing: error), privacy: .public)")
@@ -713,7 +715,7 @@ final class CameraManager: NSObject, ObservableObject {
 
         if forAIZoom {
             // AI Zoom multi-frame: kembangkan hasil merge -> crop -> upscale
-            guard let img = RawDeveloper.develop(dng: dng), let cg = RawDeveloper.cgImage(img) else {
+            guard let img = RawDeveloper.develop(dng: dng, highlight: highlight), let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
             }
@@ -730,7 +732,7 @@ final class CameraManager: NSObject, ObservableObject {
         if fmt.wantsHEIF || fmt.wantsJPEG {
             setStatus("HDR+: mengembangkan RAW...")
             var rendered = false
-            if var img = RawDeveloper.develop(dng: dng) {
+            if var img = RawDeveloper.develop(dng: dng, highlight: highlight) {
                 // 24/48MP: data Bayer 12MP diperbesar (AI Cepat dicampur Lanczos)
                 if res != .mp12, let cg = RawDeveloper.cgImage(img) {
                     let full = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
@@ -756,6 +758,25 @@ final class CameraManager: NSObject, ObservableObject {
         }
         finish(String(format: "HDR+ %d frame %.1f s, bobot %.2f -> %@", frames.count, r.seconds, w,
                       saved.joined(separator: " + ")))
+    }
+
+    /// persentil 99.9 data hasil merge, ternormalisasi 0..1 (black..white DNG) - sampel tiap 5 piksel
+    static func highlightLevel(_ px: UnsafePointer<UInt16>, count: Int, scale: Double, black: Int, white: Int) -> Double {
+        var hist = [Int](repeating: 0, count: 1024)
+        var n = 0
+        let range = Double(max(1, white - black))
+        for i in stride(from: 0, to: count, by: 5) {
+            let v = (Double(px[i]) * scale - Double(black)) / range
+            hist[min(1023, max(0, Int(v * 1023)))] += 1
+            n += 1
+        }
+        var acc = 0
+        let target = Int(Double(n) * 0.999)
+        for (b, c) in hist.enumerated() {
+            acc += c
+            if acc >= target { return Double(b) / 1023 }
+        }
+        return 1
     }
 
     // MARK: AI Zoom

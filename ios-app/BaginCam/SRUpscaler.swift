@@ -189,18 +189,23 @@ final class SRUpscaler {
                         for y in 0..<(coreH * s) {
                             memcpy(dst + (cy * s + y) * dbpr + cx * s * 4, ob + (pad * s + y) * obpr + pad * s * 4, coreW * s * 4)
                         }
-                    } else if let tctx = CGContext(data: nil, width: coreW * s, height: coreH * s, bitsPerComponent: 8,
+                    } else if let tctx = CGContext(data: nil, width: tile * s, height: tile * s, bitsPerComponent: 8,
                                                    bytesPerRow: 0, space: cs, bitmapInfo: Self.bitmapInfo),
                               let tdst = tctx.data?.assumingMemoryBound(to: UInt8.self) {
+                        // tile PENUH (termasuk margin pad) digambar, lalu di-clip ke area inti dengan batas
+                        // piksel bulat yang sama dengan tile tetangga -> interpolasi di tepi memakai piksel asli,
+                        // tidak ada tepi setengah-transparan (bug v0.7.0: garis kotak tiap ~320 px)
                         let tbpr = tctx.bytesPerRow
-                        for y in 0..<(coreH * s) {
-                            memcpy(tdst + y * tbpr, ob + (pad * s + y) * obpr + pad * s * 4, coreW * s * 4)
-                        }
+                        for y in 0..<(tile * s) { memcpy(tdst + y * tbpr, ob + y * obpr, tile * s * 4) }
                         if let timg = tctx.makeImage() {
-                            // posisi di kanvas akhir (CG: origin kiri-bawah)
-                            let rx = Double(cx) * k, ryTop = Double(cy) * k
-                            let rw = Double(coreW) * k, rh = Double(coreH) * k
-                            octx.draw(timg, in: CGRect(x: rx, y: Double(oh) - ryTop - rh, width: rw, height: rh))
+                            let x0 = Int((Double(cx) * k).rounded()), x1 = Int((Double(cx + coreW) * k).rounded())
+                            let y0 = Int((Double(cy) * k).rounded()), y1 = Int((Double(cy + coreH) * k).rounded())
+                            let fullX = Double(cx - pad) * k, fullTop = Double(cy - pad) * k, fullSize = Double(tile) * k
+                            octx.saveGState()
+                            octx.clip(to: CGRect(x: x0, y: oh - y1, width: x1 - x0, height: y1 - y0))
+                            octx.draw(timg, in: CGRect(x: fullX, y: Double(oh) - fullTop - fullSize,
+                                                       width: fullSize, height: fullSize))
+                            octx.restoreGState()
                         }
                     }
                 }

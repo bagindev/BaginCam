@@ -23,13 +23,24 @@ enum RawDeveloper {
 
     /// DNG -> CIImage tegak (orientasi sudah diterapkan). NR Apple dikurangi karena noise
     /// sudah turun lewat HDR+ merge (NR penuh membuat detail lembek).
-    static func develop(dng: Data, noiseReductionScale: Float = 0.4) -> CIImage? {
+    /// `highlight`: persentil 99.9 data RAW ternormalisasi (0..1 = black..white). Bila diberikan,
+    /// eksposur diturunkan supaya highlight tidak terpotong (DNG Apple membawa BaselineExposure +0.5..+1 EV
+    /// yang diterapkan global -> v0.7.0 langit/kain putih total padahal RAW tidak terpotong), lalu tone map
+    /// lokal Apple mengangkat bayangan (mirip Smart HDR).
+    static func develop(dng: Data, noiseReductionScale: Float = 0.6, highlight: Double? = nil) -> CIImage? {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             Log.hdr.error("CIRAWFilter tidak bisa membuka DNG")
             return nil
         }
         if f.isLuminanceNoiseReductionSupported { f.luminanceNoiseReductionAmount *= noiseReductionScale }
-        if f.isColorNoiseReductionSupported { f.colorNoiseReductionAmount *= max(noiseReductionScale, 0.6) }
+        if f.isColorNoiseReductionSupported { f.colorNoiseReductionAmount *= max(noiseReductionScale, 0.8) }
+        if let hl = highlight, hl > 0.001 {
+            // gain total 2^(baseline + exposure): taruh p99.9 di 0.9
+            let ev = log2(0.9 / hl) - Double(f.baselineExposure)
+            f.exposure = Float(max(-3, min(0, ev)))
+        }
+        if f.isLocalToneMapSupported { f.localToneMapAmount = 1 }
+        Log.hdr.info("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")
         guard let img = f.outputImage else { return nil }
         // piksel sudah tegak -> orientasi metadata harus 1 supaya tidak diputar dua kali
         return img.settingProperties(uprightProperties(img.properties))

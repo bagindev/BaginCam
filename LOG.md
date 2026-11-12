@@ -365,3 +365,32 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
   AI Zoom (model, kekuatan, multi-frame), Bantuan bidik (histogram, zebra, peaking), Info (lensa aktif, versi);
   tiap kelompok ada penjelasan singkat; hanya opsi yang relevan dengan mode aktif yang tampil.
 - Baris tombol kecil dihapus; baris AI Zoom tinggal preset + slider; tombol Manual berlabel.
+
+## 2026-11-12 - Sesi 12: sampel siang-sore (v0.7.0) -> v0.7.1
+
+Sampel: 18 AI Zoom + 12 HDR+ di container app (`data/bursts/app-docs-v070/`), DCIM IMG_6865-6889
+(`data/bursts/dcim-1112-sore/`), screenshot viewfinder IMG_6870, screen record IMG_6871/6873.MP4.
+(IMG_6888 = screenshot web kerja, tidak terkait -> salinan dihapus.)
+
+### Viewfinder vs jepretan (AI Zoom 25x, IMG_6870 vs IMG_6869)
+- Pada ukuran tampilan sama, jepretan justru lebih tajam (teks "MUHAMMADIYAH 13 TIKUNG" terbaca), tapi
+  artefak AI terlihat (wajah baliho rusak, halo teks, daun seperti lukisan) karena Kekuatan AI 100%.
+- 25x di tele = crop ~806 px -> 24MP (5712) = pembesaran ~7x. Viewfinder = jalur video Apple (halus, alami,
+  ditampilkan kecil). `data/output/vf_vs_capture_samesize.jpg`.
+
+### HDR+ terang & "noise"
+- 124749: RAW **0 % terpotong**, HEIF hasil **21 %** putih (langit/kain hilang); 125024/125036 clip 34-46 %.
+  Stock: 0 % clip (Smart HDR tone map lokal). Penyebab: CIRAWFilter menerapkan BaselineExposure DNG
+  (+0.5..+1.0 EV) global tanpa perlindungan highlight. `data/output/HDRPLUS_20261112-124749_heic_vs_frame.jpg`.
+- "Noise": crop 100 % menunjukkan **garis kotak sambungan tile SR** (upscale 24MP, outScale 1.42: tile digambar
+  pada posisi pecahan -> tepi setengah transparan). `data/output/HDRPLUS_20261112-125024_crop100.jpg`.
+- Temuan: **kamera depan mendukung Bayer RAW** (HDR+ 125024 front 2.69mm).
+
+### AI Zoom pakai apa?
+- Log: jumlah `ANEProgramProcessRequestDirect` = jumlah tile SR (108/108, 4/4, 12/12, 48/48) -> **Neural Engine (NPU)**.
+  Cepat ~0.03 s/tile, Detail ~0.21 s/tile. Merge HDR+ di GPU (Metal), CPU untuk persiapan/penyusunan tile.
+
+### Fix v0.7.1
+- SR: tile non-x4 digambar penuh (dengan margin) lalu di-clip ke batas piksel bulat -> tanpa garis sambungan.
+- HDR+ develop: persentil 99.9 data merge -> `exposure` CIRAWFilter diturunkan agar p99.9 = 0.9 (highlight aman),
+  `localToneMapAmount = 1` (angkat bayangan), NR Apple x0.6 (warna x0.8). DNGWriter juga mengembalikan black level.

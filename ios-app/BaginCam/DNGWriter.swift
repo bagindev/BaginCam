@@ -150,7 +150,7 @@ enum DNGWriter {
     /// Bila lebih besar dari WhiteLevel DNG (Apple Bayer = 12-bit, white 4095), data diskalakan
     /// supaya cocok (bug v0.6.1: data 14-bit ditulis ke DNG 12-bit -> terpotong putih/pink).
     static func rewrite(original: Data, pixels: UnsafePointer<UInt16>, width: Int, height: Int,
-                        software: String, sourceFullScale: Double? = nil) throws -> (data: Data, scale: Double, white: Int) {
+                        software: String, sourceFullScale: Double? = nil) throws -> (data: Data, scale: Double, white: Int, black: Int) {
         let src = [UInt8](original)
         guard src.count > 8 else { throw DNGError.parse("file terlalu kecil") }
         let big: Bool
@@ -172,6 +172,7 @@ enum DNGWriter {
 
         // skala data -> WhiteLevel DNG
         let white = Int(firstValue(raw.entries[50717] ?? ifd0.entries[50717], big: big) ?? 65535)
+        let black = Int(firstValue(raw.entries[50714] ?? ifd0.entries[50714], big: big) ?? 0)
         var scale = 1.0
         if let full = sourceFullScale, full > Double(white) * 1.5 {
             scale = Double(white + 1) / (full + 1)
@@ -236,6 +237,6 @@ enum DNGWriter {
                 }
             }
         }
-        return (data, scale, white)
+        return (data, scale, white, black)
     }
 }
