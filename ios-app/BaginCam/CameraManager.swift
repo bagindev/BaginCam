@@ -996,12 +996,13 @@ final class CameraManager: NSObject, ObservableObject {
         let upT = SRUpscaler.resize(up, width: plain.width, height: plain.height) ?? up
         if burstTextFocus {
             // area tulisan: AI lebih kuat supaya huruf terbaca; area lain tetap campuran biasa
-            let boxes = TextBoost.textBoxes(in: upT)
+            let boxes = TextBoost.mergedBoxes(ai: upT, plain: plain)
             if !boxes.isEmpty {
                 setStatus("\(label): baca tulisan (OCR) \(boxes.count) area...")
                 let dec = TextBoost.decide(plain: plain, ai: upT, boxes: boxes)
                 let nAI = dec.filter { $0.useAI }.count
-                let detail = dec.prefix(6).map { String(format: "%.2f/%.2f", $0.confAI, $0.confPlain) }.joined(separator: " ")
+                let detail = dec.prefix(8).map { String(format: "%.2f/%.2f~%.2f", $0.confAI, $0.confPlain, $0.sim) }
+                    .joined(separator: " ")
                 Log.sr.info("Fokus tulisan: \(boxes.count, privacy: .public) area, AI menang \(nAI, privacy: .public) (OCR ai/asli: \(detail, privacy: .public))")
                 if let comp = TextBoost.compose(plain: plain, ai: upT, strength: strength,
                                                 textStrength: max(strength, 0.9), decisions: dec) {

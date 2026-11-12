@@ -15,6 +15,7 @@ enum TextBoost {
         let useAI: Bool
         let confAI: Float
         let confPlain: Float
+        let sim: Float         // kemiripan teks OCR AI vs asli
     }
 
     /// kotak teks dalam koordinat Vision ternormalisasi
@@ -34,33 +35,67 @@ enum TextBoost {
             .prefix(24).map { $0 }
     }
 
-    /// keyakinan OCR rata-rata (berbobot panjang teks) untuk satu area
-    private static func ocrScore(_ image: CGImage, _ rect: CGRect) -> Float {
-        guard let crop = image.cropping(to: rect) else { return 0 }
+    /// gabung kotak teks dari versi AI dan versi asli: tulisan yang dikarang AI sering tidak terdeteksi
+    /// sebagai teks di versi AI (v0.9.3: paragraf "Thoso ic on Duiiac" lolos dengan campuran 50%)
+    static func mergedBoxes(ai: CGImage, plain: CGImage) -> [CGRect] {
+        var out = textBoxes(in: ai)
+        for p in textBoxes(in: plain) {
+            let covered = out.contains { b in
+                let i = b.intersection(p)
+                return !i.isNull && i.width * i.height > 0.5 * p.width * p.height
+            }
+            if !covered { out.append(p) }
+        }
+        return Array(out.prefix(32))
+    }
+
+    /// keyakinan OCR rata-rata (berbobot panjang teks) + teks terbaca untuk satu area
+    private static func ocr(_ image: CGImage, _ rect: CGRect) -> (conf: Float, text: String) {
+        guard let crop = image.cropping(to: rect) else { return (0, "") }
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = true      // kata nyata dapat skor lebih tinggi dari huruf karangan
         let handler = VNImageRequestHandler(cgImage: crop, options: [:])
-        guard (try? handler.perform([req])) != nil else { return 0 }
-        var sum: Float = 0, n: Float = 0
+        guard (try? handler.perform([req])) != nil else { return (0, "") }
+        var sum: Float = 0, n: Float = 0, text = ""
         for obs in req.results ?? [] {
             guard let top = obs.topCandidates(1).first else { continue }
             let len = Float(max(1, top.string.count))
             sum += top.confidence * len
             n += len
+            text += top.string + " "
         }
-        return n > 0 ? sum / n : 0
+        return (n > 0 ? sum / n : 0, text)
     }
 
-    /// pilih per area: AI atau versi asli, menurut OCR
+    /// kemiripan dua teks OCR (0..1), huruf & angka saja, tanpa beda besar/kecil
+    static func similarity(_ a: String, _ b: String) -> Float {
+        let x = Array(a.lowercased().filter { $0.isLetter || $0.isNumber })
+        let y = Array(b.lowercased().filter { $0.isLetter || $0.isNumber })
+        if x.isEmpty || y.isEmpty { return 0 }
+        var prev = Array(0...y.count), cur = [Int](repeating: 0, count: y.count + 1)
+        for i in 1...x.count {
+            cur[0] = i
+            for j in 1...y.count {
+                cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] == y[j - 1] ? 0 : 1))
+            }
+            swap(&prev, &cur)
+        }
+        return 1 - Float(prev[y.count]) / Float(max(x.count, y.count))
+    }
+
+    /// pilih per area: AI hanya bila OCR-nya lebih yakin DAN isinya sama dengan yang terbaca dari versi asli.
+    /// v0.9.3: keyakinan saja tidak cukup - huruf karangan Detail ("tho bypomlary muvoro") tetap menang.
     static func decide(plain: CGImage, ai: CGImage, boxes: [CGRect]) -> [Decision] {
         let W = CGFloat(ai.width), H = CGFloat(ai.height)
         return boxes.map { b in
             // Vision (kiri-bawah) -> piksel (kiri-atas), diperluas sedikit
             var r = CGRect(x: b.minX * W, y: (1 - b.maxY) * H, width: b.width * W, height: b.height * H)
             r = r.insetBy(dx: -r.height * 0.3, dy: -r.height * 0.3).intersection(CGRect(x: 0, y: 0, width: W, height: H)).integral
-            let ca = ocrScore(ai, r), cp = ocrScore(plain, r)
-            return Decision(box: b, useAI: ca > cp + 0.03, confAI: ca, confPlain: cp)
+            let a = ocr(ai, r), p = ocr(plain, r)
+            let sim = similarity(a.text, p.text)
+            return Decision(box: b, useAI: a.conf > p.conf + 0.03 && sim >= 0.75,
+                            confAI: a.conf, confPlain: p.conf, sim: sim)
         }
     }
 

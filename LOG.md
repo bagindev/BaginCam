@@ -522,3 +522,25 @@ Log `syslog_20261112-180120.txt`:
   Utama/Tele/Depan). Capture: pindah ke lensa fisik pilihan iOS (transfer ISO/shutter/WB), burst Bayer (jumlah
   otomatis), merge; zoom digital hanya bila melewati lensa optik (crop > 1.05) -> crop + AI/Lanczos. Tombol lensa
   fisik kini hanya di mode BAYER/PRORAW.
+
+## 2026-11-12 - Sesi 20: cek sampel v0.9.3 (selfie HDR+, poster AI ZOOM) -> v0.9.5
+
+Sampel `data/bursts/dcim-1112-malam3/` (IMG_6910-6919), app `data/bursts/app-docs-v093b/`.
+- **Selfie depan** HDR+ 15 frame (IMG_6910/6912/6913, ISO 640-800 1/15) vs kamera bawaan (IMG_6911/6914):
+| | kecerahan | noise wajah | noise dinding | R-G |
+|---|---|---|---|---|
+| HDR+ (6912) | 164 | 1.19 | 1.02 | +8.3 |
+| Bawaan (6911) | 163 | 0.92 | 0.77 | +5.0 |
+  Kecerahan sudah sama; HDR+ sedikit lebih hangat & ~25 % lebih berbintik (Apple memakai NR + Deep Fusion wajah).
+  `data/output/v093_selfie_stock_vs_hdr.jpg`.
+- **AI ZOOM 13x poster** (tele crop 2.6x, MF 8): kecerahan diperbaiki (179 -> 135/133, metering area zoom -0.97/-0.87 EV).
+  - IMG_6919 Cepat: SR 1.4 s, teks 1/9 AI -> paragraf lembut tapi **jujur** (tidak ada huruf karangan).
+  - IMG_6918 Detail: SR 9.9 s (42 tile), teks 7/22 AI -> paragraf kedua **masih huruf palsu** ("There is no better
+    place..." -> "Thoso ic on Duiiac phoon", "the legendary streets" -> "tho bypomlary muvoro").
+    `data/output/v093_paragraf_detail_vs_cepat.jpg`, `v093_poster_paragraf.jpg`.
+  - Penyebab: keyakinan OCR Vision (0.3/0.5/1.0 bertingkat) bisa lebih tinggi untuk huruf karangan; dan area yang
+    dikarang AI sering tidak terdeteksi sebagai teks di versi AI -> tetap campuran 50 %.
+- IMG_6915/6916: HDR+ 13x lensa Utama (sudah diperbaiki di v0.9.4). IMG_6917: FOTO 50x Tele AI Detail (crop 402 px).
+- Fix v0.9.5 (TextBoost): kotak teks dideteksi di versi AI **dan** versi asli (gabungan, maks 32); AI dipakai hanya
+  bila keyakinan OCR > asli + 0.03 **dan isi teks OCR AI mirip teks versi asli** (Levenshtein, kemiripan >= 0.75).
+  Log menampilkan `ai/asli~mirip` per area.
