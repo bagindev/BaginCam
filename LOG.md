@@ -239,3 +239,20 @@ Format: tanggal - apa yang dikerjakan - hasil / file.
 - Build v0.4.0: run 43078455490 gagal (Swift type-check timeout di HDRPlusMerger.swift:180, ekspresi dipecah) -> run **43079680665 SUCCESS**, 0 warning kode.
   IPA 3.9 MB `data/builds/BaginCam-v0.4.0-unsigned.ipa`: binary 697 KB, `default.metallib` 39 KB (kernel HDR+), model SR 2.4 MB, 3 LUT.
 - **Belum diuji di HP**: HDR+ di GPU, AI Zoom, ganti lensa, zebra/peaking/histogram.
+
+## 2026-11-12 - Sesi 5: bug HDR+ & AI Zoom, v0.5.0
+
+### Temuan uji v0.4.0 (file DCIM 6627-6648, `data/bursts/app-v040-test/`)
+- **HDR+ tidak bekerja**: DNG hasil (IMG_6638) identik byte-per-byte dengan frame referensi (IMG_6629) -> `replacementRawPixelBuffer` diabaikan iOS untuk Bayer RAW.
+- Merge Bayer yang sama di PC (9 frame ultra-wide ISO 400, `app-hdrplus-uw-9f`): bobot ~0.82, noise turun 39-58 %% -> algoritma benar, masalah di penulisan file.
+- **AI Zoom 2MP**: IMG_6642/6643/6644/6648 = 1608x1208 (crop 2.5x lensa 5x) -> SR gagal tanpa pesan, crop disimpan apa adanya. Penyebab Core ML belum diketahui (log 3 menit kosong, app tidak dibuka).
+- Foto kamera bawaan: IMG_6627 (ProRAW UW), IMG_6641 (ProRAW 5x), IMG_6647 (HEIC zoom 14x). AI Zoom IMG_6640 (1x) sebanding dengan stock.
+- Burst Bayer di app sangat cepat: 9-10 frame dalam ~0.75 s. Bayer ultra-wide 4224x3024, white 4095, black 528.
+
+### Perbaikan v0.5.0 (run 43124958841 SUCCESS)
+- `DNGWriter.swift`: tulis ulang DNG Apple dengan CFA hasil merge (uncompressed, byte order asli, EXIF/GPS/MakerNote/opcode disalin). Diuji di PC dengan port Python 1:1 (`tools/dng_rewrite_check.py`): rewrite identitas **byte-exact** di rawpy; versi merged noise 2.61 -> 1.10; ExifTool hanya 1 warning minor bawaan.
+- `RawDeveloper.swift`: output HDR+ **HEIF (default) / JPEG / DNG / DNG+HEIF** via CIRAWFilter (NR Apple x0.4), orientasi dinormalisasi.
+- **Bake LUT** opsional untuk HDR+, HEIF, AI Zoom.
+- **Kamera depan** (dicerminkan), orientasi foto dari `RotationCoordinator` (potret/lanskap).
+- AI Zoom: error Core ML dicatat & ditampilkan, fallback compute unit (ANE -> GPU -> CPU), konversi format output, bila tetap gagal -> resize biasa ke 12MP.
+- IPA `data/builds/BaginCam-v0.5.0-unsigned.ipa`.
