@@ -491,3 +491,21 @@ Sampel 17:42-17:43 (adegan kantor, plang "AVP SALES REGION 4A" + tulisan tangan 
 - Fix v0.9.2: ISO/shutter + suhu/tint WB kamera virtual (sensor sama) disalin & dikunci di lensa fisik sebelum
   capture (delay 0.5 s); develop RAW mengukur kecerahan dari pratinjau 1/8 (CIAreaAverage) dan menurunkan eksposur
   bila rata-rata linear > 0.21 (target 0.17 ~ foto Apple); tone map lokal 0.8.
+
+## 2026-11-12 - Sesi 18: uji v0.9.2 di poster "JL. TUNJUNGAN" -> v0.9.3
+
+Sampel 17:50-17:54 (~14x tele): IMG_6907/6909 FOTO Apple, IMG_6908 FOTO AI Detail 24MP, IMG_6905 AI ZOOM MF8 Cepat,
+IMG_6906 AI ZOOM MF8 Detail (`data/bursts/dcim-1112-malam2/`, `data/output/v092_*.jpg`).
+| | kecerahan | R-G | paragraf kecil |
+|---|---|---|---|
+| FOTO Apple | 145 | -0.7 | terbaca, berbintik |
+| FOTO AI Detail | 156 | +5.3 | terbaca, tebal/kontras, sedikit belepotan |
+| AI ZOOM MF Cepat | 179 | +6.2 | terbaca, bersih, tipis/pucat |
+| AI ZOOM MF Detail | 179 | +5.9 | **huruf palsu** ("true beating heart of Surabaya" -> "ung beam ul uunubon") |
+- Pink v0.9.1 **teratasi** (transfer WB). MF masih terlalu terang: kecerahan diukur di seluruh frame, padahal yang
+  disimpan crop tengah.
+- **Temuan**: Fokus tulisan + model Detail (x4plus) kekuatan 95 % -> AI mengarang huruf pada teks kecil.
+- Fix v0.9.3: Fokus tulisan **berbasis OCR** - per area teks (maks 24), VNRecognizeTextRequest .accurate (+ koreksi
+  bahasa) dijalankan di versi AI & versi asli (MF/Lanczos); AI dipakai hanya bila keyakinan OCR > asli + 0.03,
+  selain itu area itu memakai versi asli murni. Log: jumlah area, AI menang, skor ai/asli. Kecerahan develop diukur
+  di area zoom (1/crop), target linear 0.26 bila > 0.30.

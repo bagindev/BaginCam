@@ -27,7 +27,9 @@ enum RawDeveloper {
     /// eksposur diturunkan supaya highlight tidak terpotong (DNG Apple membawa BaselineExposure +0.5..+1 EV
     /// yang diterapkan global -> v0.7.0 langit/kain putih total padahal RAW tidak terpotong), lalu tone map
     /// lokal Apple mengangkat bayangan (mirip Smart HDR).
-    static func develop(dng: Data, noiseReductionScale: Float = 0.6, highlight: Double? = nil) -> CIImage? {
+    /// `metering`: lebar area tengah (fraksi) untuk mengukur kecerahan, mis. 1/crop untuk zoom
+    static func develop(dng: Data, noiseReductionScale: Float = 0.6, highlight: Double? = nil,
+                        metering: Double = 1) -> CIImage? {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             Log.hdr.error("CIRAWFilter tidak bisa membuka DNG")
             return nil
@@ -47,14 +49,16 @@ enum RawDeveloper {
         if let small = f.outputImage {
             let avg = CIFilter.areaAverage()
             avg.inputImage = small
-            avg.extent = small.extent
+            let e = small.extent, m = CGFloat(max(0.05, min(1, metering)))
+            avg.extent = CGRect(x: e.midX - e.width * m / 2, y: e.midY - e.height * m / 2,
+                                width: e.width * m, height: e.height * m)
             if let px = avg.outputImage {
                 var v = [Float](repeating: 0, count: 4)
                 context.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
                                format: .RGBAf, colorSpace: nil)
                 let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
-                if lum > 0.21 {
-                    let adj = max(-1.2, log2(0.17 / lum))
+                if lum > 0.30 {
+                    let adj = max(-1.2, log2(0.26 / lum))
                     f.exposure += Float(adj)
                     Log.hdr.info("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }

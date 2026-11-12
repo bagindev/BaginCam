@@ -989,10 +989,16 @@ final class CameraManager: NSObject, ObservableObject {
         if burstTextFocus {
             // area tulisan: AI lebih kuat supaya huruf terbaca; area lain tetap campuran biasa
             let boxes = TextBoost.textBoxes(in: upT)
-            if !boxes.isEmpty, let comp = TextBoost.compose(plain: plain, ai: upT, strength: strength,
-                                                             textStrength: max(strength, 0.95), boxes: boxes) {
-                Log.sr.info("Fokus tulisan: \(boxes.count, privacy: .public) area teks")
-                return (comp, "AI \(model.rawValue) \(Int((strength * 100).rounded()))% + teks \(boxes.count)")
+            if !boxes.isEmpty {
+                setStatus("\(label): baca tulisan (OCR) \(boxes.count) area...")
+                let dec = TextBoost.decide(plain: plain, ai: upT, boxes: boxes)
+                let nAI = dec.filter { $0.useAI }.count
+                let detail = dec.prefix(6).map { String(format: "%.2f/%.2f", $0.confAI, $0.confPlain) }.joined(separator: " ")
+                Log.sr.info("Fokus tulisan: \(boxes.count, privacy: .public) area, AI menang \(nAI, privacy: .public) (OCR ai/asli: \(detail, privacy: .public))")
+                if let comp = TextBoost.compose(plain: plain, ai: upT, strength: strength,
+                                                textStrength: max(strength, 0.9), decisions: dec) {
+                    return (comp, "AI \(model.rawValue) \(Int((strength * 100).rounded()))% + teks \(nAI)/\(boxes.count) AI")
+                }
             }
         }
         let mixed = RawDeveloper.blend(plain: plain, ai: upT, strength: strength) ?? upT
@@ -1049,7 +1055,8 @@ final class CameraManager: NSObject, ObservableObject {
         if forAIZoom || burstZoomed {
             if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
             // AI Zoom multi-frame / HDR+ zoom: kembangkan hasil merge -> crop -> upscale
-            guard let img = RawDeveloper.develop(dng: dng, highlight: highlight), let cg = RawDeveloper.cgImage(img) else {
+            guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(burstCrop))),
+                  let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
             }
@@ -1066,7 +1073,7 @@ final class CameraManager: NSObject, ObservableObject {
         if fmt.wantsHEIF || fmt.wantsJPEG {
             setStatus("HDR+: mengembangkan RAW...")
             var rendered = false
-            if var img = RawDeveloper.develop(dng: dng, highlight: highlight) {
+            if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: burstZoomed ? 1 / max(1, Double(burstCrop)) : 1) {
                 // 24/48MP: data Bayer 12MP diperbesar (AI Cepat dicampur Lanczos)
                 if res != .mp12, let cg = RawDeveloper.cgImage(img) {
                     let full = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
