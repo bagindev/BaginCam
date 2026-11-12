@@ -133,18 +133,25 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// `maxShutter`: genggam 1/4 s (tele 1/8 s), diam/tripod 1 s
+    /// v0.10.0/0.10.1: crash saat app dibuka di MALAM - nilai live kamera belum valid (shutter NaN / 0)
+    /// -> Int(NaN) trap. Semua masukan kini disaring dulu.
     static func nightPlan(iso: Float, shutter: Double, minISO: Float, steady: Bool, tele: Bool) -> NightPlan {
-        let exposure = Double(max(iso, 1)) * max(shutter, 1.0 / 8000)
+        let s0 = shutter.isFinite && shutter > 0 ? min(shutter, 1) : 1.0 / 30
+        let i0 = iso.isFinite && iso > 0 ? iso : 400
+        let mISO = minISO.isFinite && minISO > 0 ? minISO : 25
+        let exposure = Double(i0) * s0
         let maxT = steady ? 1.0 : (tele ? 0.125 : 0.25)
-        var t = max(shutter, maxT)
+        var t = max(s0, maxT)
         var i = Float(exposure / t)
-        if i < minISO {
-            i = minISO
-            t = max(shutter, exposure / Double(minISO))
+        if i < mISO {
+            i = mISO
+            t = max(s0, exposure / Double(mISO))
         }
+        if !t.isFinite || t <= 0 { t = maxT }
         let budget = steady ? 6.0 : 4.0          // detik total
-        let frames = min(15, max(6, Int(budget / t)))
-        return NightPlan(frames: frames, shutter: t, iso: i)
+        let n = budget / t
+        let frames = n.isFinite ? min(15, max(6, Int(min(n, 100)))) : 6
+        return NightPlan(frames: frames, shutter: t, iso: i.isFinite ? i : mISO)
     }
 
     enum Lens: String, CaseIterable, Identifiable {
@@ -886,16 +893,19 @@ final class CameraManager: NSObject, ObservableObject {
     /// bila gain di luar [1, maxWhiteBalanceGain] - mis. gain 0 sebelum session jalan (bug v0.1.0).
     private func updateReadout() {
         guard let d = device, session.isRunning else { return }
-        liveISO = d.iso
-        liveShutter = d.exposureDuration.seconds
-        liveLens = d.lensPosition
+        // nilai bisa NaN sebelum kamera stabil -> UI memakai Int(...) (crash v0.10.0)
+        liveISO = d.iso.isFinite ? d.iso : 0
+        let s = d.exposureDuration.seconds
+        liveShutter = s.isFinite ? s : 0
+        liveLens = d.lensPosition.isFinite ? d.lensPosition : 0
         activeLensLabel = lensLabel(for: d)
         let macro = d.isVirtualDevice && d.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && totalZoom >= 0.95
         if macro != macroActive { macroActive = macro }
         let maxGain = d.maxWhiteBalanceGain
         let g = d.deviceWhiteBalanceGains
         guard maxGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 else { return }
-        liveTemp = d.temperatureAndTintValues(for: Self.clamp(g, maxGain)).temperature
+        let temp = d.temperatureAndTintValues(for: Self.clamp(g, maxGain)).temperature
+        if temp.isFinite { liveTemp = temp }
     }
 
     private static func name(of type: AVCaptureDevice.DeviceType) -> String {

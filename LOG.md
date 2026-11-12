@@ -649,3 +649,12 @@ Sampel `data/bursts/dcim-1112-v0100/` (IMG_6929-6937), log `syslog_20261112-1929
   - MALAM: pencerahan maks +3 EV (target linear 0.16), genggam 4 s (15 x 1/4 s); deteksi diam dilonggarkan
     (gyro < 0.035 rad/s, 0.8 s) dan nilai gyro dicatat di log.
 - Build v0.10.1: run 43221009152 sukses -> `data/builds/BaginCam-v0.10.1-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 25: v0.10.1 gagal dibuka -> v0.10.2
+
+- Pengguna: app gagal dibuka. Crash report (`data/crash/20261112/BaginCam-2026-11-12-200357.ips`, juga v0.10.0
+  19:40:29): EXC_BREAKPOINT di `CameraManager.nightPlan` <- `ContentView.framesText` <- `infoRow` (render UI).
+- Penyebab: mode MALAM tersimpan (Prefs) -> saat dibuka UI langsung menghitung rencana MALAM dari nilai live
+  kamera yang belum valid (shutter NaN/0) -> `Int(NaN)` trap. v0.10.0 juga crash 4x berturut-turut saat masuk MALAM.
+- Fix v0.10.2: masukan nightPlan disaring (shutter/ISO/minISO NaN atau 0 -> nilai aman, frame dari n terbatas);
+  nilai live (ISO, shutter, fokus, suhu WB) disaring isFinite di sumbernya (updateReadout).
