@@ -464,3 +464,15 @@ v0.8.1: **kunci lensa di AI ZOOM** (Auto / Utama 1x / Tele 5x; terkunci = lensa 
 
 ### Build
 - v0.9.0 run 43198315588 SUCCESS (percobaan pertama). IPA `data/builds/BaginCam-v0.9.0-unsigned.ipa`. Belum diuji di HP.
+
+## 2026-11-12 - Sesi 16: v0.9.1 (UW di AI ZOOM, FOTO seperti kamera bawaan, Fokus tulisan)
+
+- **AI ZOOM + Ultra Wide**: kunci lensa Auto / UW .5x / Utama 1x / Tele 5x; Auto mulai 0.5x (kamera virtual).
+- **FOTO = seperti kamera bawaan**: kamera virtual Apple (zoom mulus 0.5-50x, pilih lensa otomatis, Smart HDR /
+  Deep Fusion Apple), kunci lensa (+ Depan); kunci Utama = 48MP. "Pakai AI saat zoom digital" mati = proses Apple
+  apa adanya (termasuk zoom digital Apple); hidup = di atas zoom optik -> foto resolusi penuh di-crop + AI.
+- **Fokus tulisan** (ide user): setelah SR, `VNRecognizeTextRequest` (.fast, di HP) mendeteksi area teks ->
+  di area teks AI dipakai penuh (>= 95 %), area lain tetap "Kekuatan AI"; masker diperluas 35 % tinggi teks &
+  dihaluskan (Gaussian). Status/log menyebut jumlah area teks. Default aktif.
+- Penjelasan HDR+ "tanpa AI": merge multi-frame (6-15 frame, frekuensi) di resolusi sensor -> crop -> Lanczos.
+  Bukan Super Res Zoom (MFSR menaruh sampel di grid lebih halus; prototipe sesi 15 belum lebih tajam).

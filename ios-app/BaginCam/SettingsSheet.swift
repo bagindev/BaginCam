@@ -73,8 +73,9 @@ struct SettingsSheet: View {
                 // MARK: zoom FOTO / HDR+
                 if mode == .heif || mode == .hdrplus {
                     Section {
-                        Toggle("Pakai AI saat zoom", isOn: $cam.zoomAIEnabled)
+                        Toggle(mode == .heif ? "Pakai AI saat zoom digital" : "Pakai AI saat zoom", isOn: $cam.zoomAIEnabled)
                         if cam.zoomAIEnabled {
+                            Toggle("Fokus tulisan (AI penuh di area teks)", isOn: $cam.textFocus)
                             Picker("Model AI", selection: $cam.srModel) {
                                 ForEach(SRModel.allCases) { Text($0.rawValue).tag($0) }
                             }
@@ -93,7 +94,7 @@ struct SettingsSheet: View {
                     } footer: {
                         Text(mode == .hdrplus
                              ? "HDR+ + zoom = gabung 8 frame dulu (detail asli, noise turun) lalu di-crop & diperbesar. Matikan AI untuk membandingkan: pembesaran biasa (Lanczos) vs AI."
-                             : "Foto diambil resolusi penuh (48MP lensa utama) lalu di-crop & diperbesar. Matikan AI untuk membandingkan hasil tanpa AI.")
+                             : "Mati = proses Apple apa adanya (seperti kamera bawaan, termasuk zoom digital Apple). Hidup = saat zoom melewati lensa optik, foto resolusi penuh di-crop lalu diperbesar AI. Kunci lensa Utama untuk 48MP.")
                     }
                 }
 
@@ -139,6 +140,7 @@ struct SettingsSheet: View {
                             Slider(value: $cam.aiStrength, in: 0...1)
                         }
                         Toggle("Multi-frame (8 frame digabung)", isOn: $cam.multiFrameZoom)
+                        Toggle("Fokus tulisan (AI penuh di area teks)", isOn: $cam.textFocus)
                     } header: {
                         Text("AI Zoom")
                     } footer: {

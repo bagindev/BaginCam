@@ -24,7 +24,7 @@ final class CameraManager: NSObject, ObservableObject {
             case .hdrplus: return "Burst Bayer RAW -> align + merge di GPU (1 suara shutter), bisa zoom"
             case .bayer: return "Burst Bayer RAW (untuk pc-lab)"
             case .proraw: return "Burst Apple ProRAW"
-            case .heif: return "Foto tunggal Apple (12/24/48MP), bisa zoom"
+            case .heif: return "Seperti kamera bawaan: zoom 0.5-50x, lensa otomatis / kunci lensa"
             case .aiZoom: return "Zoom 1-25x, pilih lensa otomatis seperti kamera bawaan"
             }
         }
@@ -115,8 +115,14 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var totalZoom: CGFloat = 1        // relatif lensa utama (1x = 24mm)
     @Published private(set) var maxTotalZoom: CGFloat = 25
     @Published private(set) var autoLensAvailable = false     // kamera virtual (pilih lensa otomatis)
+    /// zoom minimum mode Auto (0.5 bila ada ultra wide)
+    @Published private(set) var minAutoZoom: CGFloat = 1
+
+    /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
+    static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif }
     @Published var srModel: SRModel = .fast
     @Published var aiStrength: Double = 0.5                  // 0 = pembesaran biasa, 1 = AI penuh
+    @Published var textFocus = true                           // AI Zoom: area tulisan pakai AI lebih kuat
     @Published var multiFrameZoom = true                      // burst Bayer + merge sebelum AI (bila tersedia)
 
     @Published private(set) var isCapturing = false
@@ -194,6 +200,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstAIMultiFrame = false
     private var burstSRModel: SRModel = .fast
     private var burstStrength: Double = 0.5
+    private var burstTextFocus = true
     private var restoreZoomAfterBurst = false
     private var switchedToPhysicalForMF = false   // AI Zoom MF: sementara pakai lensa fisik (Bayer)
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
@@ -350,6 +357,7 @@ final class CameraManager: NSObject, ObservableObject {
         Log.camera.info("Kamera virtual \(vd.localizedName, privacy: .public): \(baseText, privacy: .public), maks zoom \(Double(maxZ), privacy: .public)x")
         DispatchQueue.main.async {
             self.lensBaseMain = bases
+            self.minAutoZoom = bases[.builtInUltraWideCamera] != nil ? 1 / max(bases[.builtInWideAngleCamera] ?? 1, 1) : 1
             self.maxTotalZoom = maxZ
             self.totalZoom = min(max(1, startZoom), maxZ)
         }
@@ -358,19 +366,19 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
     func setAILensLock(_ l: Lens?) {
-        guard mode == .aiZoom, !isCapturing, l != aiLensLock else { return }
+        guard Self.usesVirtual(mode), !isCapturing, l != aiLensLock else { return }
         aiLensLock = l
         aeafLocked = false
-        let native: CGFloat = l == .tele ? 5 : 1
+        let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
         let tz = max(totalZoom, l == nil ? 1 : native)
         sessionQueue.async {
             guard let l else { self.enterAIZoom(zoom: tz); return }
-            guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: .back) else {
+            guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: l.position) else {
                 self.setStatus("Lensa \(l.displayName) tidak tersedia")
                 return
             }
             self.isVirtual = false
-            self.install(d, mirrored: false)
+            self.install(d, mirrored: l == .front)
             self.aiLockNative = native
             self.applyRawMode(.aiZoom)
             self.applyAuto()
@@ -430,7 +438,15 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Zoom total (1x = lensa utama). Panggil dari main thread.
     func setTotalZoom(_ z: CGFloat) {
-        let minZ: CGFloat = (mode == .aiZoom && aiLensLock == .tele) ? 5 : 1
+        var minZ: CGFloat = 1
+        if Self.usesVirtual(mode) {
+            switch aiLensLock {
+            case .tele?: minZ = 5
+            case .ultraWide?: minZ = 0.5
+            case nil: minZ = minAutoZoom
+            default: minZ = 1
+            }
+        }
         let zz = min(max(minZ, z), maxTotalZoom)
         totalZoom = zz
         sessionQueue.async {
@@ -541,10 +557,14 @@ final class CameraManager: NSObject, ObservableObject {
         mode = m
         let l = lens
         sessionQueue.async {
-            if m == .aiZoom {
-                DispatchQueue.main.async { self.aiLensLock = nil }
-                self.enterAIZoom()
-            } else if old == .aiZoom {
+            if Self.usesVirtual(m) {
+                if !Self.usesVirtual(old) {
+                    DispatchQueue.main.async { self.aiLensLock = nil }
+                    self.enterAIZoom()
+                } else {
+                    self.applyRawMode(m)       // AI ZOOM <-> FOTO: device & kunci lensa tetap
+                }
+            } else if Self.usesVirtual(old) {
                 self.switchDevice(to: l, mode: m)
             } else {
                 self.applyRawMode(m)
@@ -663,8 +683,8 @@ final class CameraManager: NSObject, ObservableObject {
             let nat = native < 1 ? String(format: "%.1fx", Double(native)) : String(format: "%.0fx", Double(native))
             return crop > 1.05 ? String(format: "%@ %@ · crop %.1fx", n, nat, Double(crop)) : "\(n) \(nat)"
         }
-        let l = (mode == .aiZoom ? aiLensLock : nil) ?? lens
-        let n = l.displayName + (mode == .aiZoom && aiLensLock != nil ? " (kunci)" : "")
+        let l = (Self.usesVirtual(mode) ? aiLensLock : nil) ?? lens
+        let n = l.displayName + (Self.usesVirtual(mode) && aiLensLock != nil ? " (kunci)" : "")
         return z > 1.05 ? String(format: "%@ · crop %.1fx", n, Double(z)) : (l == .front ? n : "\(n) \(l.rawValue)")
     }
 
@@ -714,7 +734,7 @@ final class CameraManager: NSObject, ObservableObject {
         let lensNative: CGFloat = lens == .tele ? 5 : (lens == .ultraWide ? 0.5 : 1)
         let auto = isAuto, keep = saveFrames, nr = hdrNoiseReduction, res = outputMP
         let fmt = outputFormat, lut = bakeLUT ? captureLUT : nil
-        let tz = totalZoom, model = srModel, strength = aiStrength, mf = multiFrameZoom
+        let tz = totalZoom, model = srModel, strength = aiStrength, mf = multiFrameZoom, tf = textFocus
         sessionQueue.async {
             self.burstAuto = auto
             self.burstMode = m
@@ -728,6 +748,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstSRModel = model
             self.burstStrength = (m == .aiZoom || useAI) ? strength : 0
             self.restoreZoomAfterBurst = false
+            self.burstTextFocus = tf
             self.burstZoomed = m == .aiZoom
             self.burstDisplayZoom = m == .aiZoom ? tz : tz * lensNative
             // orientasi foto mengikuti cara HP dipegang (potret/lanskap)
@@ -737,7 +758,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             var frames = count
             var delay = m.isBurst ? 0.15 : 0.0
-            if (m == .heif || m == .hdrplus) && tz > 1.01 {
+            if m == .hdrplus && tz > 1.01 {
                 // zoom di FOTO / HDR+: ambil resolusi penuh (zoom hardware 1x), crop + upscale sendiri
                 if let d = self.device, (try? d.lockForConfiguration()) != nil {
                     d.videoZoomFactor = 1
@@ -751,7 +772,19 @@ final class CameraManager: NSObject, ObservableObject {
                 self.burstAIMultiFrame = false
                 delay = max(delay, 0.3)
             }
-            if m == .aiZoom {
+            // FOTO: tanpa AI (atau zoom masih optik) = proses Apple apa adanya seperti kamera bawaan.
+            var fotoAI = false
+            if m == .heif && useAI {
+                var base: CGFloat = self.aiLockNative > 0 ? self.aiLockNative : 1
+                var z = tz
+                if let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
+                    base = self.lensBase[p.deviceType] ?? 1
+                    z = tz * self.wideBase
+                }
+                fotoAI = z / base > 1.05     // ada zoom digital di atas lensa optik
+            }
+            if m == .aiZoom || fotoAI {
+                self.burstZoomed = true
                 // Lensa dipilih iOS (kamera virtual: tele vs crop lensa utama). Untuk memotret, pindah
                 // sementara ke lensa FISIK itu: kamera virtual hanya memberi 12MP & tanpa Bayer RAW
                 // (log v0.6.0: lensa utama crop 10x -> sumber cuma 4032x3024).
@@ -774,7 +807,7 @@ final class CameraManager: NSObject, ObservableObject {
                     d.unlockForConfiguration()
                     if self.aiLockNative > 0 {
                         base = self.aiLockNative
-                        lensName = self.aiLockNative >= 2 ? "Tele" : "Utama"
+                        lensName = self.aiLockNative >= 2 ? "Tele" : (self.aiLockNative < 0.9 ? "Ultra Wide" : "Utama")
                     }
                     self.restoreZoomAfterBurst = true
                     delay = 0.3
@@ -783,7 +816,7 @@ final class CameraManager: NSObject, ObservableObject {
                 self.burstLensName = lensName
                 let bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 // multi-frame: lensa tele, atau crop >= 3x di lensa utama (48MP tunggal kalah oleh merge 8 frame)
-                self.burstAIMultiFrame = mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
+                self.burstAIMultiFrame = m == .aiZoom && mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
                 self.burstAIFull = !self.burstAIMultiFrame
                 frames = self.burstAIMultiFrame ? 8 : 1
             }
@@ -792,7 +825,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.savedCount = 0
             self.hdrFrames = []
             self.hdrRef = nil
-            self.burstDir = Self.makeBurstDir(prefix: m == .hdrplus ? "HDRPLUS" : m == .aiZoom ? "AIZOOM" : "BURST")
+            self.burstDir = Self.makeBurstDir(prefix: m == .hdrplus ? "HDRPLUS" : m == .aiZoom ? "AIZOOM" : (m == .heif ? "FOTO" : "BURST"))
             let isMulti = m.isBurst || self.burstAIMultiFrame
             Log.camera.info("Capture mulai: \(frames, privacy: .public) frame, mode \(m.rawValue, privacy: .public), zoom total \(Double(tz), privacy: .public)x, lensa \(self.burstLensName, privacy: .public), crop \(Double(self.burstCrop), privacy: .public)x, MF \(self.burstAIMultiFrame, privacy: .public)")
             self.setStatus(isMulti ? "Burst 0/\(frames)" : "Memotret...")
@@ -932,6 +965,15 @@ final class CameraManager: NSObject, ObservableObject {
             return (plain, "AI gagal: \(sr.lastError ?? "prediksi gagal")")
         }
         let upT = SRUpscaler.resize(up, width: plain.width, height: plain.height) ?? up
+        if burstTextFocus {
+            // area tulisan: AI lebih kuat supaya huruf terbaca; area lain tetap campuran biasa
+            let boxes = TextBoost.textBoxes(in: upT)
+            if !boxes.isEmpty, let comp = TextBoost.compose(plain: plain, ai: upT, strength: strength,
+                                                             textStrength: max(strength, 0.95), boxes: boxes) {
+                Log.sr.info("Fokus tulisan: \(boxes.count, privacy: .public) area teks")
+                return (comp, "AI \(model.rawValue) \(Int((strength * 100).rounded()))% + teks \(boxes.count)")
+            }
+        }
         let mixed = RawDeveloper.blend(plain: plain, ai: upT, strength: strength) ?? upT
         return (mixed, "AI \(model.rawValue) \(Int((strength * 100).rounded()))%")
     }

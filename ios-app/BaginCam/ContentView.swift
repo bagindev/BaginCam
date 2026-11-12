@@ -42,7 +42,7 @@ struct ContentView: View {
                 if showsZoom { zoomRow }
                 Spacer(minLength: 0)
                 if showManual { manualPanel }
-                if cam.mode != .aiZoom { lensRow }
+                if !CameraManager.usesVirtual(cam.mode) { lensRow }
                 modeStrip
                 bottomBar
             }
@@ -176,12 +176,12 @@ struct ContentView: View {
     /// slider 0..1 -> zoom 1..max skala logaritmik
     /// zoom tersedia di AI Zoom, FOTO dan HDR+ (lensa belakang)
     private var showsZoom: Bool {
-        cam.mode == .aiZoom || ((cam.mode == .heif || cam.mode == .hdrplus) && cam.lens != .front)
+        CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock != .front : (cam.mode == .hdrplus && cam.lens != .front)
     }
 
     /// faktor optik lensa terpilih relatif lensa utama (AI Zoom: 1, karena totalZoom sudah total)
     private var lensNative: Double {
-        if cam.mode == .aiZoom { return 1 }
+        if CameraManager.usesVirtual(cam.mode) { return 1 }
         switch cam.lens {
         case .tele: return 5
         case .ultraWide: return 0.5
@@ -190,11 +190,19 @@ struct ContentView: View {
     }
 
     private var displayZoom: Double { Double(cam.totalZoom) * lensNative }
-    private var minZoom: Double { cam.mode == .aiZoom && cam.aiLensLock == .tele ? 5 : lensNative }
+    private var minZoom: Double {
+        guard CameraManager.usesVirtual(cam.mode) else { return lensNative }
+        switch cam.aiLensLock {
+        case .tele?: return 5
+        case .ultraWide?: return 0.5
+        case nil: return Double(cam.minAutoZoom)
+        default: return 1
+        }
+    }
     private var maxZoom: Double { Double(cam.maxTotalZoom) * lensNative }
 
     private func setDisplayZoom(_ z: Double) {
-        cam.setTotalZoom(CGFloat(max(1, z / lensNative)))
+        cam.setTotalZoom(CGFloat(z / lensNative))
     }
 
     /// slider 0..1 -> zoom min..max skala logaritmik
@@ -205,7 +213,7 @@ struct ContentView: View {
     }
 
     private var zoomPresets: [Double] {
-        [1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+        [0.5, 1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
     }
 
     private var zoomRow: some View {
@@ -213,7 +221,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 ForEach(zoomPresets, id: \.self) { z in
                     let on = abs(displayZoom - z) < 0.05
-                    Button(String(format: "%.0fx", z)) { setDisplayZoom(z) }
+                    Button(z < 1 ? ".5x" : String(format: "%.0fx", z)) { setDisplayZoom(z) }
                         .font(.caption.bold())
                         .frame(width: 40, height: 28)
                         .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
@@ -221,7 +229,7 @@ struct ContentView: View {
                 }
                 Spacer(minLength: 0)
                 if cam.mode != .aiZoom && displayZoom > minZoom + 0.05 {
-                    Text(cam.zoomAIEnabled ? "AI" : "tanpa AI")
+                    Text(cam.zoomAIEnabled ? "AI" : (cam.mode == .heif ? "Apple" : "tanpa AI"))
                         .font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
                         .background(cam.zoomAIEnabled ? Color.yellow.opacity(0.85) : Color.white.opacity(0.2), in: Capsule())
                         .foregroundStyle(cam.zoomAIEnabled ? .black : .white)
@@ -231,12 +239,13 @@ struct ContentView: View {
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
             Slider(value: zoomBinding, in: 0...1).tint(.yellow)
-            if cam.mode == .aiZoom && cam.autoLensAvailable {
+            if CameraManager.usesVirtual(cam.mode) && cam.autoLensAvailable {
                 HStack(spacing: 6) {
-                    Text("Lensa").font(.caption2).foregroundStyle(.white.opacity(0.7))
-                    ForEach([CameraManager.Lens?.none, .wide, .tele], id: \.self) { l in
+                    Image(systemName: cam.aiLensLock == nil ? "lock.open" : "lock.fill")
+                        .font(.caption2).foregroundStyle(cam.aiLensLock == nil ? .white.opacity(0.7) : .yellow)
+                    ForEach(lockOptions, id: \.self) { l in
                         let on = cam.aiLensLock == l
-                        Button(l == nil ? "Auto" : (l == .tele ? "Tele 5x" : "Utama 1x")) { cam.setAILensLock(l) }
+                        Button(lockLabel(l)) { cam.setAILensLock(l) }
                             .font(.caption2.bold())
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
@@ -246,6 +255,24 @@ struct ContentView: View {
                     Spacer(minLength: 0)
                 }
             }
+        }
+    }
+
+    // MARK: kunci lensa
+    private var lockOptions: [CameraManager.Lens?] {
+        var o: [CameraManager.Lens?] = [nil]
+        for l in [CameraManager.Lens.ultraWide, .wide, .tele] where cam.availableLenses.contains(l) { o.append(l) }
+        if cam.mode == .heif && cam.availableLenses.contains(.front) { o.append(.front) }
+        return o
+    }
+
+    private func lockLabel(_ l: CameraManager.Lens?) -> String {
+        switch l {
+        case nil: return "Auto"
+        case .ultraWide?: return "UW .5x"
+        case .wide?: return "Utama 1x"
+        case .tele?: return "Tele 5x"
+        case .front?: return "Depan"
         }
     }
 
