@@ -577,3 +577,19 @@ Sampel `data/bursts/dcim-1112-malam4/` (IMG_6920-6926), log `syslog_20261112-183
     multi-frame, AI zoom on/off, metode merge, frame otomatis, timer.
 
 - Build v0.9.6: run 43211070140 sukses -> `data/builds/BaginCam-v0.9.6-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 22: uji v0.9.6
+
+Sampel `data/bursts/dcim-1112-malam5/` (IMG_6927 HDR+ 13x Tele Cepat 24MP, IMG_6928 selfie HDR+ depan 24MP).
+- **Pengaturan tersimpan**: 24MP tetap setelah app dibuka ulang (4282x5712).
+- Fokus tulisan per paragraf: 17 blok, AI 0 -> semua baris paragraf memakai versi asli; tidak ada huruf karangan
+  (bandingkan v0.9.5 "modara onoigy"). Masih lembut (Cepat, crop 2.6x). `data/output/v096_paragraf.jpg`.
+- **Metering wajah**: wajah linear 0.32 (eksposur -0.43 EV, dulu -1.07) vs Apple 0.28 (v0.9.5: 0.15) -> wajah tidak
+  gelap lagi. Warna sedikit lebih hangat (R-G +8.4 vs +4.8). `data/output/v096_selfie.jpg`.
+- Catatan: kamera depan 12MP -> 24MP lewat SR Cepat 252 tile 8.1 s.
+- Pertanyaan pengguna: kenapa FOTO dan HDR+ dipisah padahal isinya sama -> dijelaskan (lihat chat); usulan gabung
+  jadi satu mode FOTO dengan pilihan proses.
+- Studi UI GCam (screenshot AGC 9.4/9.6 dari proyek gcam-taoyao): mode = niat (Photo/Night Sight/Portrait), HDR+ &
+  Super Res Zoom selalu otomatis, chip cepat atas, zoom chip di atas shutter, laci Pro bawah, settings berkelompok.
+  Usulan susunan baru BaginCam (MALAM · FOTO · PRO, chip proses HDR+/Apple/Auto, AI zoom otomatis):
+  `docs/usulan-ui-gcam.md`. Menunggu keputusan pengguna sebelum eksekusi.
