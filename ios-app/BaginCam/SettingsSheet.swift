@@ -31,9 +31,9 @@ struct SettingsSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text(mode.detail).font(.footnote).foregroundStyle(.secondary)
+                    Text(modeDetail).font(.footnote).foregroundStyle(.secondary)
                 } header: {
-                    Text("Mode: \(mode.rawValue)")
+                    Text("Mode: \(modeTitle)")
                 }
 
                 // MARK: hasil foto
@@ -73,7 +73,11 @@ struct SettingsSheet: View {
                 // MARK: zoom FOTO / HDR+
                 if mode == .heif || mode == .hdrplus {
                     Section {
-                        Toggle(mode == .heif ? "Pakai AI saat zoom digital" : "Pakai AI saat zoom", isOn: $cam.zoomAIEnabled)
+                        Picker("Cara zoom", selection: $cam.zoomMethod) {
+                            ForEach(CameraManager.ZoomMethod.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        Text(cam.zoomMethod.detail).font(.caption).foregroundStyle(.secondary)
+                        Toggle("AI setelah zoom", isOn: $cam.zoomAIEnabled)
                         if cam.zoomAIEnabled {
                             Toggle("Fokus tulisan (AI penuh di area teks)", isOn: $cam.textFocus)
                             Picker("Model AI", selection: $cam.srModel) {
@@ -92,9 +96,7 @@ struct SettingsSheet: View {
                     } header: {
                         Text("Zoom")
                     } footer: {
-                        Text(mode == .hdrplus
-                             ? "HDR+ + zoom = gabung 8 frame dulu (detail asli, noise turun) lalu di-crop & diperbesar. Matikan AI untuk membandingkan: pembesaran biasa (Lanczos) vs AI."
-                             : "Mati = proses Apple apa adanya (seperti kamera bawaan, termasuk zoom digital Apple). Hidup = saat zoom melewati lensa optik, foto resolusi penuh di-crop lalu diperbesar AI. Kunci lensa Utama untuk 48MP.")
+                        Text("Berlaku saat zoom MELEWATI lensa optik (0.5x / 1x / 2x / 5x tetap lensa asli). Cara zoom = pembesaran dasar; AI = penajaman tambahan di atasnya (mati = Lanczos / Apple apa adanya), jadi semua kombinasi bisa dibandingkan. MALAM selalu Super Res.")
                     }
                 }
 
@@ -195,6 +197,22 @@ struct SettingsSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private var modeTitle: String {
+        switch cam.shootMode {
+        case .night: return "MALAM"
+        case .photo: return "FOTO · \(cam.photoProcess.rawValue)"
+        case .pro: return "PRO · \(cam.proFormat.rawValue)"
+        }
+    }
+
+    private var modeDetail: String {
+        switch cam.shootMode {
+        case .night: return "HDR+ dengan shutter lebih lama (genggam 1/4 s, tele 1/8 s, HP diam/tripod sampai 1 s) dan ISO lebih rendah, 6-15 frame, lalu dicerahkan. Tahan HP sampai selesai."
+        case .photo: return cam.photoProcess.detail
+        case .pro: return cam.proFormat.detail + ". Laci Pro (ikon slider kanan bawah): EV, ISO, shutter, WB, fokus manual per bagian."
+        }
     }
 
     private var resultFooter: String {

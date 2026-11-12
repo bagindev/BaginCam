@@ -16,6 +16,32 @@ enum PhotoFormat: String, CaseIterable, Identifiable {
     var wantsJPEG: Bool { self == .jpeg }
 }
 
+/// Rasio foto (sisi panjang : sisi pendek). Sensor 4:3; 16:9 memotong sisi pendek, 1:1 memotong sisi panjang.
+/// Hanya untuk HEIF/JPEG (RAW tetap 4:3).
+enum AspectRatio: String, CaseIterable, Identifiable {
+    case r43 = "4:3"
+    case r169 = "16:9"
+    case r11 = "1:1"
+    var id: String { rawValue }
+    var longOverShort: CGFloat {
+        switch self {
+        case .r43: return 4.0 / 3.0
+        case .r169: return 16.0 / 9.0
+        case .r11: return 1
+        }
+    }
+    /// area tengah dengan rasio ini di dalam `r` (orientasi apa pun)
+    func rect(in r: CGRect) -> CGRect {
+        let landscape = r.width >= r.height
+        var long = landscape ? r.width : r.height, short = landscape ? r.height : r.width
+        let k = longOverShort
+        if long / short < k { short = (long / k).rounded(.down) } else { long = (short * k).rounded(.down) }
+        let w = landscape ? long : short, h = landscape ? short : long
+        return CGRect(x: (r.minX + (r.width - w) / 2).rounded(.down), y: (r.minY + (r.height - h) / 2).rounded(.down),
+                      width: w, height: h)
+    }
+}
+
 /// "Cuci" DNG jadi foto jadi (HEIF/JPEG) dengan mesin RAW Apple (CIRAWFilter),
 /// opsional LUT dibakar ke foto. Dipanggil di processQueue.
 enum RawDeveloper {
@@ -30,7 +56,7 @@ enum RawDeveloper {
     /// lokal Apple mengangkat bayangan (mirip Smart HDR).
     /// `metering`: lebar area tengah (fraksi) untuk mengukur kecerahan, mis. 1/crop untuk zoom
     static func develop(dng: Data, noiseReductionScale: Float = 0.6, highlight: Double? = nil,
-                        metering: Double = 1) -> CIImage? {
+                        metering: Double = 1, night: Bool = false) -> CIImage? {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             Log.hdr.error("CIRAWFilter tidak bisa membuka DNG")
             return nil
@@ -60,6 +86,8 @@ enum RawDeveloper {
                 let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
                 var adj = 0.0
                 if lum > 0.30 { adj = max(-1.2, log2(0.26 / lum)) }
+                // MALAM: adegan gelap dicerahkan seperti Night Sight (maks +1 EV)
+                if night && lum < 0.12 { adj = min(1.0, log2(0.14 / max(lum, 0.005))) }
                 // wajah diprioritaskan (v0.9.5: selfie berlatar AC/plafon terang -> diturunkan -1.07 EV,
                 // wajah linear 0.15 vs foto Apple 0.28)
                 if metering >= 0.99, let face = faceLuminance(small) {
@@ -134,12 +162,15 @@ enum RawDeveloper {
 
     /// Proses ulang HEIC/JPEG yang sudah jadi: perkecil ke `longSide` (mis. 48MP -> 24MP) dan/atau
     /// bakar LUT. Orientasi tetap di metadata (piksel tidak diputar). nil = tidak perlu / gagal.
-    static func reprocess(_ encoded: Data, longSide: Int?, lut: CubeLUT?) -> Data? {
-        guard longSide != nil || lut != nil,
+    static func reprocess(_ encoded: Data, longSide: Int?, lut: CubeLUT?, aspect: AspectRatio = .r43) -> Data? {
+        guard longSide != nil || lut != nil || aspect != .r43,
               let src = CIImage(data: encoded, options: [.applyOrientationProperty: false]) else { return nil }
         var img = src
+        if aspect != .r43 {
+            img = img.cropped(to: aspect.rect(in: img.extent)).settingProperties(src.properties)
+        }
         if let longSide {
-            let k = Double(longSide) / Double(max(src.extent.width, src.extent.height))
+            let k = Double(longSide) / Double(max(img.extent.width, img.extent.height))
             if k < 0.999 {
                 let f = CIFilter.lanczosScaleTransform()
                 f.inputImage = img

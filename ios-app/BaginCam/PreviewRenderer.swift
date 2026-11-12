@@ -217,13 +217,23 @@ struct GridOverlay: View {
 final class LevelMonitor: ObservableObject {
     @Published private(set) var roll: Double = 0      // derajat, 0 = datar (potret / lanskap)
     @Published private(set) var flat = false          // HP rebah (menghadap atas/bawah)
+    /// HP diam (tripod / disandarkan) > ~1 detik: putaran gyro sangat kecil (untuk mode MALAM)
+    @Published private(set) var steady = false
+    private var rotSmooth = 1.0
+    private var steadyTicks = 0
     private let motion = CMMotionManager()
 
     func start() {
         guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
         motion.deviceMotionUpdateInterval = 1.0 / 20
         motion.startDeviceMotionUpdates(to: .main) { [weak self] m, _ in
-            guard let self, let g = m?.gravity else { return }
+            guard let self, let m else { return }
+            let g = m.gravity
+            let r = m.rotationRate
+            self.rotSmooth = 0.8 * self.rotSmooth + 0.2 * sqrt(r.x * r.x + r.y * r.y + r.z * r.z)
+            self.steadyTicks = self.rotSmooth < 0.02 ? self.steadyTicks + 1 : 0
+            let st = self.steadyTicks >= 20
+            if st != self.steady { self.steady = st }
             self.flat = abs(g.z) > 0.85
             var a = atan2(g.x, -g.y) * 180 / .pi          // potret tegak = 0
             // pegang lanskap: ukur terhadap 90 derajat terdekat
