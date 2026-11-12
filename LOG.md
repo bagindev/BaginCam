@@ -336,3 +336,14 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
 - Fix v0.6.3: `DNGWriter.rewrite(sourceFullScale:)` menskalakan data ke WhiteLevel DNG
   (14-bit -> x(4096/16384)); format pixel buffer (fourCC, mis. rgg4 = 14-bit), maks data, white & skala dicatat ke log
   (kategori hdrplus) untuk verifikasi.
+
+## 2026-11-12 - Sesi 10: verifikasi v0.6.3 + menu terpotong -> v0.6.4
+
+- Log (`syslog_20261112-081121.txt`): `RAW rgg4=14-bit, maks data 8635, DNG white 4095 -> skala 0.25` -> **diagnosis
+  14-bit terkonfirmasi** (data > 4095 tidak mungkin 12-bit). Kamera virtual: Bayer false, maks 24MP (pindah ke
+  lensa fisik memang perlu).
+- AI Zoom 25x Tele MF8 (08:12:48): merge 0.24 s bobot ~0.85, SR Detail 12 tile 2.65 s -> **warna normal, 0 % clip**
+  (`data/output/v063_aizoom_vs_tele_frame.jpg`). Cerobong lembut karena fokus di kabel depan.
+- HDR+ HEIF 12MP x3 (08:11): eksposur & warna normal, clip 0-5.5 % (langit) (`data/output/v063_hdrplus.jpg`).
+- User tidak menemukan menu format/+Frame (screenshot tidak sampai ke PC/iPhone DCIM): baris alat terlalu panjang ->
+  tombol format & +Frame terpotong di kanan layar. Fix v0.6.4: baris alat bisa digeser, pengaturan mode di depan.
