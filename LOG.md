@@ -409,3 +409,21 @@ Sampel: 18 AI Zoom + 12 HDR+ di container app (`data/bursts/app-docs-v070/`), DC
   HDR+ merge 8 frame Bayer) -> crop -> upscale **AI atau tanpa AI (Lanczos)** (toggle "Pakai AI saat zoom" / chip
   AI di baris zoom) untuk membandingkan. Nama file `FOTO_ZOOM_*` / `HDRPLUS_ZOOM_*` (+ DNG tanpa crop).
 - **Zoom maks 50x** (AI Zoom & FOTO/HDR+ lensa utama; tele 5x x10): di atas batas hardware preview di-crop tambahan.
+
+## 2026-11-12 - Sesi 14: analisa sampel DNG per lensa + v0.8.1 (kunci lensa, EV, grid)
+
+Analisa 18 set DNG (frame 1 Apple Bayer + hasil merge app bila ada), `tools`-skrip ad hoc:
+| Lensa | ISO / shutter | RAW clip | median RAW | noise turun (HDR+) |
+|---|---|---|---|---|
+| Ultra-wide 2.22mm f/2.2 | 20-64, 1/41-1/1050 | 0 % | 0.7-2.4 % | 45-51 % |
+| Utama 6.77mm f/1.78 | 80-125, 1/228-1/3759 | 0-0.04 % | 0.9-3.3 % | 52 % |
+| Tele 15.66mm f/2.8 | 50-64, 1/165-1/914 | 0-0.13 % | 1.3-4.6 % | 50-56 % |
+| Depan 2.69mm f/1.9 | 40, 1/273-1/1541 | 0.2-3.6 % | 3.7-5.8 % | 50-52 % |
+- AE Apple sudah "underexpose" (median RAW 1-6 %, highlight hampir tidak pernah clip) -> rencana -1 EV ala GCam tidak
+  perlu; masalah terang murni di develop (fix v0.7.1). Bayangan diangkat jauh -> noise terlihat; merge 8 frame ~50 %
+  (teori 65 %) -> berikutnya: jumlah frame otomatis (12-16 di redup) + merge domain frekuensi.
+- Sampel pagi sudah termasuk (BURST 08:13, HDR+ 08:21, burst 01:10-01:13; UW 9 frame 06:53 dianalisa di sesi 5).
+  HDR+ 06:53 (v0.4) tidak valid (bug, identik frame tunggal).
+
+v0.8.1: **kunci lensa di AI ZOOM** (Auto / Utama 1x / Tele 5x; terkunci = lensa fisik + zoom digital, penanda
+"(kunci)"), **kompensasi EV** -3..+3 di panel Manual saat Auto, **grid 3x3** (Pengaturan > Bantuan bidik).

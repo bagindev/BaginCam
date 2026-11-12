@@ -184,3 +184,19 @@ struct HistogramView: View {
         .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
     }
 }
+
+/// Garis bantu komposisi 3x3 (rule of thirds).
+struct GridOverlay: View {
+    var body: some View {
+        GeometryReader { g in
+            Path { p in
+                for i in 1...2 {
+                    let x = g.size.width * CGFloat(i) / 3, y = g.size.height * CGFloat(i) / 3
+                    p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: g.size.height))
+                    p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: g.size.width, y: y))
+                }
+            }
+            .stroke(Color.white.opacity(0.35), lineWidth: 0.8)
+        }
+    }
+}

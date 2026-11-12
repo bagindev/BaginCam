@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var peaking = false
     @State private var focusPoint: CGPoint?      // posisi kotak fokus di preview (piksel view)
     @State private var focusTick = 0
+    @State private var showGrid = false
 
     /// urutan mode di strip (seperti kamera bawaan)
     private let modeOrder: [CameraManager.Mode] = [.aiZoom, .hdrplus, .heif, .proraw, .bayer]
@@ -32,6 +33,7 @@ struct ContentView: View {
                     }
                     .overlay(alignment: .topLeading) { lensBadge }
                     .overlay(alignment: .bottomTrailing) { assistBadges }
+                    .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
                     .overlay { focusLayer }
                 if showsZoom { zoomRow }
                 Spacer(minLength: 0)
@@ -44,7 +46,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
-                          hasLUT: luts.selected != nil)
+                          showGrid: $showGrid, hasLUT: luts.selected != nil)
         }
         .onAppear {
             let r = renderer
@@ -182,7 +184,7 @@ struct ContentView: View {
     }
 
     private var displayZoom: Double { Double(cam.totalZoom) * lensNative }
-    private var minZoom: Double { lensNative }
+    private var minZoom: Double { cam.mode == .aiZoom && cam.aiLensLock == .tele ? 5 : lensNative }
     private var maxZoom: Double { Double(cam.maxTotalZoom) * lensNative }
 
     private func setDisplayZoom(_ z: Double) {
@@ -223,6 +225,21 @@ struct ContentView: View {
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
             Slider(value: zoomBinding, in: 0...1).tint(.yellow)
+            if cam.mode == .aiZoom && cam.autoLensAvailable {
+                HStack(spacing: 6) {
+                    Text("Lensa").font(.caption2).foregroundStyle(.white.opacity(0.7))
+                    ForEach([CameraManager.Lens?.none, .wide, .tele], id: \.self) { l in
+                        let on = cam.aiLensLock == l
+                        Button(l == nil ? "Auto" : (l == .tele ? "Tele 5x" : "Utama 1x")) { cam.setAILensLock(l) }
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
+                            .foregroundStyle(on ? .black : .white)
+                            .disabled(cam.isCapturing)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 
@@ -335,6 +352,12 @@ struct ContentView: View {
         VStack(spacing: 6) {
             Toggle("Auto (AE / AWB / AF)", isOn: Binding(get: { cam.isAuto }, set: { cam.setAuto($0) }))
                 .font(.footnote)
+            if cam.isAuto {
+                sliderRow("EV", value: String(format: "%+.1f", cam.evBias)) {
+                    Slider(value: Binding(get: { cam.evBias }, set: { cam.setEVBias((($0 * 10).rounded()) / 10) }),
+                           in: -3...3)
+                }
+            }
             Group {
                 sliderRow("ISO", value: "\(Int(cam.iso))") {
                     Slider(value: Binding(get: { cam.iso }, set: { cam.iso = $0; cam.applyManual() }),

@@ -7,6 +7,7 @@ struct SettingsSheet: View {
     @Binding var showHistogram: Bool
     @Binding var zebra: Bool
     @Binding var peaking: Bool
+    @Binding var showGrid: Bool
     let hasLUT: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -142,6 +143,7 @@ struct SettingsSheet: View {
                     Toggle(isOn: $showHistogram) { Label("Histogram", systemImage: "chart.bar.fill") }
                     Toggle(isOn: $zebra) { Label("Zebra (area hampir putih)", systemImage: "line.diagonal") }
                     Toggle(isOn: $peaking) { Label("Focus peaking (tepi tajam merah)", systemImage: "scope") }
+                    Toggle(isOn: $showGrid) { Label("Grid 3x3", systemImage: "grid") }
                 } header: {
                     Text("Bantuan bidik")
                 } footer: {

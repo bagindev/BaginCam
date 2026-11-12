@@ -99,6 +99,10 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var previewExtraZoom: CGFloat = 1
     /// fokus/eksposur dikunci (tekan lama di preview)
     @Published private(set) var aeafLocked = false
+    /// AI Zoom: kunci lensa fisik (nil = Auto, iOS memilih seperti kamera bawaan)
+    @Published private(set) var aiLensLock: Lens?
+    /// kompensasi eksposur (EV) saat mode Auto
+    @Published private(set) var evBias: Float = 0
     @Published private(set) var progressText = ""
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @Published private(set) var status = "Menyiapkan kamera..."
@@ -145,6 +149,8 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstZoomed = false               // capture ini di-crop + upscale (AI Zoom / zoom FOTO-HDR+)
     private var burstDisplayZoom: CGFloat = 1     // zoom total untuk nama file / status
     private var subjectObserver: NSObjectProtocol?
+    private var aiLockNative: CGFloat = 0           // sessionQueue: faktor optik lensa terkunci (0 = tidak dikunci)
+    private var evBiasSession: Float = 0
     private var burstLensName = "Utama"
     private var burstAIFull = false               // AI Zoom: minta resolusi penuh
     private var burstAIMultiFrame = false
@@ -230,6 +236,7 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         isVirtual = false
+        aiLockNative = 0
         install(d, mirrored: l == .front)
         applyRawMode(mode)
         applyAuto()
@@ -286,6 +293,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         install(vd, mirrored: false)
         isVirtual = true
+        aiLockNative = 0
         let cons = vd.constituentDevices
         let sw = vd.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
         var bases: [AVCaptureDevice.DeviceType: CGFloat] = [:]
@@ -310,13 +318,57 @@ final class CameraManager: NSObject, ObservableObject {
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
     }
 
+    /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
+    func setAILensLock(_ l: Lens?) {
+        guard mode == .aiZoom, !isCapturing, l != aiLensLock else { return }
+        aiLensLock = l
+        aeafLocked = false
+        let native: CGFloat = l == .tele ? 5 : 1
+        let tz = max(totalZoom, l == nil ? 1 : native)
+        sessionQueue.async {
+            guard let l else { self.enterAIZoom(zoom: tz); return }
+            guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: .back) else {
+                self.setStatus("Lensa \(l.displayName) tidak tersedia")
+                return
+            }
+            self.isVirtual = false
+            self.install(d, mirrored: false)
+            self.aiLockNative = native
+            self.applyRawMode(.aiZoom)
+            self.applyAuto()
+            if (try? d.lockForConfiguration()) != nil {
+                d.videoZoomFactor = min(max(tz / native, 1), d.maxAvailableVideoZoomFactor)
+                d.unlockForConfiguration()
+            }
+            Log.camera.info("AI Zoom: lensa dikunci ke \(l.displayName, privacy: .public)")
+            DispatchQueue.main.async {
+                self.maxTotalZoom = 50
+                self.totalZoom = tz
+                self.previewExtraZoom = max(1, (tz / native) / max(d.maxAvailableVideoZoomFactor, 1))
+            }
+            self.publishCapabilities(d, label: l.displayName, mode: .aiZoom)
+        }
+    }
+
+    /// Kompensasi eksposur (-3..+3 EV) untuk mode Auto. Panggil dari main thread.
+    func setEVBias(_ v: Float) {
+        evBias = v
+        sessionQueue.async {
+            self.evBiasSession = v
+            guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
+            d.setExposureTargetBias(min(max(v, d.minExposureTargetBias), d.maxExposureTargetBias), completionHandler: nil)
+            d.unlockForConfiguration()
+        }
+    }
+
     /// Zoom total (1x = lensa utama). Panggil dari main thread.
     func setTotalZoom(_ z: CGFloat) {
-        let zz = min(max(1, z), maxTotalZoom)
+        let minZ: CGFloat = (mode == .aiZoom && aiLensLock == .tele) ? 5 : 1
+        let zz = min(max(minZ, z), maxTotalZoom)
         totalZoom = zz
         sessionQueue.async {
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
-            let base = self.isVirtual ? self.wideBase : 1
+            let base = self.isVirtual ? self.wideBase : (self.aiLockNative > 0 ? 1 / self.aiLockNative : 1)
             let want = zz * base
             let applied = min(max(want, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             d.videoZoomFactor = applied
@@ -423,6 +475,7 @@ final class CameraManager: NSObject, ObservableObject {
         let l = lens
         sessionQueue.async {
             if m == .aiZoom {
+                DispatchQueue.main.async { self.aiLensLock = nil }
                 self.enterAIZoom()
             } else if old == .aiZoom {
                 self.switchDevice(to: l, mode: m)
@@ -461,6 +514,7 @@ final class CameraManager: NSObject, ObservableObject {
         if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
         if d.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { d.whiteBalanceMode = .continuousAutoWhiteBalance }
         if d.isFocusModeSupported(.continuousAutoFocus) { d.focusMode = .continuousAutoFocus }
+        d.setExposureTargetBias(min(max(evBiasSession, d.minExposureTargetBias), d.maxExposureTargetBias), completionHandler: nil)
         d.unlockForConfiguration()
     }
 
@@ -542,8 +596,8 @@ final class CameraManager: NSObject, ObservableObject {
             let nat = native < 1 ? String(format: "%.1fx", Double(native)) : String(format: "%.0fx", Double(native))
             return crop > 1.05 ? String(format: "%@ %@ · crop %.1fx", n, nat, Double(crop)) : "\(n) \(nat)"
         }
-        let l = lens
-        let n = l.displayName
+        let l = (mode == .aiZoom ? aiLensLock : nil) ?? lens
+        let n = l.displayName + (mode == .aiZoom && aiLensLock != nil ? " (kunci)" : "")
         return z > 1.05 ? String(format: "%@ · crop %.1fx", n, Double(z)) : (l == .front ? n : "\(n) \(l.rawValue)")
     }
 
@@ -617,8 +671,13 @@ final class CameraManager: NSObject, ObservableObject {
                     delay = 0.9   // beri waktu AE/AF/AWB lensa fisik stabil
                     Log.camera.info("AI Zoom: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
                 } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
+                    // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x
                     d.videoZoomFactor = 1
                     d.unlockForConfiguration()
+                    if self.aiLockNative > 0 {
+                        base = self.aiLockNative
+                        lensName = self.aiLockNative >= 2 ? "Tele" : "Utama"
+                    }
                     self.restoreZoomAfterBurst = true
                     delay = 0.3
                 }
@@ -664,7 +723,7 @@ final class CameraManager: NSObject, ObservableObject {
             enterAIZoom(zoom: burstTotalZoom)
         }
         if restoreZoomAfterBurst, let d = device, (try? d.lockForConfiguration()) != nil {
-            let base = isVirtual ? wideBase : 1
+            let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
             d.videoZoomFactor = min(max(burstTotalZoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             if d.isVirtualDevice {
                 d.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
