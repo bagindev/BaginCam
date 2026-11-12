@@ -648,3 +648,4 @@ Sampel `data/bursts/dcim-1112-v0100/` (IMG_6929-6937), log `syslog_20261112-1929
     lalu kembali ke proses pilihan.
   - MALAM: pencerahan maks +3 EV (target linear 0.16), genggam 4 s (15 x 1/4 s); deteksi diam dilonggarkan
     (gyro < 0.035 rad/s, 0.8 s) dan nilai gyro dicatat di log.
+- Build v0.10.1: run 43221009152 sukses -> `data/builds/BaginCam-v0.10.1-unsigned.ipa`.
