@@ -95,42 +95,47 @@ struct ContentView: View {
 
     // MARK: baris alat: histogram, zebra, peaking, 48MP, frame mentah
     private var toolRow: some View {
-        HStack(spacing: 8) {
-            toggleChip("Histo", icon: "chart.bar.fill", isOn: $showHistogram)
-            toggleChip("Zebra", icon: "line.diagonal", isOn: $zebra)
-            toggleChip("Peaking", icon: "scope", isOn: $peaking)
-            if showsResolution {
-                Menu {
-                    ForEach(OutputMP.allCases) { r in
-                        Button(r.label) { cam.outputMP = r }
+        // bisa digeser kiri/kanan: di layar sempit tombol paling kanan tidak terpotong lagi (v0.6.3)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // pengaturan khusus mode di depan supaya langsung terlihat
+                if cam.mode == .hdrplus {
+                    menuChip(cam.outputFormat.rawValue, icon: "photo") {
+                        ForEach(PhotoFormat.allCases) { f in
+                            Button(f.rawValue) { cam.outputFormat = f }
+                        }
                     }
-                } label: {
-                    Label(cam.outputMP.label, systemImage: "square.resize.up")
-                        .font(.caption2).lineLimit(1)
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                        .foregroundStyle(.white)
+                    toggleChip("+Frame", icon: "square.stack", isOn: $cam.saveFrames)
                 }
-            }
-            if cam.mode == .hdrplus {
-                Menu {
-                    ForEach(PhotoFormat.allCases) { f in
-                        Button(f.rawValue) { cam.outputFormat = f }
+                if showsResolution {
+                    menuChip(cam.outputMP.label, icon: "square.resize.up") {
+                        ForEach(OutputMP.allCases) { r in
+                            Button(r.label) { cam.outputMP = r }
+                        }
                     }
-                } label: {
-                    Label(cam.outputFormat.rawValue, systemImage: "photo")
-                        .font(.caption2).lineLimit(1)
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                        .foregroundStyle(.white)
                 }
-                toggleChip("+Frame", icon: "square.stack", isOn: $cam.saveFrames)
+                if cam.mode != .bayer && cam.mode != .proraw && luts.selected != nil
+                    && !(cam.mode == .hdrplus && cam.outputFormat == .dng) {
+                    toggleChip("LUT", icon: "wand.and.stars", isOn: $cam.bakeLUT)
+                }
+                toggleChip("Histo", icon: "chart.bar.fill", isOn: $showHistogram)
+                toggleChip("Zebra", icon: "line.diagonal", isOn: $zebra)
+                toggleChip("Peaking", icon: "scope", isOn: $peaking)
             }
-            if cam.mode != .bayer && cam.mode != .proraw && luts.selected != nil
-                && !(cam.mode == .hdrplus && cam.outputFormat == .dng) {
-                toggleChip("LUT", icon: "wand.and.stars", isOn: $cam.bakeLUT)
-            }
-            Spacer(minLength: 0)
+            .padding(.trailing, 12)
+        }
+    }
+
+    private func menuChip<Content: View>(_ text: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            Label(text, systemImage: icon)
+                .font(.caption2).lineLimit(1)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Color.white.opacity(0.22), in: Capsule())
+                .overlay(Capsule().stroke(Color.yellow.opacity(0.6), lineWidth: 1))
+                .foregroundStyle(.white)
         }
     }
 
