@@ -142,7 +142,7 @@ final class CameraManager: NSObject, ObservableObject {
             i = minISO
             t = max(shutter, exposure / Double(minISO))
         }
-        let budget = steady ? 6.0 : 3.0          // detik total
+        let budget = steady ? 6.0 : 4.0          // detik total
         let frames = min(15, max(6, Int(budget / t)))
         return NightPlan(frames: frames, shutter: t, iso: i)
     }
@@ -253,6 +253,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var captureHint = ""
     /// HP diam (dari LevelMonitor) - dipakai mode MALAM
     var deviceSteady = false
+    /// putaran gyro saat ini (rad/s), untuk log MALAM
+    var motionLevel: (() -> Double)?
     // kontrol manual per bagian (laci Pro): eksposur / WB / fokus
     @Published private(set) var manualExposure = false
     @Published private(set) var manualWB = false
@@ -386,7 +388,8 @@ final class CameraManager: NSObject, ObservableObject {
             self.availableLenses = lenses
             self.autoLensAvailable = virtual
         }
-        if mode == .aiZoom { enterAIZoom() } else {
+        // v0.10.0: hanya .aiZoom -> HDR+/FOTO dibuka di lensa utama FISIK (zoom 13x = crop utama, buram)
+        if Self.usesVirtual(mode) { enterAIZoom() } else {
             switchDevice(to: lenses.contains(lens) ? lens : (lenses.first ?? .wide), mode: mode)
         }
     }
@@ -719,7 +722,9 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private var liveWanted: Bool { livePhoto && shootMode == .photo && photoProcess != .hdrplus }
+    /// Live tersedia di FOTO apa pun prosesnya; saat Live/flash nyala, jepretan memakai proses Apple
+    /// (v0.10.0: tombol Live disembunyikan saat proses HDR+ -> pengguna mengira Live tidak ada)
+    private var liveWanted: Bool { livePhoto && shootMode == .photo }
 
     /// ganti mode/proses/format; Live dimatikan SEBELUM ganti mesin (ProRAW/Bayer), dinyalakan sesudahnya
     private func applyUI(_ change: () -> Void) {
@@ -734,7 +739,10 @@ final class CameraManager: NSObject, ObservableObject {
     func setShootMode(_ s: ShootMode) { applyUI { shootMode = s } }
     func setPhotoProcess(_ p: PhotoProcess) { applyUI { photoProcess = p } }
     func setProFormat(_ f: ProFormat) { applyUI { proFormat = f } }
-    func setLivePhoto(_ on: Bool) { applyUI { livePhoto = on } }
+    func setLivePhoto(_ on: Bool) {
+        applyUI { livePhoto = on }
+        if on && photoProcess == .hdrplus { status = "Live nyala: foto (tanpa zoom digital) memakai proses Apple, karena HDR+ tidak punya video Live" }
+    }
 
     private var liveWantedS = false      // sessionQueue
     private var liveSuspended = false    // sessionQueue: dimatikan sementara selama capture lensa fisik
@@ -946,13 +954,13 @@ final class CameraManager: NSObject, ObservableObject {
 
     func startBurst() {
         guard !isCapturing else { return }
-        // FOTO + Auto: mesin dipilih saat shutter ditekan
-        if shootMode == .photo && photoProcess == .auto {
+        // FOTO: Auto memilih mesin saat shutter ditekan; Live / flash nyala = proses Apple (semua proses)
+        if shootMode == .photo && (photoProcess == .auto || livePhoto || flash == .on) {
             let gain = Double(liveISO) * liveShutter
-            let apple = livePhoto || flash == .on || gain < 2
+            let apple = livePhoto || flash == .on || photoProcess == .apple || gain < 2
             let want: Mode = apple ? .heif : .hdrplus
             if mode != want { mode = want }
-            Log.camera.info("Proses Auto: ISO x t \(gain, privacy: .public) -> \(want.rawValue, privacy: .public)")
+            Log.camera.info("Proses \(self.photoProcess.rawValue, privacy: .public): ISO x t \(gain, privacy: .public), live \(self.livePhoto, privacy: .public), flash \(self.flash.rawValue, privacy: .public) -> \(want.rawValue, privacy: .public)")
         }
         isCapturing = true
         previewFrozen = true
@@ -973,6 +981,7 @@ final class CameraManager: NSObject, ObservableObject {
         let fmt = outputFormat, lut = bakeLUT ? captureLUT : nil
         let tz = totalZoom, model = srModel, strength = aiStrength, tf = textFocus
         let steady = deviceSteady
+        let motion = motionLevel?() ?? -1
         let liveReq = m == .heif && livePhoto && liveAvailable
         let flashSet = flash, asp = aspect
         sessionQueue.async {
@@ -1044,7 +1053,9 @@ final class CameraManager: NSObject, ObservableObject {
                 self.burstMode = .heif
                 self.burstAppleZoomAI = useAI
                 self.burstCrop = crop
-                self.burstRealLong = max(256, Int(Double(nativeLong) / Double(crop)))
+                // v0.10.0: sensor/crop (621 px di 13x utama) terlalu kecil - Apple (remosaic + multi-frame)
+                // menyimpan ~2x lebih banyak detail; diperkecil sejauh itu AI mengubah huruf jadi balok
+                self.burstRealLong = max(512, Int(2 * Double(nativeLong) / Double(crop)))
                 frames = 1
             } else if bayerBurst || singleFull {
                 self.burstMode = bayerBurst ? .hdrplus : .heif
@@ -1081,11 +1092,16 @@ final class CameraManager: NSObject, ObservableObject {
                     delay = 0.5   // eksposur & WB sudah sama; cukup waktu untuk fokus
                     Log.camera.info("Capture: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
                 } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
-                    // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x
+                    // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x.
+                    // Ganti zoom membuat AF mencari ulang -> fokus tengah lagi & beri waktu (v0.10.0: Crop penuh buram)
                     d.videoZoomFactor = 1
+                    if !self.manualS.focus, d.isFocusPointOfInterestSupported, d.isFocusModeSupported(.autoFocus) {
+                        d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                        d.focusMode = .autoFocus
+                    }
                     d.unlockForConfiguration()
                     self.restoreZoomAfterBurst = true
-                    delay = 0.3
+                    delay = 0.7
                 }
                 self.burstCrop = crop
                 if bayerBurst {
@@ -1109,7 +1125,7 @@ final class CameraManager: NSObject, ObservableObject {
                     delay = max(delay, 2 * t + 0.3)
                     let tt = t >= 0.5 ? String(format: "%.1fs", t) : "1/\(Int((1 / t).rounded()))"
                     hint = String(format: "MALAM: tahan HP ~%.0f s (%d x %@)", Double(frames) * t + 0.5, frames, tt)
-                    Log.camera.info("MALAM: \(frames, privacy: .public) frame x \(t, privacy: .public)s ISO \(plan.iso, privacy: .public) (asal ISO \(srcISO, privacy: .public) \(srcDur, privacy: .public)s, diam \(steady, privacy: .public))")
+                    Log.camera.info("MALAM: \(frames, privacy: .public) frame x \(t, privacy: .public)s ISO \(plan.iso, privacy: .public) (asal ISO \(srcISO, privacy: .public) \(srcDur, privacy: .public)s, diam \(steady, privacy: .public), gyro \(motion, privacy: .public) rad/s)")
                 }
             }
             self.burstLensName = lensName
@@ -1187,6 +1203,9 @@ final class CameraManager: NSObject, ObservableObject {
             self.progress = nil
             self.progressText = ""
             self.captureHint = ""
+            // Auto / Live / flash mengganti mesin untuk satu jepretan -> kembali ke pilihan pengguna
+            let base = Self.internalMode(self.shootMode, self.photoProcess, self.proFormat)
+            if self.mode != base && Self.usesVirtual(self.mode) && Self.usesVirtual(base) { self.mode = base }
             self.endBackgroundTask()
         }
     }

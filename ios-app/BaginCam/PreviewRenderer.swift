@@ -220,6 +220,8 @@ final class LevelMonitor: ObservableObject {
     /// HP diam (tripod / disandarkan) > ~1 detik: putaran gyro sangat kecil (untuk mode MALAM)
     @Published private(set) var steady = false
     private var rotSmooth = 1.0
+    /// putaran gyro rata-rata (rad/s) - untuk log
+    var rotationLevel: Double { rotSmooth }
     private var steadyTicks = 0
     private let motion = CMMotionManager()
 
@@ -231,8 +233,8 @@ final class LevelMonitor: ObservableObject {
             let g = m.gravity
             let r = m.rotationRate
             self.rotSmooth = 0.8 * self.rotSmooth + 0.2 * sqrt(r.x * r.x + r.y * r.y + r.z * r.z)
-            self.steadyTicks = self.rotSmooth < 0.02 ? self.steadyTicks + 1 : 0
-            let st = self.steadyTicks >= 20
+            self.steadyTicks = self.rotSmooth < 0.035 ? self.steadyTicks + 1 : 0
+            let st = self.steadyTicks >= 16
             if st != self.steady { self.steady = st }
             self.flat = abs(g.z) > 0.85
             var a = atan2(g.x, -g.y) * 180 / .pi          // potret tegak = 0

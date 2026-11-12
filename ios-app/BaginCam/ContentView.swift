@@ -63,6 +63,8 @@ struct ContentView: View {
         .onAppear {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
+            let lv = level
+            cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }
             cam.start()
             level.start()
@@ -108,8 +110,8 @@ struct ContentView: View {
         .padding(.top, 6)
     }
 
-    /// proses Apple mungkin dipakai (Live & flash hanya untuk proses Apple)
-    private var appleCapable: Bool { cam.shootMode == .photo && cam.photoProcess != .hdrplus }
+    /// Live & flash di FOTO (bila nyala, jepretan memakai proses Apple)
+    private var appleCapable: Bool { cam.shootMode == .photo }
 
     private func chip(_ text: String, icon: String, on: Bool = false) -> some View {
         Label(text, systemImage: icon)
@@ -135,7 +137,8 @@ struct ContentView: View {
                     Button { cam.setPhotoProcess(p) } label: { check(p.rawValue, cam.photoProcess == p, detail: p.detail) }
                 }
             } label: {
-                chip(cam.photoProcess.rawValue,
+                let forced = (cam.livePhoto || cam.flash == .on) && cam.photoProcess != .apple
+                chip(cam.photoProcess.rawValue + (forced ? " → Apple" : ""),
                      icon: cam.photoProcess == .apple ? "apple.logo" : (cam.photoProcess == .auto ? "a.circle" : "sparkles"),
                      on: true)
             }
@@ -232,7 +235,7 @@ struct ContentView: View {
             ForEach(CameraManager.FlashSetting.allCases) { f in
                 Button { cam.flash = f } label: { check(f.rawValue, cam.flash == f) }
             }
-            Text("Hanya proses Apple")
+            Text("Flash nyala = jepretan memakai proses Apple")
         } label: {
             chip("", icon: cam.flash.icon, on: cam.flash != .off)
         }

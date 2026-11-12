@@ -86,8 +86,9 @@ enum RawDeveloper {
                 let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
                 var adj = 0.0
                 if lum > 0.30 { adj = max(-1.2, log2(0.26 / lum)) }
-                // MALAM: adegan gelap dicerahkan seperti Night Sight (maks +1 EV)
-                if night && lum < 0.12 { adj = min(1.0, log2(0.14 / max(lum, 0.005))) }
+                // MALAM: adegan gelap dicerahkan seperti Night Sight (v0.10.0 maks +1 EV masih terlalu gelap:
+                // ruang tanpa lampu linear 0.027 -> sekarang target 0.16, maks +3 EV)
+                if night && lum < 0.15 { adj = min(3.0, log2(0.16 / max(lum, 0.003))) }
                 // wajah diprioritaskan (v0.9.5: selfie berlatar AC/plafon terang -> diturunkan -1.07 EV,
                 // wajah linear 0.15 vs foto Apple 0.28)
                 if metering >= 0.99, let face = faceLuminance(small) {

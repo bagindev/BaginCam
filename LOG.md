@@ -622,3 +622,29 @@ dan AI dipisah supaya bisa ditumpuk.
 - Live Photo: hanya foto Apple 12MP; dimatikan sementara saat capture lensa fisik (RAW/resolusi penuh).
 - Nama file baru: MALAM_*, SUPERRES_*, CROPZOOM_*, APPLEZOOM_*.
 - Build v0.10.0: run 43217992417 sukses -> `data/builds/BaginCam-v0.10.0-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 24: uji v0.10.0 -> v0.10.1
+
+Sampel `data/bursts/dcim-1112-v0100/` (IMG_6929-6937), log `syslog_20261112-192918.txt`, `data/output/v0100_zoom.jpg`.
+| foto | isi | hasil |
+|---|---|---|
+| 6929 | FOTO 13x zoom Apple (lensa Utama) | lembut, terbaca sebagian |
+| 6930 | Apple + AI | **rusak**: diperkecil ke 621 px lalu AI -> huruf jadi balok |
+| 6931 | Super Res 12 frame (Utama crop 13x, sumber 232x310) | buram |
+| 6932 | Crop penuh Utama 48MP (620 px) | **tidak fokus** |
+| 6933 | Crop penuh Tele dikunci + AI (crop 2.6x) | bagus, paragraf terbaca jujur |
+| 6934-6937 | MALAM 12 x 1/4 s (ISO 3200-12500), 6937 rasio 16:9 (3213x5712 benar) | 6934 wajar; 6935-37 ruang tanpa lampu masih sangat gelap (+1 EV maks) |
+- Penyebab 13x di lensa Utama: **bug** - saat app dibuka, `configure` hanya memasang kamera virtual untuk .aiZoom;
+  HDR+/FOTO (mode awal) memasang lensa utama fisik -> tidak ada "pindah ke lensa fisik", zoom = crop utama, dan
+  untuk Crop penuh zoom di-reset ke 1x tanpa waktu AF (0.3 s) -> buram.
+- **Live tidak muncul**: tombol Live/flash hanya tampil bila proses Apple/Auto; proses pengguna HDR+ -> tersembunyi
+  (log: semua `live false`).
+- MALAM: HP tidak pernah terdeteksi diam (`diam false`).
+- Fix v0.10.1:
+  - kamera virtual dipasang saat app dibuka untuk semua mode virtual (HDR+/FOTO).
+  - lensa terkunci: setelah zoom di-reset 1x, AF dipicu ulang di tengah + jeda 0.7 s.
+  - Apple + AI: diperkecil ke 2x sensor/crop (mis. 1240 px di 13x utama), bukan 1x.
+  - Live & flash selalu tampil di FOTO; bila nyala, jepretan memakai proses Apple (chip proses: "HDR+ → Apple"),
+    lalu kembali ke proses pilihan.
+  - MALAM: pencerahan maks +3 EV (target linear 0.16), genggam 4 s (15 x 1/4 s); deteksi diam dilonggarkan
+    (gyro < 0.035 rad/s, 0.8 s) dan nilai gyro dicatat di log.
