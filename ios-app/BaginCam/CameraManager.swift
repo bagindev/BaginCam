@@ -678,7 +678,7 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: HDR+
     private func processHDRPlus(frames: [BayerFrame], ref: AVCapturePhoto?, dir: URL?, noiseReduction: Double,
                                 forAIZoom: Bool) {
-        guard let ref, let merger = self.merger, frames.count >= 2 else {
+        guard let ref, let refPB = ref.pixelBuffer, let merger = self.merger, frames.count >= 2 else {
             Log.hdr.error("HDR+ batal: frame \(frames.count, privacy: .public), ref \(ref != nil, privacy: .public)")
             finish("HDR+ gagal: frame Bayer tidak lengkap (\(frames.count))")
             return
@@ -697,10 +697,13 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         let px = r.buffer.contents().bindMemory(to: UInt16.self, capacity: r.width * r.height)
+        let fs = HDRPlusMerger.fullScale(format: CVPixelBufferGetPixelFormatType(refPB), frame: frames[0])
         let dng: Data
         do {
-            dng = try DNGWriter.rewrite(original: refDNG, pixels: px, width: r.width, height: r.height,
-                                        software: "BaginCam HDR+ \(frames.count) frame")
+            let w = try DNGWriter.rewrite(original: refDNG, pixels: px, width: r.width, height: r.height,
+                                          software: "BaginCam HDR+ \(frames.count) frame", sourceFullScale: fs.full)
+            dng = w.data
+            Log.hdr.info("RAW \(fs.bits, privacy: .public), maks data \(fs.maxValue, privacy: .public), DNG white \(w.white, privacy: .public) -> skala \(w.scale, privacy: .public)")
         } catch {
             Log.hdr.error("Tulis DNG gagal: \(String(describing: error), privacy: .public)")
             finish("HDR+ gagal menulis DNG: \(error)")

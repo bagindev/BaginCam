@@ -234,6 +234,26 @@ final class HDRPlusMerger {
         return Result(buffer: out, width: W, height: H, meanWeights: weights, noiseSD: noiseSD, seconds: dt)
     }
 
+    // MARK: info format RAW
+    static func fourCC(_ v: OSType) -> String {
+        let b = [UInt8((v >> 24) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 8) & 0xff), UInt8(v & 0xff)]
+        return String(bytes: b, encoding: .ascii) ?? "\(v)"
+    }
+
+    /// Skala penuh data piksel Bayer: dari format (xxx4 = 14-bit) atau dari nilai maksimum data.
+    static func fullScale(format: OSType, frame: BayerFrame) -> (full: Double, maxValue: Int, bits: String) {
+        let p = frame.buffer.contents().bindMemory(to: UInt16.self, capacity: frame.width * frame.height)
+        var mx: UInt16 = 0
+        for i in stride(from: 0, to: frame.width * frame.height, by: 7) where p[i] > mx { mx = p[i] }
+        let cc = fourCC(format)
+        if cc.hasSuffix("4") { return (16383, Int(mx), "\(cc)=14-bit") }      // rgg4/grb4/gbr4/bgg4
+        if cc.hasSuffix("2") { return (4095, Int(mx), "\(cc)=12-bit") }
+        // tak dikenal: bulatkan maksimum data ke 2^n - 1
+        var full = 255.0
+        while full < Double(mx) { full = full * 2 + 1 }
+        return (full, Int(mx), "\(cc)=?bit")
+    }
+
     // MARK: kembali ke CVPixelBuffer
     /// Buat CVPixelBuffer baru (format sama dengan RAW asli) berisi hasil merge.
     static func makePixelBuffer(from buf: MTLBuffer, width: Int, height: Int, like ref: CVPixelBuffer) -> CVPixelBuffer? {

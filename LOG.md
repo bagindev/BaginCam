@@ -324,3 +324,15 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
   lalu Lanczos ke 5712 -> lembek.
 - Fix v0.6.2: setiap capture AI Zoom pindah sementara ke **lensa fisik** pilihan iOS (48MP lensa utama + Bayer
   untuk MF), kembali ke kamera virtual setelahnya; kunci AE/AWB/AF setelah lensa stabil (0.9 s).
+
+## 2026-11-12 - Sesi 9: AI Zoom luar ruangan putih/pink (v0.6.1) -> v0.6.3
+
+- Hasil 08:00-08:01 (v0.6.1): `AIZOOM_25.0x_Tele_MF8_AI{C,D}_{12,24}MP.heic` -> hampir seluruhnya **putih + magenta**
+  (mean 252/255). Gambar: `data/output/outdoor_25x.jpg`.
+- Penyebab: DNG Bayer Apple = **12-bit** (WhiteLevel 4095, BlackLevel 528, IMG_6629), sedangkan data merge diambil
+  dari pixel buffer kamera (format Bayer 14-bit, skala s/d 16383) dan ditulis apa adanya -> di adegan terang hampir
+  semua piksel > WhiteLevel -> terpotong -> putih, WB mengubah area terpotong jadi magenta. Berlaku juga untuk HDR+
+  (jalur Bayer -> merge -> DNG sama). Uji PC sebelumnya memakai data dari DNG (12-bit) sehingga tidak terdeteksi.
+- Fix v0.6.3: `DNGWriter.rewrite(sourceFullScale:)` menskalakan data ke WhiteLevel DNG
+  (14-bit -> x(4096/16384)); format pixel buffer (fourCC, mis. rgg4 = 14-bit), maks data, white & skala dicatat ke log
+  (kategori hdrplus) untuk verifikasi.
