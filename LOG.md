@@ -594,3 +594,31 @@ Sampel `data/bursts/dcim-1112-malam5/` (IMG_6927 HDR+ 13x Tele Cepat 24MP, IMG_6
   Usulan susunan baru BaginCam (MALAM · FOTO · PRO, chip proses HDR+/Apple/Auto, AI zoom otomatis):
   `docs/usulan-ui-gcam.md`. Menunggu keputusan pengguna sebelum eksekusi.
 - Inventaris fitur v0.9.6 untuk penggabungan menu ditulis ke `docs/usulan-ui-gcam.md`.
+
+## 2026-11-12 - Sesi 23: v0.10.0 - susunan UI ala GCam + zoom fleksibel
+
+Keputusan pengguna: mode MALAM · FOTO · PRO; semua proses tetap bisa dipilih; bar info gabungan (GCam + buatan
+sendiri + kamera bawaan); thumbnail + penampil; laci Pro ala GCam. Pesan tambahan: cara zoom (Apple / Super Res)
+dan AI dipisah supaya bisa ditumpuk.
+- **Mode** (strip bawah): MALAM · FOTO · PRO. Mesin internal tetap (`Mode`), dipetakan:
+  FOTO+HDR+/Auto -> hdrplus, FOTO+Apple -> heif, MALAM -> hdrplus+malam, PRO -> HDR+ / ProRAW / Bayer.
+- **Baris 1 (chip cepat)**: Proses (Auto/HDR+/Apple; di PRO: HDR+/ProRAW/Bayer) · LUT (+bake, import) · WB
+  (preset / Kelvin manual) · resolusi·format · rasio 4:3/16:9/1:1 · flash · Live (dua terakhir hanya proses Apple) · ⚙.
+- **Baris 2 (di preview)**: lensa aktif + crop (+ikon makro bila iOS pindah ke UW), chip zoom "cara + AI" (menu),
+  perkiraan frame HDR+ / rencana MALAM (mis. 12×1/4), saran "MALAM?" saat gelap (ISO×t >= 10), ikon kunci AE/AF,
+  timer, EV.
+- **Zoom** (melewati lensa optik): cara = Auto / Apple / Super Res (burst RAW + merge) / Crop penuh (1 foto
+  48MP/12MP); **AI terpisah** (nyala/mati, model, fokus tulisan) bisa di atas cara mana pun. Apple + AI: hasil Apple
+  diperkecil ke detail aslinya (sisi panjang sensor / crop) lalu diperbesar AI. AI ZOOM lama = Super Res/Crop + AI.
+- **Auto**: HDR+ bila ISO×t >= 2 (redup), Apple bila terang atau Live / flash nyala; dipilih saat shutter.
+- **MALAM**: shutter genggam 1/4 s (tele 1/8 s), HP diam (gyro < 0.02 rad/s ~1 s) sampai 1 s, ISO diturunkan
+  (total eksposur sama), 6-15 frame (anggaran 3 s genggam / 6 s diam), develop dicerahkan maks +1 EV bila gelap;
+  zoom selalu Super Res. Teks "MALAM: tahan HP ~N s".
+- **Laci Pro** (ikon slider kanan bawah): EV · ISO · Shutter · WB · Fokus · Timer, penggaris + tombol A per
+  bagian; manual per bagian (eksposur / WB / fokus terpisah), tetap terjaga saat ganti lensa & setelah burst.
+- **Baris shutter**: thumbnail foto terakhir (ketuk = penampil layar penuh, cubit/ketuk 2x zoom, tombol buka Foto) ·
+  shutter (bulan di MALAM) · balik kamera depan/belakang.
+- Rasio: crop tengah untuk HEIF/JPEG (Apple, HDR+, zoom); RAW tetap 4:3; preview diberi masker.
+- Live Photo: hanya foto Apple 12MP; dimatikan sementara saat capture lensa fisik (RAW/resolusi penuh).
+- Nama file baru: MALAM_*, SUPERRES_*, CROPZOOM_*, APPLEZOOM_*.
+- Build v0.10.0: run 43217992417 sukses -> `data/builds/BaginCam-v0.10.0-unsigned.ipa`.

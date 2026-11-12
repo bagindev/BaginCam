@@ -93,3 +93,8 @@ Semua AI di Neural Engine; kekuatan AI 0-100 % (campuran dengan Lanczos).
 - Zoom: preset .5/1/2/5/10/25/50, slider log, maks 50x, kunci lensa Auto/UW/Utama/Tele/Depan, badge lensa (oranye
   bila crop), preview dibekukan saat capture.
 - Bantuan bidik: histogram, zebra, peaking, grid 3x3, waterpass, readout ISO/shutter/K/fokus.
+
+## Status: diterapkan di v0.10.0 (2026-11-12)
+Lihat LOG.md sesi 23. Tambahan dari pengguna: cara zoom (Auto / Apple / Super Res / Crop penuh) dan AI dipisah.
+Saran metode lanjutan (belum dibuat): Super Res Zoom sub-piksel sejati (prototipe pc-lab/mfsr.py: lebih bersih,
+belum lebih tajam), penajaman adaptif tanpa AI (anti-halusinasi), AI pada RAW sebelum demosaic, gabung tele + utama.
