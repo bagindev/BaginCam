@@ -546,3 +546,32 @@ Sampel `data/bursts/dcim-1112-malam3/` (IMG_6910-6919), app `data/bursts/app-doc
   Log menampilkan `ai/asli~mirip` per area.
 
 - Build v0.9.5: run 43208302285 sukses -> `data/builds/BaginCam-v0.9.5-unsigned.ipa`.
+
+## 2026-11-12 - Sesi 21: uji v0.9.5 -> v0.9.6
+
+Sampel `data/bursts/dcim-1112-malam4/` (IMG_6920-6926), log `syslog_20261112-183011.txt`.
+| foto | isi |
+|---|---|
+| IMG_6920 | AI ZOOM 13x Tele crop 2.6x MF8, Cepat (SR 1.4 s), teks 0/13 AI |
+| IMG_6921 | AI ZOOM 13x, Detail (SR 9.6 s), teks 0/25 AI |
+| IMG_6922 | **HDR+ 13x -> lensa Tele otomatis** (crop 2.6x, 15 frame, merge 0.70 s), Detail, teks 0/22 AI |
+| IMG_6923 | HDR+ kunci Utama 1x, 15 frame ISO 500 |
+| IMG_6924 | kamera bawaan ~14x (348mm-eq) |
+| IMG_6925 / 6926 | selfie HDR+ depan 15 frame / bawaan |
+- **HDR+ lensa otomatis (v0.9.4) berhasil**: 13x memakai Tele (dulu Utama crop 230 px). Kunci lensa Utama juga jalan.
+- Fokus tulisan v0.9.5: huruf karangan parah ("Thoso ic on Duiiac") **hilang** di AI ZOOM Detail. Tapi di HDR+ 13x
+  Detail masih ada baris agak aneh ("modern energy" -> "modara onoigy"): baris paragraf kecil (~30 px) tidak
+  terdeteksi (minimumTextHeight 0.008) dan batas 24 kotak -> tetap campuran AI 50 %. Kemiripan OCR di log mis.
+  0.90/0.50~0.73 (AI lebih yakin tapi isi beda -> ditolak).
+- Pembanding: kamera bawaan 14x juga "mengarang" bentuk huruf (penajaman berat): "There is no better" -> "Tharu ls ou
+  better". AI ZOOM Cepat = paling jujur. `data/output/v095_paragraf.jpg`.
+- Selfie: noise HDR+ kini setara/lebih bersih (dinding 3.32 vs 3.93, pipi 2.55 vs 2.63) tapi **wajah lebih gelap**
+  (linear 0.15 vs 0.28, ~0.9 EV): latar AC/plafon terang -> metering menurunkan -1.07 EV. `data/output/v095_selfie.jpg`.
+- Hasil 12MP: pengaturan tidak disimpan -> tiap buka app kembali ke default 12MP.
+- Fix v0.9.6:
+  - TextBoost: minimumTextHeight 0.004, tanpa batas 24; kotak dari versi AI + asli digabung jadi **blok paragraf**
+    (baris berdekatan & seukuran), OCR + keputusan per paragraf (maks 40 blok).
+  - RawDeveloper: **metering wajah** (VNDetectFaceRectangles di pratinjau 1/8, tengah wajah terbesar): target
+    linear 0.24, koreksi -1.2..+0.8 EV, mengalahkan metering rata-rata (hanya bila tidak zoom crop).
+  - Pengaturan disimpan (UserDefaults): resolusi, format, LUT bake, NR, frame, model AI, kekuatan, fokus tulisan,
+    multi-frame, AI zoom on/off, metode merge, frame otomatis, timer.

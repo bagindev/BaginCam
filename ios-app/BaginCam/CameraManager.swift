@@ -102,12 +102,13 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var mode: Mode = .hdrplus
     @Published private(set) var lens: Lens = .wide
     @Published private(set) var availableLenses: [Lens] = [.wide]
-    @Published var burstCount = 8
-    @Published var outputMP: OutputMP = .mp12       // resolusi output (HEIF, ProRAW, HDR+ HEIF/JPEG, AI Zoom)
-    @Published var saveFrames = false               // HDR+: simpan juga frame mentah
-    @Published var hdrNoiseReduction: Double = 18   // HDR+: 1..23
-    @Published var outputFormat: PhotoFormat = .heif  // format simpan HDR+
-    @Published var bakeLUT = false                  // bakar LUT aktif ke HEIF/JPEG
+    // pengaturan disimpan (UserDefaults) - v0.9.5: tiap buka app kembali ke 12MP
+    @Published var burstCount: Int = Prefs.get("burstCount", 8) { didSet { Prefs.set("burstCount", burstCount) } }
+    @Published var outputMP: OutputMP = Prefs.raw("outputMP", .mp12) { didSet { Prefs.set("outputMP", outputMP.rawValue) } }  // resolusi output (HEIF, ProRAW, HDR+ HEIF/JPEG, AI Zoom)
+    @Published var saveFrames: Bool = Prefs.get("saveFrames", false) { didSet { Prefs.set("saveFrames", saveFrames) } }  // HDR+: simpan juga frame mentah
+    @Published var hdrNoiseReduction: Double = Prefs.get("hdrNoiseReduction", 18) { didSet { Prefs.set("hdrNoiseReduction", hdrNoiseReduction) } }  // HDR+: 1..23
+    @Published var outputFormat: PhotoFormat = Prefs.raw("outputFormat", .heif) { didSet { Prefs.set("outputFormat", outputFormat.rawValue) } }  // format simpan HDR+
+    @Published var bakeLUT: Bool = Prefs.get("bakeLUT", false) { didSet { Prefs.set("bakeLUT", bakeLUT) } }  // bakar LUT aktif ke HEIF/JPEG
     /// LUT yang sedang dipilih (di-set dari UI); dipakai bila bakeLUT aktif
     var captureLUT: CubeLUT?
 
@@ -120,16 +121,16 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
-    @Published var srModel: SRModel = .fast
-    @Published var aiStrength: Double = 0.5                  // 0 = pembesaran biasa, 1 = AI penuh
-    @Published var textFocus = true                           // AI Zoom: area tulisan pakai AI lebih kuat
-    @Published var multiFrameZoom = true                      // burst Bayer + merge sebelum AI (bila tersedia)
+    @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
+    @Published var aiStrength: Double = Prefs.get("aiStrength", 0.5) { didSet { Prefs.set("aiStrength", aiStrength) } }  // 0 = pembesaran biasa, 1 = AI penuh
+    @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
+    @Published var multiFrameZoom: Bool = Prefs.get("multiFrameZoom", true) { didSet { Prefs.set("multiFrameZoom", multiFrameZoom) } }  // burst Bayer + merge sebelum AI (bila tersedia)
 
     @Published private(set) var isCapturing = false
     /// progres pemrosesan berat (0..1), nil = tidak ada
     @Published private(set) var progress: Double?
     /// zoom di FOTO/HDR+: pakai AI (true) atau pembesaran biasa Lanczos (false) - untuk membandingkan
-    @Published var zoomAIEnabled = true
+    @Published var zoomAIEnabled: Bool = Prefs.get("zoomAIEnabled", true) { didSet { Prefs.set("zoomAIEnabled", zoomAIEnabled) } }
     /// zoom preview tambahan di luar batas zoom hardware (dipakai renderer)
     @Published private(set) var previewExtraZoom: CGFloat = 1
     /// fokus/eksposur dikunci (tekan lama di preview)
@@ -138,10 +139,10 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var aiLensLock: Lens?
     /// kompensasi eksposur (EV) saat mode Auto
     @Published private(set) var evBias: Float = 0
-    @Published var mergeMethod: MergeMethod = .frequency
-    @Published var autoFrames = true                 // HDR+: jumlah frame menurut kecerahan
+    @Published var mergeMethod: MergeMethod = Prefs.raw("mergeMethod", .frequency) { didSet { Prefs.set("mergeMethod", mergeMethod.rawValue) } }
+    @Published var autoFrames: Bool = Prefs.get("autoFrames", true) { didSet { Prefs.set("autoFrames", autoFrames) } }  // HDR+: jumlah frame menurut kecerahan
     @Published private(set) var wbPreset: WBPreset = .auto
-    @Published var timerSeconds = 0                  // 0 / 3 / 10
+    @Published var timerSeconds: Int = Prefs.get("timerSeconds", 0) { didSet { Prefs.set("timerSeconds", timerSeconds) } }  // 0 / 3 / 10
     @Published private(set) var countdown = 0        // sisa hitungan timer (0 = tidak berjalan)
     /// preview dibekukan saat capture (zoom/lensa diganti di belakang layar)
     @Published private(set) var previewFrozen = false
@@ -1269,4 +1270,14 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         onFrame?(CIImage(cvPixelBuffer: pb))
     }
+}
+
+/// penyimpanan pengaturan sederhana (UserDefaults)
+enum Prefs {
+    private static let d = UserDefaults.standard
+    static func get<T>(_ key: String, _ def: T) -> T { d.object(forKey: key) as? T ?? def }
+    static func raw<E: RawRepresentable>(_ key: String, _ def: E) -> E {
+        (d.object(forKey: key) as? E.RawValue).flatMap { E(rawValue: $0) } ?? def
+    }
+    static func set(_ key: String, _ value: Any) { d.set(value, forKey: key) }
 }

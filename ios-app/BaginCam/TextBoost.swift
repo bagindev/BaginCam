@@ -23,30 +23,48 @@ enum TextBoost {
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .fast
         req.usesLanguageCorrection = false
-        req.minimumTextHeight = 0.008
+        // v0.9.5: 0.008 melewatkan baris paragraf kecil (~30 px di 4032) -> tetap campuran AI 50 % (huruf aneh)
+        req.minimumTextHeight = 0.004
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do { try handler.perform([req]) } catch {
             Log.sr.error("Deteksi teks gagal: \(String(describing: error), privacy: .public)")
             return []
         }
-        // kotak terbesar dulu, maksimal 24 (batasi waktu OCR)
         return (req.results ?? []).map { $0.boundingBox }
-            .sorted { $0.width * $0.height > $1.width * $1.height }
-            .prefix(24).map { $0 }
     }
 
-    /// gabung kotak teks dari versi AI dan versi asli: tulisan yang dikarang AI sering tidak terdeteksi
-    /// sebagai teks di versi AI (v0.9.3: paragraf "Thoso ic on Duiiac" lolos dengan campuran 50%)
+    /// kotak teks dari versi AI DAN versi asli (tulisan karangan AI sering tidak terdeteksi di versi AI),
+    /// lalu baris yang berdekatan & seukuran digabung jadi blok paragraf -> OCR per paragraf (lebih cepat,
+    /// tidak ada baris yang terbuang karena batas jumlah). Kotak hasil sudah diberi sedikit margin.
     static func mergedBoxes(ai: CGImage, plain: CGImage) -> [CGRect] {
-        var out = textBoxes(in: ai)
-        for p in textBoxes(in: plain) {
-            let covered = out.contains { b in
-                let i = b.intersection(p)
-                return !i.isNull && i.width * i.height > 0.5 * p.width * p.height
-            }
-            if !covered { out.append(p) }
+        struct Block { var r: CGRect; var lineH: CGFloat }
+        var blocks = (textBoxes(in: ai) + textBoxes(in: plain))
+            .filter { $0.height > 0 && $0.width > 0 }
+            .map { Block(r: $0, lineH: $0.height) }
+        func near(_ a: Block, _ b: Block) -> Bool {
+            let ra = max(a.lineH, b.lineH) / min(a.lineH, b.lineH)
+            guard ra < 1.8 else { return false }
+            let h = min(a.lineH, b.lineH)
+            return a.r.insetBy(dx: -h * 0.6, dy: -h * 0.45).intersects(b.r.insetBy(dx: -h * 0.6, dy: -h * 0.45))
         }
-        return Array(out.prefix(32))
+        var merged = true
+        while merged && blocks.count > 1 {
+            merged = false
+            outer: for i in 0..<(blocks.count - 1) {
+                for j in (i + 1)..<blocks.count where near(blocks[i], blocks[j]) {
+                    blocks[i] = Block(r: blocks[i].r.union(blocks[j].r), lineH: min(blocks[i].lineH, blocks[j].lineH))
+                    blocks.remove(at: j)
+                    merged = true
+                    break outer
+                }
+            }
+        }
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        return blocks
+            .map { $0.r.insetBy(dx: -$0.lineH * 0.4, dy: -$0.lineH * 0.4).intersection(unit) }
+            .filter { !$0.isNull && !$0.isEmpty }
+            .sorted { $0.width * $0.height > $1.width * $1.height }
+            .prefix(40).map { $0 }
     }
 
     /// keyakinan OCR rata-rata (berbobot panjang teks) + teks terbaca untuk satu area
@@ -90,8 +108,9 @@ enum TextBoost {
         let W = CGFloat(ai.width), H = CGFloat(ai.height)
         return boxes.map { b in
             // Vision (kiri-bawah) -> piksel (kiri-atas), diperluas sedikit
-            var r = CGRect(x: b.minX * W, y: (1 - b.maxY) * H, width: b.width * W, height: b.height * H)
-            r = r.insetBy(dx: -r.height * 0.3, dy: -r.height * 0.3).intersection(CGRect(x: 0, y: 0, width: W, height: H)).integral
+            // (margin sudah ditambahkan di mergedBoxes)
+            let r = CGRect(x: b.minX * W, y: (1 - b.maxY) * H, width: b.width * W, height: b.height * H)
+                .intersection(CGRect(x: 0, y: 0, width: W, height: H)).integral
             let a = ocr(ai, r), p = ocr(plain, r)
             let sim = similarity(a.text, p.text)
             return Decision(box: b, useAI: a.conf > p.conf + 0.03 && sim >= 0.75,
@@ -117,8 +136,8 @@ enum TextBoost {
             var m = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: ext)
             for d in list {
                 let r = d.box
-                let px = CGRect(x: r.minX * ext.width, y: r.minY * ext.height, width: r.width * ext.width, height: r.height * ext.height)
-                    .insetBy(dx: -r.height * ext.height * 0.35, dy: -r.height * ext.height * 0.35)
+                let px = CGRect(x: ext.minX + r.minX * ext.width, y: ext.minY + r.minY * ext.height,
+                                width: r.width * ext.width, height: r.height * ext.height)
                     .intersection(ext)
                 guard !px.isEmpty else { continue }
                 m = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: px).composited(over: m)

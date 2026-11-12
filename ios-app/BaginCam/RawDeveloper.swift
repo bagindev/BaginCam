@@ -2,6 +2,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 
 /// Format simpan hasil HDR+.
 enum PhotoFormat: String, CaseIterable, Identifiable {
@@ -57,8 +58,15 @@ enum RawDeveloper {
                 context.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
                                format: .RGBAf, colorSpace: nil)
                 let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
-                if lum > 0.30 {
-                    let adj = max(-1.2, log2(0.26 / lum))
+                var adj = 0.0
+                if lum > 0.30 { adj = max(-1.2, log2(0.26 / lum)) }
+                // wajah diprioritaskan (v0.9.5: selfie berlatar AC/plafon terang -> diturunkan -1.07 EV,
+                // wajah linear 0.15 vs foto Apple 0.28)
+                if metering >= 0.99, let face = faceLuminance(small) {
+                    adj = max(-1.2, min(0.8, log2(0.24 / face)))
+                    Log.hdr.info("Kecerahan wajah: linear \(face, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
+                }
+                if adj != 0 {
                     f.exposure += Float(adj)
                     Log.hdr.info("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
@@ -69,6 +77,30 @@ enum RawDeveloper {
         guard let img = f.outputImage else { return nil }
         // piksel sudah tegak -> orientasi metadata harus 1 supaya tidak diputar dua kali
         return img.settingProperties(uprightProperties(img.properties))
+    }
+
+    /// luminans linear rata-rata bagian tengah wajah terbesar (nil bila tidak ada wajah)
+    private static func faceLuminance(_ small: CIImage) -> Double? {
+        let e = small.extent
+        guard let cg = context.createCGImage(small, from: e) else { return nil }
+        let req = VNDetectFaceRectanglesRequest()
+        guard (try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])) != nil,
+              let face = (req.results ?? []).max(by: { $0.boundingBox.width < $1.boundingBox.width }),
+              face.boundingBox.width > 0.08 else { return nil }
+        let b = face.boundingBox
+        // tengah wajah saja (tanpa rambut/latar)
+        let r = CGRect(x: e.minX + (b.minX + b.width * 0.2) * e.width, y: e.minY + (b.minY + b.height * 0.15) * e.height,
+                       width: b.width * 0.6 * e.width, height: b.height * 0.6 * e.height).intersection(e)
+        guard !r.isEmpty else { return nil }
+        let avg = CIFilter.areaAverage()
+        avg.inputImage = small
+        avg.extent = r
+        guard let px = avg.outputImage else { return nil }
+        var v = [Float](repeating: 0, count: 4)
+        context.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                       format: .RGBAf, colorSpace: nil)
+        let l = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
+        return l > 0.005 ? l : nil
     }
 
     static func uprightProperties(_ p: [String: Any]) -> [String: Any] {
