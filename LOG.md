@@ -306,3 +306,16 @@ EXIF foto stock (`data/bursts/app-v040-test`, `app-v050-test`):
 - **Resolusi output 12/24/48MP**: HEIF (ambil 48MP, 24MP = diperkecil dari 48MP), ProRAW (48MP),
   HDR+ HEIF/JPEG (Bayer 12MP diperbesar AI Cepat + Lanczos), AI Zoom.
 - IPA: `data/builds/BaginCam-v0.6.0-unsigned.ipa`. **Belum diuji di HP.**
+
+## 2026-11-12 - Sesi 8: "proses AI berhenti" (v0.6.0) -> v0.6.1
+
+- JetsamEvent 07:50:07: memori HP penuh (cameracaptured 1.6 GB), yang dibunuh `ndoagent` & `CameraOverlayAngel`;
+  **BaginCam tidak dibunuh** (puncak 1.2 GB). App Photos sempat aktif.
+- Output v0.6.0 dari container app: `AIZOOM_5.0x_Tele_AID_48MP` x2 (8064x6048, **76 s / 80 s**),
+  `AIZOOM_10.0x_Tele_AID_24MP` (5712x4284, **44 s**). Detail (x4plus) ~0.3 s/tile; 5x tele -> 48MP = SR 2x
+  seluruh foto 12MP (~252 tile). Proses tidak berhenti, tapi lama + status hanya tiap 4 tile; bila app
+  ditinggal (buka Photos) iOS membekukan app -> proses tertunda.
+- Tidak ada `_MF` -> Bayer RAW tidak tersedia di kamera virtual -> multi-frame tidak jalan.
+- Fix v0.6.1: progress bar + persen + sisa waktu tiap tile, peringatan "jangan tinggalkan app",
+  `beginBackgroundTask` (proses lanjut ~30 s saat app ditinggal); MF: sementara pindah ke lensa fisik
+  yang dipilih iOS (activePrimaryConstituent) untuk burst Bayer 8 frame, lalu kembali ke kamera virtual.

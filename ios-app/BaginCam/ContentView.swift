@@ -317,11 +317,16 @@ struct ContentView: View {
     // MARK: bawah: status + shutter
     private var bottomBar: some View {
         HStack {
-            Text(cam.status)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.8))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(3)
+            VStack(alignment: .leading, spacing: 4) {
+                if let p = cam.progress {
+                    ProgressView(value: p).tint(.yellow)
+                }
+                Text(cam.status)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: cam.startBurst) {
                 ZStack {

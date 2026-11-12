@@ -91,6 +91,10 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var multiFrameZoom = true                      // burst Bayer + merge sebelum AI (bila tersedia)
 
     @Published private(set) var isCapturing = false
+    /// progres pemrosesan berat (0..1), nil = tidak ada
+    @Published private(set) var progress: Double?
+    @Published private(set) var progressText = ""
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @Published private(set) var status = "Menyiapkan kamera..."
     @Published private(set) var supportsBayer = false
     @Published private(set) var supportsProRAW = false
@@ -138,6 +142,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstSRModel: SRModel = .fast
     private var burstStrength: Double = 0.5
     private var restoreZoomAfterBurst = false
+    private var switchedToPhysicalForMF = false   // AI Zoom MF: sementara pakai lensa fisik (Bayer)
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var savedCount = 0
     private var hdrFrames: [BayerFrame] = []
@@ -253,7 +258,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// AI Zoom memakai kamera virtual Apple: iOS sendiri memilih lensa (tele vs crop lensa utama)
     /// berdasarkan zoom, jarak fokus minimum tele, dan cahaya - sama seperti kamera bawaan.
-    private func enterAIZoom() {
+    private func enterAIZoom(zoom startZoom: CGFloat = 1) {
         guard let vd = Self.virtualDevice() else {
             // tidak ada kamera virtual -> lensa utama + zoom digital
             switchDevice(to: .wide, mode: .aiZoom)
@@ -270,7 +275,7 @@ final class CameraManager: NSObject, ObservableObject {
         let maxZ = min(25, vd.maxAvailableVideoZoomFactor / wideBase)
         if (try? vd.lockForConfiguration()) != nil {
             vd.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
-            vd.videoZoomFactor = min(max(wideBase, vd.minAvailableVideoZoomFactor), vd.maxAvailableVideoZoomFactor)
+            vd.videoZoomFactor = min(max(startZoom * wideBase, vd.minAvailableVideoZoomFactor), vd.maxAvailableVideoZoomFactor)
             vd.unlockForConfiguration()
         }
         applyRawMode(.aiZoom)
@@ -280,7 +285,7 @@ final class CameraManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.lensBaseMain = bases
             self.maxTotalZoom = maxZ
-            self.totalZoom = 1
+            self.totalZoom = min(max(1, startZoom), maxZ)
         }
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
     }
@@ -466,6 +471,12 @@ final class CameraManager: NSObject, ObservableObject {
     func startBurst() {
         guard !isCapturing else { return }
         isCapturing = true
+        // proses tetap jalan sebentar bila app ditinggal (iOS memberi ~30 detik)
+        if backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BaginCam processing") { [weak self] in
+                self?.endBackgroundTask()
+            }
+        }
         let m = mode
         let count = max(m == .hdrplus ? 2 : 1, burstCount)
         let auto = isAuto, keep = saveFrames, nr = hdrNoiseReduction, res = outputMP
@@ -513,9 +524,21 @@ final class CameraManager: NSObject, ObservableObject {
                 let virtualWide = self.isVirtual ? self.wideBase : 1
                 self.burstCrop = max(1, tz * virtualWide / base)
                 self.burstLensName = lensName
-                let bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+                var bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 // multi-frame: lensa tele, atau crop besar di lensa utama (48MP tunggal kalah oleh merge 8 frame)
-                self.burstAIMultiFrame = mf && bayer && (lensName == "Tele" || self.burstCrop >= 3)
+                let wantMF = mf && (lensName == "Tele" || self.burstCrop >= 3)
+                if wantMF && !bayer, let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
+                    // Bayer RAW tidak tersedia di kamera virtual -> sementara pakai lensa fisik yang dipilih iOS
+                    self.install(p, mirrored: false)
+                    self.isVirtual = false
+                    self.applyRawMode(.aiZoom)
+                    self.applyAuto()
+                    self.switchedToPhysicalForMF = true
+                    bayer = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+                    delay = 0.9   // beri waktu AE/AF lensa fisik
+                    Log.camera.info("MF: pindah ke lensa fisik \(p.localizedName, privacy: .public), Bayer \(bayer, privacy: .public)")
+                }
+                self.burstAIMultiFrame = wantMF && bayer
                 self.burstAIFull = !self.burstAIMultiFrame && lensName != "Tele"
                 frames = self.burstAIMultiFrame ? 8 : 1
             }
@@ -544,6 +567,11 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func finishBurst() {
         if burstAuto && (burstMode.isBurst || burstAIMultiFrame) { applyAuto() }
+        if switchedToPhysicalForMF {
+            switchedToPhysicalForMF = false
+            restoreZoomAfterBurst = false
+            enterAIZoom(zoom: burstTotalZoom)
+        }
         if restoreZoomAfterBurst, let d = device, (try? d.lockForConfiguration()) != nil {
             let base = isVirtual ? wideBase : 1
             d.videoZoomFactor = min(max(burstTotalZoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
@@ -568,6 +596,30 @@ final class CameraManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.isCapturing = false
             self.status = message
+            self.progress = nil
+            self.progressText = ""
+            self.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+    }
+
+    /// progres per langkah + perkiraan sisa waktu
+    private func report(_ label: String, _ done: Int, _ total: Int, since t0: CFAbsoluteTime) {
+        let frac = total > 0 ? Double(done) / Double(total) : 0
+        let el = CFAbsoluteTimeGetCurrent() - t0
+        let eta = frac > 0.02 ? el / frac - el : 0
+        let text = String(format: "%@ %d/%d · %.0f%%%@", label, done, total, frac * 100,
+                          eta > 1 ? String(format: " · sisa ~%.0f s", eta) : "")
+        DispatchQueue.main.async {
+            self.progress = frac
+            self.progressText = text
+            self.status = "\(text) - jangan tinggalkan app"
         }
     }
 
@@ -619,8 +671,9 @@ final class CameraManager: NSObject, ObservableObject {
         guard let plain = SRUpscaler.resize(plain0, longSide: target) else { return (plain0, "resize gagal") }
         guard need >= minAIFactor, strength > 0.01 else { return (plain, "Lanczos") }
         guard let sr = upscaler(for: model) else { return (plain, "AI gagal: model \(model.rawValue) tidak bisa dimuat") }
+        let t0 = CFAbsoluteTimeGetCurrent()
         guard let up = sr.upscale(src, crop: crop, outScale: min(need, Double(SRUpscaler.scale)), progress: { d, n in
-            if d % 4 == 0 || d == n { self.setStatus("\(label): AI \(model.rawValue) \(d)/\(n)...") }
+            self.report("\(label) AI \(model.rawValue)", d, n, since: t0)
         }) else {
             return (plain, "AI gagal: \(sr.lastError ?? "prediksi gagal")")
         }
@@ -638,8 +691,9 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         setStatus("Memproses HDR+ \(frames.count) frame...")
+        let tm = CFAbsoluteTimeGetCurrent()
         guard let r = merger.merge(frames, noiseReduction: noiseReduction, progress: { i, n in
-            self.setStatus("Memproses HDR+ \(i)/\(n)...")
+            self.report("Merge HDR+", i, n, since: tm)
         }) else {
             finish("HDR+ gagal saat merge (lihat log)")
             return
