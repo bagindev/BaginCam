@@ -29,6 +29,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     var histogramEnabled = true
     /// 64 bin luminans ternormalisasi 0..1 (dipanggil di main ~5x/detik)
     var onHistogram: (([Float]) -> Void)?
+    /// v0.13: frame ukuran layar (sebelum LUT) ~4x/detik untuk AI Komposisi
+    var onAnalysis: ((CIImage) -> Void)?
 
     private var frameCounter = 0
     private var histBitmap = [Float](repeating: 0, count: 64 * 4)
@@ -72,6 +74,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             }
         }
         let extent = image.extent
+        if let cb = onAnalysis, frameCounter % 8 == 0 { cb(image) }
 
         // luminans sinyal (sebelum LUT) untuk zebra / peaking / histogram
         var luma: CIImage?

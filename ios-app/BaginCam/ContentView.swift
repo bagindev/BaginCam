@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var showGrid = false
     @State private var showLevel = true
     @StateObject private var level = LevelMonitor()
+    @StateObject private var comp = CompositionAI()
 
     enum ProControl: String, CaseIterable, Identifiable {
         case ev = "EV", iso = "ISO", shutter = "Shutter", wb = "WB", focus = "Fokus", timer = "Timer"
@@ -78,6 +79,8 @@ struct ContentView: View {
             r.peaking = peaking
             r.zebraLevel = Float(zebraLevel)
             r.peakColor = Self.peakCI(peakColor)
+            comp.onAutoZoom = { z in cam.setTotalZoom(cam.totalZoom * z) }
+            updateComp()
             cam.start()
             level.start()
             if luts.selected == nil {
@@ -94,6 +97,11 @@ struct ContentView: View {
         .onChange(of: cam.previewSharpen) { _, v in renderer.sharpen = v }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
+        .onChange(of: cam.compAI) { _, _ in updateComp() }
+        .onChange(of: cam.shootMode) { _, _ in updateComp() }
+        .onChange(of: cam.aiLensLock) { _, _ in updateComp() }
+        .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = compMaxZoom }
+        .onChange(of: level.roll) { _, v in comp.roll = v }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType(filenameExtension: "cube") ?? .data]) { result in
             if case .success(let url) = result { luts.importLUT(from: url) }
@@ -115,6 +123,7 @@ struct ContentView: View {
                         torchChip
                     } else {
                         processChip
+                        compChip
                         lutChip
                         wbChip
                         formatChip
@@ -133,6 +142,37 @@ struct ContentView: View {
             }
         }
         .padding(.top, 6)
+    }
+
+    // MARK: - AI Komposisi (v0.13)
+    private var compActive: Bool { cam.compAI && cam.shootMode != .video }
+
+    /// zoom tambahan yang boleh disarankan (lensa Auto: sampai 2x dari zoom sekarang, maks 10x)
+    private var compMaxZoom: CGFloat {
+        guard showsZoom else { return 1 }
+        return max(1, min(2, min(cam.maxTotalZoom, 10) / max(cam.totalZoom, 0.1)))
+    }
+
+    private func updateComp() {
+        comp.maxZoom = compMaxZoom
+        if compActive {
+            let c = comp
+            renderer.onAnalysis = { [weak c] img in c?.push(img) }
+        } else {
+            renderer.onAnalysis = nil
+            comp.close()
+        }
+    }
+
+    private var compChip: some View {
+        Menu {
+            Button { cam.compAI.toggle() } label: { check("AI Komposisi (tombol Susun ulang)", cam.compAI) }
+            Button { cam.compCrop.toggle() } label: { check("Simpan versi crop setelah jepret", cam.compCrop) }
+            if cam.compAI {
+                Button { comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
+            }
+            Text("Susun ulang: pilih komposisi, geser HP ke titik oranye, zoom otomatis. Versi crop: foto kedua _CROP (horizon lurus + subjek di sepertiga), foto asli tetap.")
+        } label: { chip(cam.compAI ? "Komposisi" : "", icon: "crop", on: cam.compAI) }
     }
 
     /// Live & flash di FOTO (bila nyala, jepretan memakai proses Apple)
@@ -491,6 +531,7 @@ struct ContentView: View {
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay { countdownLayer }
             .overlay { focusLayer }
+            .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
             .overlay(alignment: .top) {
                 if cam.shootMode == .video { videoInfoRow } else { infoRow }
             }

@@ -282,6 +282,9 @@ final class CameraManager: NSObject, ObservableObject {
     /// suhu HP (ProcessInfo.thermalState): 0 normal, 1 hangat, 2 panas, 3 kritis
     @Published private(set) var thermal = 0
     /// AI Upscale otomatis ditawarkan setelah rekam
+    // v0.13: AI Komposisi (Susun ulang) + versi crop setelah jepret
+    @Published var compAI: Bool = Prefs.get("compAI", true) { didSet { Prefs.set("compAI", compAI) } }
+    @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
     @Published var pendingUpscale: URL?
@@ -2124,6 +2127,22 @@ final class CameraManager: NSObject, ObservableObject {
             if !ok { Log.camera.error("Simpan ke Photos gagal: \(String(describing: err), privacy: .public)") }
         }
         rememberLast(data, fileName: fileName)
+        // v0.13: AI Komposisi -> versi kedua yang diluruskan + di-crop rapi (foto asli tetap ada)
+        let lower = fileName.lowercased()
+        if compAI && compCrop && shootMode != .video && !lower.contains("_crop") && (lower.hasSuffix(".heic") || lower.hasSuffix(".jpg")) {
+            DispatchQueue.global(qos: .utility).async {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                guard let res = CompositionAI.cropVersion(data) else {
+                    Log.camera.info("Komposisi: \(fileName, privacy: .public) sudah rapi, tanpa versi crop")
+                    return
+                }
+                let base = (fileName as NSString).deletingPathExtension
+                let dt = CFAbsoluteTimeGetCurrent() - t0
+                Log.camera.info("Komposisi: \(base, privacy: .public)_CROP.heic (\(res.note, privacy: .public)) \(dt, format: .fixed(precision: 2), privacy: .public) s")
+                self.save(res.data, fileName: base + "_CROP.heic", dir: dir)
+                self.setStatus("AI Komposisi: versi crop disimpan (\(res.note))")
+            }
+        }
     }
 
     /// Live Photo: foto + video pasangan dalam satu aset
