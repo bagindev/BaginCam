@@ -922,3 +922,20 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Fix v0.18.2: masker highlight dari lowpass (hanya area terbakar luas). Format 48MP: subtype sama + rasio 4:3 +
   >= 30 fps, ukuran video terdekat; log bila tidak ada.
 - Versi 0.18.2 (build 40). Build run 43417606354 sukses -> `data/builds/BaginCam-v0.18.2-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 42 — 2026-11-13 · cek v0.18.2 -> v0.18.3 (rotasi HDR+ lanskap, foto 48MP buram)
+- Log 18:36-18:37 (masih mengisi daya). IMG_7011-7013 -> `data/bursts/dcim-1113-v0182/`.
+- 7011 (jepretan pertama): fusi lagi-lagi "sensor 4224". Penyebab sebenarnya: nativeLong dibaca SEBELUM install(p)
+  (format konstituen masih 12MP); setelah pindah lensa sudah 48MP. Fix: baca ulang setelah install.
+- 7012 fusi: teks laptop buram berbayang - foto Apple 48MP buram (HP bergerak, geser 45,28 px). 48MP = 1 frame sensor
+  (WWDC26 sesi 304), jadi rawan gerak. Fix: rasio energi tepi 48MP/HDR+ di 1024 px < 0.85 -> fusi dibatalkan, kembali
+  ke HDR+ biasa (+upscale), log "Fusi 48MP: dibatalkan - foto 48MP lebih buram".
+- 7013 (sudut 180, sistem juga 180 = HP lanskap): tersimpan 4284x5712 potret, isi miring. BUG LAMA: install() (pindah ke
+  lensa fisik untuk HDR+ / Super Res / Crop penuh) memasang videoRotationAngle = 90 di koneksi foto SETELAH sudut
+  jepretan dipasang -> semua foto HDR+ lanskap miring sejak awal (juga IMG_6962-6968; fix v0.15 bukan penyebabnya).
+  Fix: burstAngle disimpan, dipasang ulang di setiap captureNext (applyBurstAngle).
+- 7013 fusi: tekstur kayu & kalender tajam. 7011 HDR+ teks laptop tajam.
+- Versi 0.18.3 (build 41). Build run 43418986848 sukses -> `data/builds/BaginCam-v0.18.3-unsigned.ipa`. Belum diuji di HP.
+- Pertanyaan iOS 26/27: dicari (WWDC26 sesi 304 & 341). iOS 27: deferred processing untuk fast capture balanced
+  (iPhone 16/17), tidak ada RAW 48MP / quad-bayer untuk app pihak ketiga; setPreparedPhotoSettingsArray bisa dipakai
+  sekarang untuk mempercepat foto 48MP fusi.
