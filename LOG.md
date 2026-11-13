@@ -741,4 +741,4 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   tekstur seperti lukisan, huruf "U" berubah. Fix: Super Res di lensa utama < 3x saat terang (ISO x t < 0.25)
   -> Crop penuh sensor 48 MP (detail asli 2x lipat). Log "Super Res -> Crop penuh 48MP".
 - Titik zoom native: 0.89 (crop UW tepat sebelum 1x) dibuang (titik < 85 % titik berikutnya).
-- Versi 0.12.1 (build 27).
+- Versi 0.12.1 (build 27). Build run 43373476177 sukses -> `data/builds/BaginCam-v0.12.1-unsigned.ipa`. Belum diuji di HP.
