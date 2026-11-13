@@ -112,18 +112,16 @@ struct ContentView: View {
                     if cam.shootMode == .video {
                         // v0.12.4: dikelompokkan (Format · LUT · WB · Bantu · AI · Senter)
                         videoFormatChip
-                        lutChip
-                        wbChip
+                        colorGroupChip
                         assistChip
                         upscaleChip
                         torchChip
                     } else {
+                        // v0.14: dikelompokkan (Proses · Hasil · Warna · Bantu · flash · Live)
                         processChip
-                        compChip
-                        lutChip
-                        wbChip
-                        formatChip
-                        ratioChip
+                        resultChip
+                        colorGroupChip
+                        assistChip
                         if appleCapable && cam.flashAvailable { flashChip }
                         if appleCapable && cam.liveAvailable { liveChip }
                     }
@@ -251,6 +249,83 @@ struct ContentView: View {
         } label: {
             chip(luts.selected.map { shortLUT($0.name) } ?? "LUT", icon: "camera.filters")
         }
+    }
+
+    /// v0.14: LUT + white balance dalam satu menu "Warna"
+    private var colorGroupChip: some View {
+        Menu {
+            Menu("LUT: \(luts.selected.map { shortLUT($0.name) } ?? "Tanpa")") {
+                Button { luts.select(nil) } label: { check("Tanpa LUT", luts.selected == nil) }
+                ForEach(luts.items) { item in
+                    Button { luts.select(item) } label: { check(item.name, luts.selected?.id == item.id) }
+                }
+                Divider()
+                if cam.shootMode == .video {
+                    Toggle("Bakar LUT ke video (keluaran Rec.709)", isOn: $cam.bakeLUTVideo)
+                } else {
+                    Toggle("Bakar LUT ke foto", isOn: $cam.bakeLUT)
+                }
+                Button("Import .cube...") { showImporter = true }
+            }
+            Menu("White balance: \(wbText)") {
+                ForEach(CameraManager.WBPreset.allCases) { p in
+                    Button { cam.setWBPreset(p) } label: {
+                        check(p.rawValue + (p.kelvin.map { " \(Int($0))K" } ?? ""), !cam.manualWB && cam.wbPreset == p)
+                    }
+                }
+                Button { showPro = true; proControl = .wb } label: { check("Manual (Kelvin)...", cam.manualWB) }
+            }
+        } label: {
+            chip("\(luts.selected.map { shortLUT($0.name) } ?? "LUT") · \(wbText)", icon: "camera.filters",
+                 on: luts.selected != nil || cam.manualWB || cam.wbPreset != .auto)
+        }
+    }
+
+    private var wbText: String {
+        cam.manualWB ? "\(Int(cam.temperature))K" : (cam.wbPreset == .auto ? "AWB" : cam.wbPreset.rawValue)
+    }
+
+    /// v0.14: format + resolusi + rasio + preset Tuning dalam satu menu "Hasil"
+    private var resultChip: some View {
+        Menu {
+            if cam.mode == .hdrplus {
+                Menu("Format: \(cam.outputFormat.rawValue)") {
+                    ForEach(PhotoFormat.allCases) { f in
+                        Button { cam.outputFormat = f } label: { check(f.rawValue, cam.outputFormat == f) }
+                    }
+                }
+            }
+            if SettingsSheet.showsResolution(cam) {
+                Menu("Resolusi: \(cam.outputMP.label)") {
+                    ForEach(OutputMP.allCases) { r in
+                        Button { cam.outputMP = r } label: { check(r.label, cam.outputMP == r) }
+                    }
+                }
+            }
+            Menu("Rasio: \(cam.aspect.rawValue)") {
+                ForEach(AspectRatio.allCases) { a in
+                    Button { cam.aspect = a } label: { check(a.rawValue, cam.aspect == a) }
+                }
+                Text("Hanya HEIF/JPEG; RAW tetap 4:3")
+            }
+            if cam.mode == .hdrplus || cam.mode == .aiZoom || cam.mode == .heif {
+                Menu("Tuning: \(tuningName)") {
+                    ForEach(PhotoTuning.presets.indices, id: \.self) { i in
+                        let p = PhotoTuning.presets[i]
+                        Button { cam.tuning = p.1 } label: { check(p.0, cam.tuning == p.1) }
+                    }
+                    Button("Atur slider (ala AGC)...") { showSettings = true }
+                }
+            }
+            Button("Pengaturan lain...") { showSettings = true }
+        } label: {
+            chip(formatText + (cam.aspect == .r43 ? "" : " · \(cam.aspect.rawValue)") + (cam.tuning.isDefault ? "" : " · T"),
+                 icon: "photo")
+        }
+    }
+
+    private var tuningName: String {
+        PhotoTuning.presets.first { $0.1 == cam.tuning }.map { String($0.0.split(separator: " ").first ?? "") } ?? "Kustom"
     }
 
     private func shortLUT(_ n: String) -> String {
@@ -404,6 +479,15 @@ struct ContentView: View {
     /// focus peaking + zebra (ala Blackmagic), hanya di layar
     private var assistChip: some View {
         Menu {
+            if cam.shootMode != .video {
+                Section("AI Komposisi") {
+                    Button { cam.compAI.toggle() } label: { check("Susun ulang (saran framing)", cam.compAI) }
+                    Button { cam.compCrop.toggle() } label: { check("Simpan versi crop setelah jepret", cam.compCrop) }
+                    if cam.compAI {
+                        Button { comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
+                    }
+                }
+            }
             Section("Focus peaking") {
                 Button { peaking.toggle() } label: { check(peaking ? "Peaking nyala" : "Peaking mati", peaking) }
                 ForEach(Self.peakColors, id: \.self) { c in
@@ -418,9 +502,11 @@ struct ContentView: View {
                     }
                 }
             }
-            Section("Garis bingkai") {
-                ForEach(FrameGuide.allCases) { g in
-                    Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
+            if cam.shootMode == .video {
+                Section("Garis bingkai") {
+                    ForEach(FrameGuide.allCases) { g in
+                        Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
+                    }
                 }
             }
             Section("Layar") {
@@ -429,7 +515,9 @@ struct ContentView: View {
                 Button { showHistogram.toggle() } label: { check("Histogram", showHistogram) }
             }
         } label: {
-            let n = (peaking ? 1 : 0) + (zebra ? 1 : 0) + (cam.frameGuide == .off ? 0 : 1)
+            let video = cam.shootMode == .video
+            let n = (peaking ? 1 : 0) + (zebra ? 1 : 0) + (video && cam.frameGuide != .off ? 1 : 0)
+                + (!video && cam.compAI ? 1 : 0)
             chip(n > 0 ? "Bantu \(n)" : "Bantu", icon: "scope", on: n > 0)
         }
     }
