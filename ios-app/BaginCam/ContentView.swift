@@ -27,6 +27,7 @@ struct ContentView: View {
     @StateObject private var level = LevelMonitor()
     @StateObject private var comp = CompositionAI()
     @State private var touch = TouchClock()
+    @State private var pinchBase: Double?
 
     enum ProControl: String, CaseIterable, Identifiable {
         case ev = "EV", iso = "ISO", shutter = "Shutter", wb = "WB", focus = "Fokus", timer = "Timer"
@@ -60,7 +61,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             if cam.idlePaused { idlePauseLayer }
         }
-        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in touch.mark() })
+        .background(TouchSpyView { touch.mark() })
         .sheet(isPresented: $showSettings) {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
                           showGrid: $showGrid, showLevel: $showLevel, hasLUT: luts.selected != nil)
@@ -69,8 +70,8 @@ struct ContentView: View {
             VideoUpscaleView(cam: cam, initial: cam.pendingUpscale)
         }
         .onChange(of: cam.pendingUpscale) { _, u in if u != nil && !showUpscale { showUpscale = true } }
-        .fullScreenCover(isPresented: $showViewer) {
-            PhotoViewer(data: cam.lastImageData, name: cam.lastFileName)
+        .fullScreenCover(isPresented: $showViewer, onDismiss: { if !cam.isRecording { cam.start() } }) {
+            LibraryViewer(fallbackData: cam.lastImageData, fallbackName: cam.lastFileName)
         }
         .onAppear {
             let r = renderer
@@ -84,6 +85,7 @@ struct ContentView: View {
             r.peakColor = Self.peakCI(peakColor)
             comp.onAutoZoom = { z in cam.setTotalZoom(cam.totalZoom * z) }
             cam.orientationAngle = { [weak lv] in lv?.angleNow ?? 90 }
+            LibraryViewer.latestThumb { t in cam.showLibraryThumb(t) }
             updateComp()
             cam.start()
             level.start()
@@ -955,6 +957,14 @@ struct ContentView: View {
                                 tapFocus(drag.location, size: geo.size, lock: true)
                             }
                         })
+                    // v0.16: cubit untuk zoom (seperti kamera bawaan)
+                    .simultaneousGesture(MagnifyGesture()
+                        .onChanged { v in
+                            guard showsZoom, !cam.isCapturing else { return }
+                            if pinchBase == nil { pinchBase = displayZoom }
+                            setDisplayZoom(min(maxZoom, max(minZoom, (pinchBase ?? displayZoom) * Double(v.magnification))))
+                        }
+                        .onEnded { _ in pinchBase = nil })
                 if let p = focusPoint {
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(Color.yellow, lineWidth: 1.5)
@@ -1146,7 +1156,7 @@ struct ContentView: View {
 
     private var shutterRow: some View {
         HStack {
-            Button { if cam.lastImageData != nil { showViewer = true } } label: {
+            Button { if !cam.isRecording { cam.stop() }; showViewer = true } label: {      // v0.16: album ala kamera bawaan (kamera dijeda)
                 Group {
                     if let t = cam.lastThumb {
                         Image(uiImage: t).resizable().scaledToFill()

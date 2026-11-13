@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.15.0"
-    CURRENT_PROJECT_VERSION: "34"
+    MARKETING_VERSION: "0.16.0"
+    CURRENT_PROJECT_VERSION: "35"
 targets:
   BaginCam:
     type: application
@@ -32,6 +32,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSCameraUsageDescription: BaginCam butuh kamera untuk memotret.
         NSPhotoLibraryAddUsageDescription: BaginCam menyimpan foto RAW ke galeri.
+        NSPhotoLibraryUsageDescription: BaginCam menampilkan foto & video terbaru dari album seperti kamera bawaan.
         NSMicrophoneUsageDescription: BaginCam merekam suara saat mode VIDEO.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

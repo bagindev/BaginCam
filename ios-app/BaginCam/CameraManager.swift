@@ -463,6 +463,9 @@ final class CameraManager: NSObject, ObservableObject {
         status = "Kamera dijeda untuk hemat panas - ketuk untuk lanjut"
     }
 
+    /// v0.16: thumbnail tombol galeri dari album (saat app dibuka, sebelum ada jepretan)
+    func showLibraryThumb(_ t: UIImage) { if lastThumb == nil { lastThumb = t } }
+
     func resumeIdle() {
         guard idlePaused else { return }
         idlePaused = false
