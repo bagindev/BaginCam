@@ -119,7 +119,8 @@ struct SettingsSheet: View {
                             }
                             Slider(value: $cam.hdrNoiseReduction, in: 1...23, step: 1)
                         }
-                        Toggle("Fusi detail 48MP (cahaya cukup, zoom 1x)", isOn: $cam.fusion48)
+                        Toggle("Fusi detail 48MP (cahaya cukup, 0.5x / 1x)", isOn: $cam.fusion48)
+                        if cam.fusion48 { Toggle("Simpan foto 48MP mentah (debug)", isOn: $cam.debugFusion) }
                     } header: {
                         Text("HDR+")
                     } footer: {

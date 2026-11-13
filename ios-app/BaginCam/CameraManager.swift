@@ -221,6 +221,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// v0.14: tuning proses foto ala AGC (HDR+ / Super Res / MALAM / AI Zoom)
     /// v0.18: HDR+ + 1 foto Apple 48MP -> detail sensor penuh (cahaya cukup, lensa utama, zoom 1x)
     @Published var fusion48: Bool = Prefs.get("fusion48", true) { didSet { Prefs.set("fusion48", fusion48) } }
+    /// v0.18.5: simpan foto 48MP mentah ke Documents/Debug (kalibrasi fusi; tidak masuk galeri)
+    @Published var debugFusion: Bool = Prefs.get("debugFusion", true) { didSet { Prefs.set("debugFusion", debugFusion) } }
     @Published var tuning: PhotoTuning = PhotoTuning.load() { didSet { if tuning != oldValue { tuning.store() } } }
     @Published var aiStrength: Double = Prefs.get("aiStrength", 0.5) { didSet { Prefs.set("aiStrength", aiStrength) } }  // 0 = pembesaran biasa, 1 = AI penuh
     @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
@@ -393,6 +395,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var fusionPending = false          // sessionQueue: foto 48MP masih harus diambil setelah burst
     private var fusionData: Data?              // sessionQueue: foto Apple 48MP untuk fusi
     private var fusionTaken = false            // sessionQueue: foto 48MP sudah diambil (bunyi burst dimatikan)
+    private var debugFusionS = true            // sessionQueue
     private var burstTextFocus = true
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
@@ -1630,6 +1633,7 @@ final class CameraManager: NSObject, ObservableObject {
         let steady = deviceSteady
         let tun = tuning
         let fus = fusion48
+        let dbg = debugFusion
         let motion = motionLevel?() ?? -1
         let liveReq = m == .heif && livePhoto && liveAvailable
         let flashSet = flash, asp = aspect
@@ -1739,7 +1743,7 @@ final class CameraManager: NSObject, ObservableObject {
                     nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
                     // v0.18.1: fusi 48MP butuh format lensa yang mendukung foto 48MP (jepretan pertama setelah
                     // app dibuka kadang format 12MP -> "sensor 4224", fusi dilewati, IMG_7004)
-                    if fus && m == .hdrplus && !zoomed && !night && lensName == "Utama",
+                    if fus && m == .hdrplus && !zoomed && !night && (lensName == "Utama" || lensName == "Ultra Wide"),
                        (self.maxDimensions(of: p).map { Int($0.width) < 8000 } ?? true) {
                         let cur = p.activeFormat
                         let cd = CMVideoFormatDescriptionGetDimensions(cur.formatDescription)
@@ -1828,9 +1832,11 @@ final class CameraManager: NSObject, ObservableObject {
             self.fusionData = nil
             self.fusionPending = false
             self.fusionTaken = false
+            self.debugFusionS = dbg
             if m == .hdrplus && !zoomed {
                 let gain = Double(srcISO) * srcDur
-                let ok = fus && !night && lensName == "Utama" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
+                // v0.18.5: Ultra Wide 48MP juga (iPhone 16 Pro)
+                let ok = fus && !night && (lensName == "Utama" || lensName == "Ultra Wide") && nativeLong >= 8000 && gain <= 40 && fmt != .dng
                 self.fusionPending = ok
                 Log.camera.info("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
             }
@@ -1963,6 +1969,17 @@ final class CameraManager: NSObject, ObservableObject {
             self.progressText = text
             self.status = "\(text) - jangan tinggalkan app"
         }
+    }
+
+    /// v0.18.5: Documents/Debug - simpan 12 file terakhir
+    static func saveDebug(_ data: Data, name: String) {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Debug", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? data.write(to: dir.appendingPathComponent(name))
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for f in files.dropLast(12) { try? FileManager.default.removeItem(at: f) }
+        Log.camera.info("Debug: \(name, privacy: .public) (\(data.count / 1024, privacy: .public) KB)")
     }
 
     /// v0.18: foto Apple 48MP (HEVC, sensor penuh) untuk fusi detail
@@ -2381,6 +2398,9 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                     // v0.18: foto Apple 48MP untuk fusi detail
                     self.fusionData = photo.fileDataRepresentation()
                     let dims = photo.resolvedSettings.photoDimensions
+                    if self.debugFusionS, let d = self.fusionData, let dir = self.burstDir {
+                        Self.saveDebug(d, name: dir.lastPathComponent + "_48.heic")
+                    }
                     Log.camera.info("Fusi 48MP: foto Apple \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \((self.fusionData?.count ?? 0) / 1024, privacy: .public) KB")
                 } else {
                     if let frame {
