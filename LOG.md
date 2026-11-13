@@ -785,3 +785,27 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Timer rekam besar di tengah atas (merah saat rekam, 00:00 saat siap). Baris info jadi 2 baris; histogram turun.
   Tombol AI dobel di baris zoom dihapus (sudah di chip AI).
 - Versi 0.12.4 (build 30). Build run 43392967378 sukses -> `data/builds/BaginCam-v0.12.4-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 33 — 2026-11-13 · v0.13.0 (AI Komposisi "Susun ulang")
+- Permintaan: AI komposisi foto seperti video Shorts "Si paling jago framing" (Sobat HAPE) - file pengguna
+  `C:\Users\ASUS\Downloads\Si paling jago framing.mp4` (frame contoh di scratchpad, tidak disalin ke proyek).
+  Isinya OPPO Find X10 "Susun ulang": tombol di preview -> pindai (bingkai pelangi, "jaga perangkat agar tidak
+  goyang") -> bingkai saran bercahaya + titik oranye + "Pindahkan ponsel ke posisi yang disarankan" + 1-2 thumbnail
+  pilihan -> zoom otomatis (1.4x/1.6x/2.8x) -> jepret. Keterangan adegan di atas (VLM).
+- Pilihan pengguna: kotak target + panah, auto zoom/crop saran, petunjuk pose/lurus, crop ulang setelah jepret,
+  + tombol on/off.
+- CompositionAI.swift (baru, offline Vision): wajah (VNDetectFaceRectangles) + badan (VNDetectHumanRectangles) +
+  saliency (attention). Komposisi: mata di sepertiga atas, subjek muat + margin, sepertiga horizontal (penalti
+  tengah), objek di titik sepertiga. 3 varian: Sepertiga / Dekat (kepala-dada) / Lebar (tanpa zoom), duplikat
+  dibuang, thumbnail dari frame pindai. Keterangan adegan dari VNClassifyImageRequest (label -> Indonesia).
+  Panduan ~4x/detik, dihaluskan (EMA), titik oranye + lingkaran tengah, "Pas! Jepret" (bingkai hijau).
+  Zoom otomatis saat posisi pas (setTotalZoom x saran, maks 2x dari zoom sekarang). Tanpa Susun ulang: petunjuk
+  ringan "Kepala terpotong" / "Ruang di atas kepala terlalu banyak".
+- Setelah jepret (HEIC/JPG, bukan video): versi kedua `<nama>_CROP.heic` = horizon diluruskan (VNDetectHorizon
+  0.7-8°) + crop komposisi (maks 1.6x). Foto asli tetap. Log "Komposisi: ..._CROP.heic".
+- UI: chip "Komposisi" di FOTO (on/off AI Komposisi, on/off versi crop, Susun ulang sekarang); tombol
+  "Susun ulang" di kanan bawah preview. Prefs compAI / compCrop (bawaan nyala).
+- PreviewRenderer.onAnalysis: frame ukuran layar sebelum LUT tiap 8 frame. onChange komposisi dipindah ke
+  ViewModifier CompHooks (build pertama gagal: body ContentView "unable to type-check in reasonable time").
+- Versi 0.13.0 (build 31). Build run 43396019918 sukses -> `data/builds/BaginCam-v0.13.0-unsigned.ipa`
+  (run 43395628709 gagal type-check). Belum diuji di HP. Termasuk perubahan v0.12.4.
