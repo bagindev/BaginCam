@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreImage
 import UniformTypeIdentifiers
 
 /// Susunan ala GCam (v0.10): chip cepat di atas, bar info di preview, zoom di atas shutter,
@@ -14,8 +15,11 @@ struct ContentView: View {
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
     @State private var showHistogram = true
-    @State private var zebra = false
-    @State private var peaking = false
+    @AppStorage("zebra") private var zebra = false
+    @AppStorage("peaking") private var peaking = false
+    @AppStorage("zebraLevel") private var zebraLevel = 0.95
+    @AppStorage("peakColor") private var peakColor = "Merah"
+    @State private var showUpscale = false
     @State private var focusPoint: CGPoint?      // posisi kotak fokus di preview (piksel view)
     @State private var focusTick = 0
     @State private var showGrid = false
@@ -57,6 +61,7 @@ struct ContentView: View {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
                           showGrid: $showGrid, showLevel: $showLevel, hasLUT: luts.selected != nil)
         }
+        .sheet(isPresented: $showUpscale) { VideoUpscaleView(cam: cam) }
         .fullScreenCover(isPresented: $showViewer) {
             PhotoViewer(data: cam.lastImageData, name: cam.lastFileName)
         }
@@ -66,6 +71,10 @@ struct ContentView: View {
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }
+            r.zebra = zebra
+            r.peaking = peaking
+            r.zebraLevel = Float(zebraLevel)
+            r.peakColor = Self.peakCI(peakColor)
             cam.start()
             level.start()
             if luts.selected == nil {
@@ -77,6 +86,9 @@ struct ContentView: View {
         .onChange(of: cam.previewFrozen) { _, v in renderer.frozen = v }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
+        .onChange(of: zebraLevel) { _, v in renderer.zebraLevel = Float(v) }
+        .onChange(of: peakColor) { _, v in renderer.peakColor = Self.peakCI(v) }
+        .onChange(of: cam.previewSharpen) { _, v in renderer.sharpen = v }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
         .fileImporter(isPresented: $showImporter,
@@ -98,6 +110,8 @@ struct ContentView: View {
                         lutChip
                         wbChip
                         guideChip
+                        assistChip
+                        upscaleChip
                         torchChip
                     } else {
                         processChip
@@ -337,6 +351,44 @@ struct ContentView: View {
         } label: { chip(cam.frameGuide == .off ? "" : cam.frameGuide.rawValue, icon: "rectangle.dashed") }
     }
 
+    static let peakColors = ["Merah", "Kuning", "Hijau", "Biru", "Putih"]
+    static func peakCI(_ n: String) -> CIColor {
+        switch n {
+        case "Kuning": return CIColor(red: 1, green: 0.9, blue: 0)
+        case "Hijau": return CIColor(red: 0.1, green: 1, blue: 0.2)
+        case "Biru": return CIColor(red: 0.2, green: 0.5, blue: 1)
+        case "Putih": return CIColor(red: 1, green: 1, blue: 1)
+        default: return CIColor(red: 1, green: 0.15, blue: 0.1)
+        }
+    }
+
+    /// focus peaking + zebra (ala Blackmagic), hanya di layar
+    private var assistChip: some View {
+        Menu {
+            Section("Focus peaking") {
+                Button { peaking.toggle() } label: { check(peaking ? "Peaking nyala" : "Peaking mati", peaking) }
+                ForEach(Self.peakColors, id: \.self) { c in
+                    Button { peakColor = c; peaking = true } label: { check("Warna \(c)", peaking && peakColor == c) }
+                }
+            }
+            Section("Zebra (area terang)") {
+                Button { zebra = false } label: { check("Mati", !zebra) }
+                ForEach([0.70, 0.80, 0.90, 0.95, 1.0], id: \.self) { lv in
+                    Button { zebraLevel = lv; zebra = true } label: {
+                        check("\(Int(lv * 100))%" + (lv >= 1 ? " (klip)" : ""), zebra && abs(zebraLevel - lv) < 0.001)
+                    }
+                }
+            }
+        } label: {
+            chip(zebra ? "\(Int(zebraLevel * 100))%" : "", icon: peaking ? "scope" : "line.diagonal", on: peaking || zebra)
+        }
+    }
+
+    private var upscaleChip: some View {
+        Button { showUpscale = true } label: { chip("AI", icon: "sparkles") }
+            .disabled(cam.isRecording)
+    }
+
     private var torchChip: some View {
         Button { cam.torch.toggle() } label: {
             chip("", icon: cam.torch ? "flashlight.on.fill" : "flashlight.off.fill", on: cam.torch)
@@ -391,6 +443,10 @@ struct ContentView: View {
                 infoPill(recordTimeText, icon: "record.circle.fill", color: .red)
             } else if !cam.videoInfo.isEmpty {
                 infoPill(cam.videoInfo, icon: "video")
+            }
+            if !cam.zoomQuality.isEmpty && (cam.zoomQuality != "Native" || cam.totalZoom > 1.05) {
+                infoPill(cam.zoomQuality, icon: cam.zoomQuality == "Native" ? "sparkle" : "plus.magnifyingglass",
+                         color: cam.zoomQuality == "Native" ? .green : .orange)
             }
             Spacer(minLength: 0)
             if cam.minutesLeft > 0 { infoPill("\(cam.minutesLeft) mnt", icon: "internaldrive") }
@@ -572,7 +628,22 @@ struct ContentView: View {
     }
 
     private var zoomPresets: [Double] {
-        [0.5, 1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+        if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty {
+            // video: titik native (lensa + crop sensor 48 MP) + 10x
+            var p = cam.nativeZoomPoints.map { Double($0) }
+            if !p.contains(where: { abs($0 - 10) < 0.5 }) { p.append(10) }
+            return p.sorted().filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+        }
+        return [0.5, 1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+    }
+
+    private func isNative(_ z: Double) -> Bool {
+        cam.shootMode == .video && cam.nativeZoomPoints.contains { abs(Double($0) - z) < 0.01 }
+    }
+
+    private func zoomLabel(_ z: Double) -> String {
+        let t = z < 1 ? String(format: ".%.0f", z * 10) : (abs(z - z.rounded()) < 0.05 ? String(format: "%.0f", z) : String(format: "%.1f", z))
+        return t + (isNative(z) ? "✦" : "x")
     }
 
     private var zoomRow: some View {
@@ -580,7 +651,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 ForEach(zoomPresets, id: \.self) { z in
                     let on = abs(displayZoom - z) < 0.05
-                    Button(z < 1 ? ".5x" : String(format: "%.0fx", z)) { setDisplayZoom(z) }
+                    Button(zoomLabel(z)) { setDisplayZoom(z) }
                         .font(.caption.bold())
                         .frame(width: 40, height: 28)
                         .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())

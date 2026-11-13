@@ -696,3 +696,27 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   - `supportsFps()` baru: fps harus masuk rentang format sebelum set `activeVideoMin/MaxFrameDuration`
     (dipakai di pickVideoFormat, applyVideoFormat, FPS Auto saat mulai rekam).
 - Versi 0.11.1 (build 25). Build run 43300383606 sukses -> `data/builds/BaginCam-v0.11.1-unsigned.ipa`.
+
+## Sesi 28 — 2026-11-13 · v0.12.0 (zoom video: native, halus, tajam, peaking/zebra, AI Upscale)
+- Permintaan: "menu video bisa ditambah zoom AI agar lebih bagus?" -> AI real-time tidak mungkin (~1-10 s/frame),
+  dipilih user: (1) titik zoom native + tajam, (2) peaking/zebra/zoom halus, (3) AI Upscale setelah rekam.
+- CameraManager.swift:
+  - `updateNativePoints()`: titik tanpa crop digital = basis tiap lensa + `secondaryNativeResolutionZoomFactors`
+    format yang sama di tiap lensa (mis. 2x crop sensor 48 MP). Log "VIDEO: titik zoom native [...]".
+  - `setTotalZoom` di video: menempel ke titik native (<3 %), zoom halus `ramp(toVideoZoomFactor:withRate:)`
+    (Mati/Lambat 0.6/Sedang 1.6/Cepat 4 pangkat-2 per detik).
+  - `updateZoomQuality()`: label "Native" / "Digital 1.4x" + kekuatan penajaman 0.25..0.9 (preview + rekaman).
+  - Mulai rekam: lensa Auto + 180° -> kunci otomatis ke lensa aktif (kembali Auto setelah selesai);
+    tanpa kunci: switching `.restricted [.videoZoomChanged]` selama rekam (lensa tidak lompat karena cahaya/fokus).
+  - Fix: kembali ke Auto di video kini memasang ulang format video.
+- VideoRecorder.swift: enum `SmoothZoom`; `sharpen` (CISharpenLuminance r=1.6) untuk keluaran 8-bit
+  (Rec.709 tanpa manajemen warna / setelah LUT); HLG & Log 10-bit tidak disentuh.
+- PreviewRenderer.swift: penajaman sama dengan rekaman, warna peaking bisa dipilih.
+- ContentView.swift: chip bantuan bidik (peaking 5 warna, zebra 70-100 %), chip ✨ AI, preset zoom video dari
+  titik native (tanda ✦), pill kualitas zoom; zebra/peaking kini tersimpan (@AppStorage).
+- VideoUpscaler.swift (baru): AI Upscale video (PhotosPicker / Files app) -> Real-ESRGAN per frame,
+  Perbesar 2x (maks 4K) / Pertajam, kekuatan, "kurangi kedip" (detail AI dirata-rata dgn frame sebelumnya di area
+  diam, mask selisih luminans), HLG -> Rec.709 lewat video composition, Apple Log ditolak, audio disalin,
+  HEVC, simpan Foto/Files, perkiraan waktu, batal. Kamera dihentikan selama proses.
+- SettingsSheet.swift: Zoom halus, Tajamkan zoom digital, Kunci lensa otomatis saat rekam.
+- Versi 0.12.0 (build 26).

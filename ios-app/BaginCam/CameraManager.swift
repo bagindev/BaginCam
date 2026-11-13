@@ -209,7 +209,7 @@ final class CameraManager: NSObject, ObservableObject {
     var captureLUT: CubeLUT?
 
     // AI Zoom
-    @Published private(set) var totalZoom: CGFloat = 1        // relatif lensa utama (1x = 24mm)
+    @Published private(set) var totalZoom: CGFloat = 1 { didSet { if totalZoom != oldValue { updateZoomQuality() } } }  // relatif lensa utama (1x = 24mm)
     @Published private(set) var maxTotalZoom: CGFloat = 25
     @Published private(set) var autoLensAvailable = false     // kamera virtual (pilih lensa otomatis)
     /// zoom minimum mode Auto (0.5 bila ada ultra wide)
@@ -267,6 +267,17 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var bakeLUTVideo: Bool = Prefs.get("bakeLUTVideo", false) { didSet { Prefs.set("bakeLUTVideo", bakeLUTVideo) } }
     @Published var frameGuide: FrameGuide = Prefs.raw("frameGuide", .off) { didSet { Prefs.set("frameGuide", frameGuide.rawValue) } }
     @Published var torch = false { didSet { applyTorch() } }
+    // v0.12: zoom video
+    @Published var smoothZoom: SmoothZoom = Prefs.raw("smoothZoom", .medium) { didSet { Prefs.set("smoothZoom", smoothZoom.rawValue) } }
+    @Published var sharpenZoom: Bool = Prefs.get("sharpenZoom", true) { didSet { Prefs.set("sharpenZoom", sharpenZoom); updateZoomQuality() } }
+    @Published var lockLensOnRecord: Bool = Prefs.get("lockLensOnRecord", true) { didSet { Prefs.set("lockLensOnRecord", lockLensOnRecord) } }
+    /// titik zoom tanpa crop digital (relatif lensa utama), mis. [0.5, 1, 2, 5]
+    @Published private(set) var nativeZoomPoints: [CGFloat] = []
+    /// "Native" / "Digital 1.4x"
+    @Published private(set) var zoomQuality = ""
+    /// kekuatan penajaman zoom digital (preview + rekaman)
+    @Published private(set) var previewSharpen: Float = 0
+    private var autoLockedForRec = false        // main: lensa dikunci otomatis saat mulai rekam
     @Published private(set) var isRecording = false
     @Published private(set) var recordSeconds: Double = 0
     @Published private(set) var audioLevel: Float = -160        // dB (meter)
@@ -316,6 +327,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var inVideo = false                 // sessionQueue
     private var fpsApplied = 30                 // sessionQueue
     private var shutter180Warned = false        // sessionQueue
+    private var recSharpen: Float = 0           // videoQueue
     private var videoSnap = VideoSnap()         // sessionQueue: pengaturan video terakhir
     private var recorder: VideoRecorder?        // videoQueue
     private var previewLog = false              // videoQueue: preview Apple Log -> Rec.709
@@ -553,7 +565,11 @@ final class CameraManager: NSObject, ObservableObject {
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
         let tz = max(totalZoom, l == nil ? 1 : native)
         sessionQueue.async {
-            guard let l else { self.enterAIZoom(zoom: tz); return }
+            guard let l else {
+                self.enterAIZoom(zoom: tz)
+                if self.inVideo { self.applyVideoFormat() }   // v0.12: dulu format video hilang setelah kembali ke Auto
+                return
+            }
             guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: l.position) else {
                 self.setStatus("Lensa \(l.displayName) tidak tersedia")
                 return
@@ -634,14 +650,22 @@ final class CameraManager: NSObject, ObservableObject {
             default: minZ = 1
             }
         }
-        let zz = min(max(minZ, z), maxTotalZoom)
+        var zz = min(max(minZ, z), maxTotalZoom)
+        let video = shootMode == .video
+        // v0.12: video menempel ke titik native (tanpa crop digital) bila dekat (<3 %)
+        if video, let p = nativeZoomPoints.first(where: { abs($0 - zz) / $0 < 0.03 }) { zz = p }
         totalZoom = zz
+        let rate = video ? smoothZoom.rate : 0
         sessionQueue.async {
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
             let base = self.isVirtual ? self.wideBase : (self.aiLockNative > 0 ? 1 / self.aiLockNative : 1)
             let want = zz * base
             let applied = min(max(want, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
-            d.videoZoomFactor = applied
+            if self.inVideo && rate > 0 {
+                d.ramp(toVideoZoomFactor: applied, withRate: rate)     // zoom halus ala Blackmagic
+            } else {
+                d.videoZoomFactor = applied
+            }
             d.unlockForConfiguration()
             if self.inVideo {
                 // video: crop preview di atas batas hardware tidak ikut terekam -> zoom dibatasi hardware
@@ -1073,10 +1097,66 @@ final class CameraManager: NSObject, ObservableObject {
         }
         videoQueue.async { self.previewLog = false }
         Log.camera.info("VIDEO: keluar")
-        DispatchQueue.main.async { self.videoInfo = "" }
+        DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
     }
 
     private static let tenBitFmt: FourCharCode = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+
+    /// sessionQueue: titik zoom native (lensa fisik + crop sensor 48 MP "kualitas optik") untuk format video aktif
+    private func updateNativePoints(_ d: AVCaptureDevice) {
+        var pts: [CGFloat] = []
+        let fmt = d.activeFormat
+        let dim = CMVideoFormatDescriptionGetDimensions(fmt.formatDescription)
+        func secondary(of c: AVCaptureDevice) -> [CGFloat] {
+            let m = c.formats.first { g in
+                let x = CMVideoFormatDescriptionGetDimensions(g.formatDescription)
+                return x.width == dim.width && x.height == dim.height && Self.supportsFps(g, fpsApplied)
+                    && !g.secondaryNativeResolutionZoomFactors.isEmpty
+            }
+            return m?.secondaryNativeResolutionZoomFactors ?? []
+        }
+        if d.isVirtualDevice {
+            for c in d.constituentDevices {
+                let b = (lensBase[c.deviceType] ?? 1) / max(wideBase, 0.01)
+                pts.append(b)
+                pts += secondary(of: c).map { $0 * b }
+            }
+        } else {
+            let n = aiLockNative > 0 ? aiLockNative : 1
+            pts.append(n)
+            pts += fmt.secondaryNativeResolutionZoomFactors.map { $0 * n }
+        }
+        let clean = Array(Set(pts.map { ($0 * 100).rounded() / 100 })).filter { $0 > 0.3 && $0 < 30 }.sorted()
+        let txt = clean.map { String(format: "%.2g", Double($0)) }.joined(separator: ", ")
+        let own = fmt.secondaryNativeResolutionZoomFactors.map { String(format: "%.2g", Double($0)) }.joined(separator: ",")
+        Log.camera.info("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)])")
+        DispatchQueue.main.async { self.nativeZoomPoints = clean; self.updateZoomQuality() }
+    }
+
+    /// main: label kualitas zoom + kekuatan penajaman zoom digital
+    private func updateZoomQuality() {
+        guard shootMode == .video, !nativeZoomPoints.isEmpty else {
+            if !zoomQuality.isEmpty { zoomQuality = "" }
+            if previewSharpen != 0 { previewSharpen = 0; videoQueue.async { self.recSharpen = 0; self.recorder?.sharpen = 0 } }
+            return
+        }
+        let z = totalZoom
+        let base = nativeZoomPoints.filter { $0 <= z * 1.01 }.max() ?? nativeZoomPoints[0]
+        let digital = z / max(base, 0.01)
+        let q = digital <= 1.03 ? "Native" : String(format: "Digital %.1fx", Double(digital))
+        if q != zoomQuality { zoomQuality = q }
+        let sh: Float = sharpenZoom && digital > 1.05 ? Float(min(0.9, 0.25 + (digital - 1) * 0.35)) : 0
+        if abs(sh - previewSharpen) > 0.02 || (sh == 0) != (previewSharpen == 0) {
+            previewSharpen = sh
+            videoQueue.async { self.recSharpen = sh; self.recorder?.sharpen = sh }
+        }
+    }
+
+    /// lensa fisik yang sedang dipakai kamera virtual
+    private func activeLens() -> Lens? {
+        guard let d = device, d.isVirtualDevice, let t = d.activePrimaryConstituent?.deviceType else { return nil }
+        return [Lens.ultraWide, .wide, .tele].first { $0.deviceType == t }
+    }
 
     /// fps harus masuk salah satu rentang format, kalau tidak AVFoundation melempar NSException
     private static func supportsFps(_ f: AVCaptureDevice.Format, _ fps: Int) -> Bool {
@@ -1162,6 +1242,7 @@ final class CameraManager: NSObject, ObservableObject {
         session.commitConfiguration()
         fpsApplied = fps
         applyAuto()
+        updateNativePoints(d)
         let log = color == .log
         videoQueue.async { self.previewLog = log }
         let fpsText = s.timelapse > 1 ? "TL \(s.timelapse)x" : (s.fps == .auto ? "Auto" : "\(fps)")
@@ -1192,6 +1273,12 @@ final class CameraManager: NSObject, ObservableObject {
         let gain = Double(liveISO) * liveShutter
         let lut = bakeLUTVideo ? captureLUT : nil
         let slow = slowPlayback
+        // v0.12: lensa Auto = kamera virtual (tanpa eksposur custom). Kunci ke lensa aktif selama rekam
+        // supaya shutter 180 derajat jalan dan lensa tidak melompat di tengah rekaman.
+        if lockLensOnRecord, shutter180, aiLensLock == nil, autoLensAvailable, let l = activeLens() {
+            setAILensLock(l)
+            autoLockedForRec = true
+        }
         isRecording = true
         recordSeconds = 0
         sessionQueue.async { self.startRecording(snap, gain: gain, lut: lut, slowPlayback: slow) }
@@ -1237,7 +1324,12 @@ final class CameraManager: NSObject, ObservableObject {
                               color: color, audio: audio, transform: transform, bake: lut, bakeLog: lut != nil && color == .log)
         do {
             let r = try VideoRecorder(cfg)
-            videoQueue.async { self.recorder = r }
+            videoQueue.async { r.sharpen = self.recSharpen; self.recorder = r }
+            // lensa Auto tanpa kunci: pindah lensa hanya saat zoom diubah (tidak karena cahaya / jarak fokus)
+            if d.isVirtualDevice, !d.constituentDevices.isEmpty, (try? d.lockForConfiguration()) != nil {
+                d.setPrimaryConstituentDeviceSwitchingBehavior(.restricted, restrictedSwitchingBehaviorConditions: [.videoZoomChanged])
+                d.unlockForConfiguration()
+            }
             Log.camera.info("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()
@@ -1264,8 +1356,20 @@ final class CameraManager: NSObject, ObservableObject {
             guard let r = self.recorder else { DispatchQueue.main.async { self.isRecording = false }; return }
             self.recorder = nil
             let dur = r.seconds, dropped = r.droppedFrames
+            self.sessionQueue.async {
+                if let d = self.device, d.isVirtualDevice, (try? d.lockForConfiguration()) != nil {
+                    d.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
+                    d.unlockForConfiguration()
+                }
+            }
             r.stop { url, err in
-                DispatchQueue.main.async { self.isRecording = false }
+                DispatchQueue.main.async {
+                    self.isRecording = false
+                    if self.autoLockedForRec {
+                        self.autoLockedForRec = false
+                        self.setAILensLock(nil)
+                    }
+                }
                 guard let url else {
                     Log.camera.error("VIDEO: simpan gagal \(String(describing: err), privacy: .public)")
                     self.setStatus("Video gagal disimpan: \(err?.localizedDescription ?? "-")")

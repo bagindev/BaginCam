@@ -98,6 +98,23 @@ enum VideoSaveTo: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// kecepatan zoom halus di video (pangkat 2 per detik, AVCaptureDevice.ramp)
+enum SmoothZoom: String, CaseIterable, Identifiable {
+    case off = "Mati"
+    case slow = "Lambat"
+    case medium = "Sedang"
+    case fast = "Cepat"
+    var id: String { rawValue }
+    var rate: Float {
+        switch self {
+        case .off: return 0
+        case .slow: return 0.6
+        case .medium: return 1.6
+        case .fast: return 4
+        }
+    }
+}
+
 /// panduan bingkai (frame guide) seperti Blackmagic
 enum FrameGuide: String, CaseIterable, Identifiable {
     case off = "Mati"
@@ -197,6 +214,9 @@ final class VideoRecorder {
     private lazy var lutFilter: CIFilter? = config.bake?.makeFilter()
     private lazy var logFilter = AppleLogLUT.makeFilter()
     private(set) var droppedFrames = 0
+    /// penajaman zoom digital (0 = mati), diubah dari antrean video
+    var sharpen: Float = 0
+    private lazy var sharpenFilter = CIFilter.sharpenLuminance()
 
     init(_ c: VideoConfig) throws {
         config = c
@@ -282,7 +302,25 @@ final class VideoRecorder {
         }
         guard vIn.isReadyForMoreMediaData else { droppedFrames += 1; return }
         var buffer = pb
-        if config.bake != nil || config.bakeLog, let pool = adaptor.pixelBufferPool {
+        let baking = config.bake != nil || config.bakeLog
+        // penajaman hanya untuk keluaran 8-bit (Rec.709 / LUT); HLG & Log 10-bit dibiarkan asli
+        let sharpenNow = sharpen > 0.01 && (baking || !config.color.tenBit)
+        if !baking && sharpenNow, let pool = adaptor.pixelBufferPool {
+            var dst: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
+            if let dst {
+                // tanpa manajemen warna -> nilai sama dengan rekaman asli, hanya ditajamkan
+                let src = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])
+                sharpenFilter.inputImage = src
+                sharpenFilter.sharpness = sharpen
+                sharpenFilter.radius = 1.6
+                let img = sharpenFilter.outputImage?.cropped(to: src.extent) ?? src
+                ciContext.render(img, to: dst, bounds: CGRect(x: 0, y: 0, width: config.width, height: config.height),
+                                 colorSpace: nil)
+                buffer = dst
+            }
+        }
+        if baking, let pool = adaptor.pixelBufferPool {
             var dst: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
             if let dst {
@@ -295,6 +333,13 @@ final class VideoRecorder {
                 if let f = lutFilter {
                     f.setValue(img, forKey: kCIInputImageKey)
                     img = f.outputImage ?? img
+                }
+                if sharpenNow {
+                    let e = img.extent
+                    sharpenFilter.inputImage = img
+                    sharpenFilter.sharpness = sharpen
+                    sharpenFilter.radius = 1.6
+                    img = sharpenFilter.outputImage?.cropped(to: e) ?? img
                 }
                 ciContext.render(img, to: dst, bounds: CGRect(x: 0, y: 0, width: config.width, height: config.height),
                                  colorSpace: CGColorSpace(name: CGColorSpace.sRGB))

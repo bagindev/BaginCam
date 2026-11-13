@@ -22,6 +22,10 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     var zebra = false
     var zebraLevel: Float = 0.95
     var peaking = false
+    var peakColor = CIColor(red: 1, green: 0.15, blue: 0.1)
+    /// penajaman zoom digital video (sama dengan yang direkam)
+    var sharpen: Float = 0
+    private let sharpenFilter = CIFilter.sharpenLuminance()
     var histogramEnabled = true
     /// 64 bin luminans ternormalisasi 0..1 (dipanggil di main ~5x/detik)
     var onHistogram: (([Float]) -> Void)?
@@ -71,6 +75,13 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             if let out = f.outputImage { image = out }
         }
 
+        if sharpen > 0.01 {
+            sharpenFilter.inputImage = image
+            sharpenFilter.sharpness = sharpen
+            sharpenFilter.radius = 1.6
+            if let out = sharpenFilter.outputImage?.cropped(to: extent) { image = out }
+        }
+
         if peaking, let l = luma {
             let edges = CIFilter.edges()
             edges.inputImage = l
@@ -79,7 +90,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             th.inputImage = edges.outputImage
             th.threshold = 0.35
             if let mask = th.outputImage?.cropped(to: extent) {
-                let red = CIImage(color: CIColor(red: 1, green: 0.15, blue: 0.1)).cropped(to: extent)
+                let red = CIImage(color: peakColor).cropped(to: extent)
                 image = blend(red, over: image, mask: mask)
             }
         }

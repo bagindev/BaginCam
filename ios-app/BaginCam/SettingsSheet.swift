@@ -235,6 +235,13 @@ struct SettingsSheet: View {
                 ForEach(VideoStab.allCases) { Text($0.rawValue).tag($0) }
             }
             Toggle("Shutter 180° otomatis (1/2x fps, ISO menyesuaikan)", isOn: $cam.shutter180)
+            if cam.shutter180 {
+                Toggle("Kunci lensa otomatis saat rekam (agar 180° aktif)", isOn: $cam.lockLensOnRecord)
+            }
+            Picker("Zoom halus", selection: $cam.smoothZoom) {
+                ForEach(SmoothZoom.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Toggle("Tajamkan zoom digital (Rec.709 / LUT)", isOn: $cam.sharpenZoom)
             Toggle("Bakar LUT ke video (keluaran Rec.709)", isOn: $cam.bakeLUTVideo)
             Picker("Frame guide", selection: $cam.frameGuide) {
                 ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
@@ -245,7 +252,7 @@ struct SettingsSheet: View {
         } header: {
             Text("Video")
         } footer: {
-            Text("HEVC = H.265. Apple Log & HLG direkam 10-bit (HEVC / ProRes; H.264 otomatis jadi HEVC). Log tampil di layar sebagai Rec.709 supaya mudah dilihat, file tetap Log untuk di-grade. Slow-mo 120/240 & time-lapse tanpa suara. FPS Auto: 60 saat terang, 30 saat gelap (dipilih saat mulai rekam). Files (app) = folder Videos di app, bisa diambil lewat kabel. ProRes 4K ~5-6 GB/menit.")
+            Text("HEVC = H.265. Apple Log & HLG direkam 10-bit (HEVC / ProRes; H.264 otomatis jadi HEVC). Log tampil di layar sebagai Rec.709 supaya mudah dilihat, file tetap Log untuk di-grade. Slow-mo 120/240 & time-lapse tanpa suara. Zoom: titik ✦ = tanpa crop digital (lensa / crop sensor 48 MP); di luar itu Digital, ditajamkan ringan. Lensa Auto: saat rekam lensa hanya pindah bila zoom diubah. Chip ✨ AI = AI Upscale video setelah rekam. FPS Auto: 60 saat terang, 30 saat gelap (dipilih saat mulai rekam). Files (app) = folder Videos di app, bisa diambil lewat kabel. ProRes 4K ~5-6 GB/menit.")
         }
     }
 
