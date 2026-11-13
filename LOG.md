@@ -832,3 +832,19 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   preview 20 fps + histogram mati; suhu dipantau di semua mode (thermalStateDidChange); petunjuk komposisi saat diam
   hanya deteksi wajah ~0.5 Hz.
 - Versi 0.15.0 (build 34). Build run 43397810663 sukses -> `data/builds/BaginCam-v0.15.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 35 — 2026-11-13 · v0.16.0 (galeri album, scroll chip & slider zoom, cubit zoom)
+- "cek" v0.15.0: DCIM IMG_6981-6992 -> `data/bursts/dcim-1113-v015/` (DNG 6985 tidak ditarik). Tidak ada crash.
+  Versi _CROP jalan: 6987 (lurus 4°), 6990, 6992 (foto majalah -> crop ke wajah cetak di majalah, dianggap subjek).
+  Belum ada sampel foto lanskap. Perekam syslog mati 15:57 -> baru `data/logs/syslog_20261113-162158.txt`.
+- Keluhan: chip/menu tidak bisa di-scroll, slider zoom tidak bisa digeser. Penyebab: v0.15
+  `.simultaneousGesture(DragGesture(minimumDistance: 0))` di root ContentView (deteksi sentuhan untuk jeda otomatis)
+  -> di iOS 18 menahan ScrollView & Slider. Fix: TouchSpy = UIGestureRecognizer di UIWindow yang langsung gagal
+  (cancelsTouchesInView false), tidak pernah menahan sentuhan.
+- Permintaan: preview/thumbnail ambil dari album seperti kamera bawaan. LibraryViewer.swift: geser 150 foto/video
+  terbaru (PHAsset, TabView page), foto bisa dicubit/ketuk 2x (ZoomableImage), video diputar, tombol hapus
+  (konfirmasi iOS) & buka app Foto, tanggal + nomor. Thumbnail tombol galeri dari aset terbaru saat app dibuka.
+  Kamera dijeda selama galeri terbuka (tidak saat rekam). Izin baru NSPhotoLibraryUsageDescription (baca);
+  bila ditolak -> penampil foto terakhir app.
+- Cubit (pinch) di preview untuk zoom (MagnifyGesture, simultan dengan ketuk fokus).
+- Versi 0.16.0 (build 35). Build run 43401041991 sukses -> `data/builds/BaginCam-v0.16.0-unsigned.ipa`. Belum diuji di HP.
