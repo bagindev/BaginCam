@@ -28,6 +28,7 @@ struct ContentView: View {
     @StateObject private var comp = CompositionAI()
     @State private var touch = TouchClock()
     @State private var pinchBase: Double?
+    @State private var showAssist = false
 
     enum ProControl: String, CaseIterable, Identifiable {
         case ev = "EV", iso = "ISO", shutter = "Shutter", wb = "WB", focus = "Fokus", timer = "Timer"
@@ -108,7 +109,7 @@ struct ContentView: View {
             if case .success(let url) = result { luts.importLUT(from: url) }
         }
         .modifier(CompHooks(cam: cam, comp: comp, level: level, update: updateComp, maxZoom: { compMaxZoom }))
-        .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer },
+        .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer || showAssist },
                              histogram: { on in renderer.histogramEnabled = on && showHistogram; if !on { histogram = [] } }))
     }
 
@@ -513,7 +514,7 @@ struct ContentView: View {
             }
             Menu("Stabilisasi: \(cam.videoStab.rawValue)") {
                 ForEach(VideoStab.allCases) { st in
-                    Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st) }
+                    Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st, detail: st.detail) }
                 }
             }
         } label: {
@@ -535,48 +536,18 @@ struct ContentView: View {
     }
 
     /// focus peaking + zebra (ala Blackmagic), hanya di layar
+    /// v0.17: Bantu = panel geser dari bawah (menu lama terlalu panjang, tidak bisa di-scroll)
     private var assistChip: some View {
-        Menu {
-            if cam.shootMode != .video {
-                Section("AI Komposisi") {
-                    Button { cam.compAI.toggle() } label: { check("Susun ulang (saran framing)", cam.compAI) }
-                    Button { cam.compCrop.toggle() } label: { check("Simpan versi crop setelah jepret", cam.compCrop) }
-                    if cam.compAI {
-                        Button { comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
-                    }
-                }
-            }
-            Section("Focus peaking") {
-                Button { peaking.toggle() } label: { check(peaking ? "Peaking nyala" : "Peaking mati", peaking) }
-                ForEach(Self.peakColors, id: \.self) { c in
-                    Button { peakColor = c; peaking = true } label: { check("Warna \(c)", peaking && peakColor == c) }
-                }
-            }
-            Section("Zebra (area terang)") {
-                Button { zebra = false } label: { check("Mati", !zebra) }
-                ForEach([0.70, 0.80, 0.90, 0.95, 1.0], id: \.self) { lv in
-                    Button { zebraLevel = lv; zebra = true } label: {
-                        check("\(Int(lv * 100))%" + (lv >= 1 ? " (klip)" : ""), zebra && abs(zebraLevel - lv) < 0.001)
-                    }
-                }
-            }
-            if cam.shootMode == .video {
-                Section("Garis bingkai") {
-                    ForEach(FrameGuide.allCases) { g in
-                        Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
-                    }
-                }
-            }
-            Section("Layar") {
-                Button { showGrid.toggle() } label: { check("Grid", showGrid) }
-                Button { showLevel.toggle() } label: { check("Waterpass", showLevel) }
-                Button { showHistogram.toggle() } label: { check("Histogram", showHistogram) }
-            }
-        } label: {
+        Button { showAssist = true } label: {
             let video = cam.shootMode == .video
             let n = (peaking ? 1 : 0) + (zebra ? 1 : 0) + (video && cam.frameGuide != .off ? 1 : 0)
                 + (!video && cam.compAI ? 1 : 0)
             chip(n > 0 ? "Bantu \(n)" : "Bantu", icon: "scope", on: n > 0)
+        }
+        .sheet(isPresented: $showAssist) {
+            AssistPanel(cam: cam, comp: comp, peaking: $peaking, peakColor: $peakColor, zebra: $zebra,
+                        zebraLevel: $zebraLevel, showGrid: $showGrid, showLevel: $showLevel,
+                        showHistogram: $showHistogram) { showAssist = false }
         }
     }
 
@@ -985,6 +956,8 @@ struct ContentView: View {
 
     private func tapFocus(_ loc: CGPoint, size: CGSize, lock: Bool) {
         guard size.width > 0, size.height > 0 else { return }
+        // v0.17: sentuhan di luar preview (baris zoom di bawahnya) bukan fokus
+        guard loc.x >= 0, loc.y >= 0, loc.x <= size.width, loc.y <= size.height else { return }
         focusPoint = loc
         focusTick += 1
         let tick = focusTick
@@ -1256,5 +1229,72 @@ struct ContentView: View {
         }
         .frame(height: 36)
         .padding(.bottom, 8)
+    }
+}
+
+/// v0.17: panel Bantu (bisa di-scroll, tinggi sedang / penuh)
+private struct AssistPanel: View {
+    @ObservedObject var cam: CameraManager
+    let comp: CompositionAI
+    @Binding var peaking: Bool
+    @Binding var peakColor: String
+    @Binding var zebra: Bool
+    @Binding var zebraLevel: Double
+    @Binding var showGrid: Bool
+    @Binding var showLevel: Bool
+    @Binding var showHistogram: Bool
+    let close: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if cam.shootMode != .video {
+                    Section {
+                        Toggle("Susun ulang (saran framing)", isOn: $cam.compAI)
+                        Toggle("Simpan versi crop setelah jepret", isOn: $cam.compCrop)
+                        if cam.compAI {
+                            Button { close(); comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
+                        }
+                    } header: { Text("AI Komposisi") }
+                }
+                Section {
+                    Toggle("Focus peaking", isOn: $peaking)
+                    if peaking {
+                        Picker("Warna", selection: $peakColor) {
+                            ForEach(ContentView.peakColors, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } header: { Text("Fokus") } footer: { Text("Tepi yang tajam diberi warna - hanya di layar.") }
+                Section {
+                    Toggle("Zebra", isOn: $zebra)
+                    if zebra {
+                        Picker("Level", selection: $zebraLevel) {
+                            ForEach([0.70, 0.80, 0.90, 0.95, 1.0], id: \.self) { Text("\(Int(($0 * 100).rounded()))%").tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } header: { Text("Eksposur") } footer: { Text("Garis-garis di area yang hampir putih (terbakar).") }
+                if cam.shootMode == .video {
+                    Section {
+                        Picker("Garis bingkai", selection: $cam.frameGuide) {
+                            ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                    } header: { Text("Bingkai") }
+                }
+                Section {
+                    Toggle("Grid 3x3", isOn: $showGrid)
+                    Toggle("Waterpass", isOn: $showLevel)
+                    Toggle("Histogram", isOn: $showHistogram)
+                } header: { Text("Layar") }
+            }
+            .navigationTitle("Bantu")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Selesai") { close() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }

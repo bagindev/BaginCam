@@ -1302,9 +1302,17 @@ final class CameraManager: NSObject, ObservableObject {
             d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             d.unlockForConfiguration()
         }
+        // v0.17: stabilisasi dengan cadangan (Action / Extended tidak ada di semua format & fps)
+        var stabUsed = s.stab
         if let c = videoOutput.connection(with: .video) {
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
-            if c.isVideoStabilizationSupported { c.preferredVideoStabilizationMode = s.stab.av }
+            if c.isVideoStabilizationSupported {
+                stabUsed = s.stab.fallbacks.first { fmt.isVideoStabilizationModeSupported($0.av) } ?? .off
+                c.preferredVideoStabilizationMode = stabUsed.av
+                if stabUsed != s.stab && note.isEmpty {
+                    note = "Stabilisasi \(s.stab.rawValue) tidak tersedia di \(res.rawValue) \(fps) fps -> \(stabUsed.rawValue)"
+                }
+            }
         }
         session.commitConfiguration()
         fpsApplied = fps
@@ -1314,7 +1322,7 @@ final class CameraManager: NSObject, ObservableObject {
         videoQueue.async { self.previewLog = log }
         let fpsText = s.timelapse > 1 ? "TL \(s.timelapse)x" : (s.fps == .auto ? "Auto" : "\(fps)")
         let info = "\(res.rawValue) · \(fpsText) · \(s.codec.short) · \(color.short)"
-        Log.camera.info("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(s.stab.rawValue, privacy: .public) \(note, privacy: .public)")
+        Log.camera.info("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(stabUsed.rawValue, privacy: .public) (pilihan \(s.stab.rawValue, privacy: .public)) \(note, privacy: .public)")
         DispatchQueue.main.async {
             self.videoInfo = info
             if !note.isEmpty { self.status = note }

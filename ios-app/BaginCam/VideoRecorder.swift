@@ -85,6 +85,7 @@ enum VideoStab: String, CaseIterable, Identifiable {
     case standard = "Standard"
     case cinematic = "Cinematic"
     case cinematicExtended = "Cinematic Extended"
+    case action = "Action"                 // v0.17: cinematicExtendedEnhanced (iOS 18) - paling stabil, crop terbesar
     var id: String { rawValue }
     var av: AVCaptureVideoStabilizationMode {
         switch self {
@@ -92,6 +93,27 @@ enum VideoStab: String, CaseIterable, Identifiable {
         case .standard: return .standard
         case .cinematic: return .cinematic
         case .cinematicExtended: return .cinematicExtended
+        case .action:
+            if #available(iOS 18.0, *) { return .cinematicExtendedEnhanced }
+            return .cinematicExtended
+        }
+    }
+    var detail: String {
+        switch self {
+        case .off: return "tanpa stabilisasi"
+        case .standard: return "ringan, sudut lebar"
+        case .cinematic: return "halus, crop sedikit"
+        case .cinematicExtended: return "lebih halus, crop lebih besar"
+        case .action: return "paling stabil untuk jalan / lari (crop terbesar, tidak semua fps)"
+        }
+    }
+    /// urutan cadangan bila format tidak mendukung
+    var fallbacks: [VideoStab] {
+        switch self {
+        case .action: return [.action, .cinematicExtended, .cinematic, .standard]
+        case .cinematicExtended: return [.cinematicExtended, .cinematic, .standard]
+        case .cinematic: return [.cinematic, .standard]
+        default: return [self]
         }
     }
 }
