@@ -218,6 +218,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
+    /// v0.14: tuning proses foto ala AGC (HDR+ / Super Res / MALAM / AI Zoom)
+    @Published var tuning: PhotoTuning = PhotoTuning.load() { didSet { if tuning != oldValue { tuning.store() } } }
     @Published var aiStrength: Double = Prefs.get("aiStrength", 0.5) { didSet { Prefs.set("aiStrength", aiStrength) } }  // 0 = pembesaran biasa, 1 = AI penuh
     @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
     @Published var multiFrameZoom: Bool = Prefs.get("multiFrameZoom", true) { didSet { Prefs.set("multiFrameZoom", multiFrameZoom) } }  // burst Bayer + merge sebelum AI (bila tersedia)
@@ -380,6 +382,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstAIMultiFrame = false
     private var burstSRModel: SRModel = .fast
     private var burstStrength: Double = 0.5
+    private var burstTuning = PhotoTuning()
     private var burstTextFocus = true
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
@@ -1568,6 +1571,7 @@ final class CameraManager: NSObject, ObservableObject {
         let fmt = outputFormat, lut = bakeLUT ? captureLUT : nil
         let tz = totalZoom, model = srModel, strength = aiStrength, tf = textFocus
         let steady = deviceSteady
+        let tun = tuning
         let motion = motionLevel?() ?? -1
         let liveReq = m == .heif && livePhoto && liveAvailable
         let flashSet = flash, asp = aspect
@@ -1576,6 +1580,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstMode = m
             self.burstSaveFrames = keep
             self.burstNR = nr
+            self.burstTuning = tun
             self.burstMerge = merge
             self.burstOutputMP = res
             self.burstFormat = fmt
@@ -1922,6 +1927,7 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         setStatus("Memproses HDR+ \(frames.count) frame...")
+        Log.hdr.info("Tuning: \(self.burstTuning.summary, privacy: .public)")
         // DNG referensi dulu: butuh NoiseProfile & black/white untuk merge frekuensi
         guard let refDNG = ref.fileDataRepresentation() else {
             finish("HDR+ gagal: DNG referensi kosong")
@@ -1964,7 +1970,7 @@ final class CameraManager: NSObject, ObservableObject {
             if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
             // AI Zoom multi-frame / HDR+ zoom: kembangkan hasil merge -> crop -> upscale
             guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(burstCrop)),
-                                                 night: burstNight),
+                                                 night: burstNight, tuning: burstTuning),
                   let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
@@ -1983,7 +1989,7 @@ final class CameraManager: NSObject, ObservableObject {
             setStatus("HDR+: mengembangkan RAW...")
             var rendered = false
             if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: burstZoomed ? 1 / max(1, Double(burstCrop)) : 1,
-                                              night: burstNight) {
+                                              night: burstNight, tuning: burstTuning) {
                 if burstAspect != .r43 {
                     img = img.cropped(to: burstAspect.rect(in: img.extent)).settingProperties(img.properties)
                 }
@@ -1997,6 +2003,7 @@ final class CameraManager: NSObject, ObservableObject {
                         saved.append(note)
                     }
                 }
+                if burstTuning.hasPost { img = burstTuning.post(img).settingProperties(img.properties) }
                 let final = RawDeveloper.applyLUT(img, lut)
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
@@ -2058,6 +2065,8 @@ final class CameraManager: NSObject, ObservableObject {
             finish("AI Zoom gagal: \(note)")
             return
         }
+        // v0.14: tuning akhir (penajaman akhir di resolusi output, bayangan, kontras, saturasi)
+        if burstTuning.hasPost, let t = RawDeveloper.cgImage(burstTuning.post(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
         var props = properties

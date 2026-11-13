@@ -55,20 +55,19 @@ enum RawDeveloper {
     /// yang diterapkan global -> v0.7.0 langit/kain putih total padahal RAW tidak terpotong), lalu tone map
     /// lokal Apple mengangkat bayangan (mirip Smart HDR).
     /// `metering`: lebar area tengah (fraksi) untuk mengukur kecerahan, mis. 1/crop untuk zoom
-    static func develop(dng: Data, noiseReductionScale: Float = 0.6, highlight: Double? = nil,
-                        metering: Double = 1, night: Bool = false) -> CIImage? {
+    static func develop(dng: Data, highlight: Double? = nil, metering: Double = 1, night: Bool = false,
+                        tuning: PhotoTuning = PhotoTuning()) -> CIImage? {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             Log.hdr.error("CIRAWFilter tidak bisa membuka DNG")
             return nil
         }
-        if f.isLuminanceNoiseReductionSupported { f.luminanceNoiseReductionAmount *= noiseReductionScale }
-        if f.isColorNoiseReductionSupported { f.colorNoiseReductionAmount *= max(noiseReductionScale, 0.8) }
         if let hl = highlight, hl > 0.001 {
             // gain total 2^(baseline + exposure): taruh p99.9 di 0.9
             let ev = log2(0.9 / hl) - Double(f.baselineExposure)
             f.exposure = Float(max(-3, min(0, ev)))
         }
-        if f.isLocalToneMapSupported { f.localToneMapAmount = 0.8 }
+        // v0.14: NR luma/warna, ketajaman, detail, HDR lokal, EV tambahan dari Tuning (bawaan = nilai lama)
+        tuning.applyRAW(f)
         // kecerahan: develop kecil dulu, ukur rata-rata (linear); bila jauh di atas foto Apple
         // (~0.42 gamma = 0.17 linear) turunkan eksposur (v0.9.1: MF 139 vs Apple 108)
         let fullScale = f.scaleFactor

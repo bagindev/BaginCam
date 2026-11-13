@@ -126,6 +126,9 @@ struct SettingsSheet: View {
                     }
                 }
 
+                // MARK: Tuning ala AGC (v0.14)
+                if !isVideo && (mode == .hdrplus || mode == .aiZoom || mode == .heif) { tuningSections }
+
                 // MARK: AI Zoom
                 if mode == .aiZoom {
                     Section {
@@ -204,6 +207,69 @@ struct SettingsSheet: View {
     }
 
     private var isVideo: Bool { cam.shootMode == .video }
+
+    @ViewBuilder private var tuningSections: some View {
+            Section {
+                Menu {
+                    ForEach(PhotoTuning.presets.indices, id: \.self) { i in
+                    let p = PhotoTuning.presets[i]
+                        Button { cam.tuning = p.1 } label: {
+                            if cam.tuning == p.1 { Label(p.0, systemImage: "checkmark") } else { Text(p.0) }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label("Preset", systemImage: "slider.horizontal.3")
+                        Spacer()
+                        Text(tuningPresetName).foregroundStyle(.secondary)
+                    }
+                }
+                tuneSlider("Ketajaman", \.sharpness, 0...2, "%.2fx")
+                tuneSlider("Detail halus", \.detail, 0...2, "%.2fx")
+                tuneSlider("NR luma (butiran)", \.lumaNR, 0...1.5, "%.2fx")
+                tuneSlider("NR warna (bintik warna)", \.chromaNR, 0...1.5, "%.2fx")
+                tuneSlider("HDR lokal", \.localTone, 0...1, "%.2f")
+                tuneSlider("EV tambahan", \.exposure, -1...1, "%+.1f EV", step: 0.1)
+            } header: {
+                Text("Tuning RAW (ala AGC)")
+            } footer: {
+                Text("Diterapkan saat RAW hasil merge dikembangkan (HDR+, MALAM, Super Res / AI Zoom multi-frame). Ketajaman & detail lebih tinggi + NR luma lebih rendah = tekstur lebih banyak tapi butiran naik. HDR lokal = bayangan diangkat, langit ditahan.")
+            }
+            Section {
+                tuneSlider("Penajaman akhir", \.finalSharpen, 0...1, "%.2f")
+                if cam.tuning.finalSharpen > 0.01 {
+                    tuneSlider("Radius penajaman", \.finalRadius, 0.5...4, "%.1f px", step: 0.1)
+                }
+                tuneSlider("Bayangan", \.shadows, -1...1, "%+.2f")
+                tuneSlider("Selamatkan highlight", \.highlights, 0...1, "%.2f")
+                tuneSlider("Kontras", \.contrast, -1...1, "%+.2f")
+                tuneSlider("Saturasi (vibrance)", \.saturation, -1...1, "%+.2f")
+                Button("Kembali ke bawaan (Natural)", role: .destructive) { cam.tuning = PhotoTuning() }
+                    .disabled(cam.tuning.isDefault)
+            } header: {
+                Text("Tuning akhir (setelah zoom)")
+            } footer: {
+                Text("Dijalankan di resolusi akhir, setelah Super Res / AI memperbesar - penajaman akhir di sini yang paling terasa untuk zoom. Radius kecil (1-1.5 px) = tekstur halus, besar (2-4 px) = tepi tebal. Berlaku juga untuk AI Zoom foto biasa. Tidak berlaku untuk foto proses Apple, ProRAW, dan video.")
+            }
+    }
+
+    private var tuningPresetName: String {
+        PhotoTuning.presets.first { $0.1 == cam.tuning }?.0 ?? "Kustom"
+    }
+
+    /// slider tuning (nilai dibulatkan ke `step`)
+    private func tuneSlider(_ title: String, _ kp: WritableKeyPath<PhotoTuning, Double>, _ range: ClosedRange<Double>,
+                            _ fmt: String, step: Double = 0.05) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: fmt, cam.tuning[keyPath: kp])).monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(get: { cam.tuning[keyPath: kp] },
+                                  set: { cam.tuning[keyPath: kp] = ($0 / step).rounded() * step }), in: range)
+        }
+    }
 
     @ViewBuilder private var videoSection: some View {
         Section {
