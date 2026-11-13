@@ -1739,12 +1739,24 @@ final class CameraManager: NSObject, ObservableObject {
                         let cur = p.activeFormat
                         let cd = CMVideoFormatDescriptionGetDimensions(cur.formatDescription)
                         let sub = CMFormatDescriptionGetMediaSubType(cur.formatDescription)
-                        if let f48 = p.formats.first(where: { f in
+                        // v0.18.2: format foto 48MP dengan subtype sama, rasio 4:3, ukuran video terdekat
+                        // (v0.18.1 mensyaratkan ukuran video sama persis -> tidak ketemu, IMG_7007)
+                        let cands = p.formats.filter { f in
                             let dd = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-                            return dd.width == cd.width && dd.height == cd.height
-                                && CMFormatDescriptionGetMediaSubType(f.formatDescription) == sub
+                            return CMFormatDescriptionGetMediaSubType(f.formatDescription) == sub
+                                && abs(Double(dd.width) / Double(max(dd.height, 1)) - 4.0 / 3.0) < 0.02
                                 && f.supportedMaxPhotoDimensions.contains { Int($0.width) >= 8000 }
-                        }), (try? p.lockForConfiguration()) != nil {
+                                && f.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+                        }
+                        let pick = cands.min { a, b in
+                            let da = CMVideoFormatDescriptionGetDimensions(a.formatDescription)
+                            let db = CMVideoFormatDescriptionGetDimensions(b.formatDescription)
+                            return abs(Int(da.width) - Int(cd.width)) < abs(Int(db.width) - Int(cd.width))
+                        }
+                        if pick == nil {
+                            Log.camera.info("Fusi 48MP: tidak ada format 48MP (\(p.formats.count, privacy: .public) format, aktif \(cd.width, privacy: .public)x\(cd.height, privacy: .public))")
+                        }
+                        if let f48 = pick, (try? p.lockForConfiguration()) != nil {
                             p.activeFormat = f48
                             p.unlockForConfiguration()
                             if let md = self.maxDimensions(of: p) { self.photoOutput.maxPhotoDimensions = md }

@@ -22,8 +22,9 @@ enum Fusion48 {
         float d = abs(log(dot(lh, w)) - log(max(dot(la * gg, w), 0.002)));
         float m = smoothstep(t, 2.0 * t, d);
         vec3 rr = mix(r, gg, m);
-        // area putih terbakar di foto 48MP: detail highlight hanya ada di HDR+
-        float c = smoothstep(0.80, 0.97, max(a.r, max(a.g, a.b)));
+        // area putih terbakar LUAS di foto 48MP (langit, lampu): detail highlight hanya ada di HDR+.
+        // v0.18.2: diukur dari lowpass - teks / garis putih kecil tidak lagi diganti HDR+ (pinggiran menyala, IMG_7010)
+        float c = smoothstep(0.80, 0.97, max(lowA.r, max(lowA.g, lowA.b)));
         return vec4(mix(a.rgb * rr, h.rgb, c), 1.0);
     }
     """)
