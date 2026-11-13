@@ -896,3 +896,17 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   "Fusi detail 48MP" (bawaan nyala, Pengaturan > HDR+). Log "Fusi 48MP: ya/tidak (...)", "foto Apple WxH",
   "Fusi 48MP: ... geser, gain, hantu %, waktu". Nama catatan di status: "fusi 48MP (geser x,y px, hantu %)".
 - Versi 0.18.0 (build 38). Build run 43413373183 sukses -> `data/builds/BaginCam-v0.18.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 40 — 2026-11-13 · cek v0.18.0 -> v0.18.1 (fusi: dasar 48MP + tone HDR+)
+- Log app 18:19-18:20 (tes dengan kabel: "baterai 90% (mengisi)"). IMG_7004-7006 -> `data/bursts/dcim-1113-v018/`.
+  7004: fusi tidak dipakai - "sensor 4224" (format aktif lensa utama jepretan pertama hanya 12MP).
+  7005/7006: fusi jalan (foto Apple 8064x6048 ~8 MB, fusi 1.6-1.9 s, geser 11,-6 dan 0,-39 px, hantu 0%).
+- MASALAH: 7005 teks kalender DOBEL ("16 16", "17 17") - dasar HDR+ + detail 48MP; HP bergeser/berputar sedikit
+  antara burst (frame 1) dan foto 48MP, hanya translasi yang dikoreksi; masker hantu (log luma kasar) tidak menangkap.
+- Fix v0.18.1: dibalik -> dasar = foto 48MP (semua detail & posisi dari satu foto, tidak bisa dobel), tone & warna
+  HDR+ dipindah lewat rasio lowpass kasar per kanal (sigma 24 px @24MP): out = A48 x clamp(blur(HDR+)/blur(A48)).
+  Area sangat beda -> rasio global; area putih terbakar di 48MP (maks kanal > 0.8-0.97) -> HDR+ langsung.
+  HDR+ yang digeser (Vision) supaya tone jatuh di tempat yang benar.
+- Format lensa: bila lensa utama setelah pindah ke fisik tidak mendukung foto 48MP, pilih format dengan dimensi &
+  subtype sama yang mendukung 8064 (log "format lensa diganti ...").
+- Versi 0.18.1 (build 39). Build run 43416678074 sukses -> `data/builds/BaginCam-v0.18.1-unsigned.ipa`. Belum diuji di HP.
