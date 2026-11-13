@@ -2,6 +2,54 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
 
+/// v0.19: gaya warna cepat (chip Warna). HDR+ BaginCam ~0.5 EV lebih gelap & lebih dingin dari foto Apple
+/// (restoran IMG_6975 vs 6976, Ultra Wide IMG_7021 vs foto 48MP) -> pilihan, bukan paksaan.
+enum ColorStyle: String, CaseIterable, Identifiable {
+    case natural = "Natural"
+    case bright = "Cerah"
+    case warm = "Hangat"
+    case apple = "Ala Apple"
+    case vivid = "Vivid"
+    case mono = "Hitam putih"
+    var id: String { rawValue }
+    /// EV tambahan setelah eksposur otomatis
+    var ev: Double { [0, 0.45, 0.15, 0.5, 0.2, 0.1][index] }
+    /// + = hangat (merah naik, biru turun)
+    var warmth: Double { [0, 0, 0.06, 0.035, 0.015, 0][index] }
+    var vibrance: Double { [0, 0.05, 0.1, 0.15, 0.4, 0][index] }
+    var contrast: Double { [0, -0.05, 0, 0.1, 0.3, 0.25][index] }
+    var detail: String {
+        ["warna asli HDR+ BaginCam", "lebih terang, bayangan terbuka", "lebih hangat (makanan, kulit, sore)",
+         "terang + hangat + sedikit kontras, mirip kamera iPhone", "warna kuat & kontras", "monokrom kontras"][index]
+    }
+    private var index: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+
+    func apply(_ input: CIImage) -> CIImage {
+        guard self != .natural else { return input }
+        var img = input
+        let ext = input.extent
+        if warmth != 0 {
+            let m = CIFilter.colorMatrix()
+            m.inputImage = img
+            m.rVector = CIVector(x: CGFloat(1 + warmth), y: 0, z: 0, w: 0)
+            m.gVector = CIVector(x: 0, y: CGFloat(1 + warmth * 0.25), z: 0, w: 0)
+            m.bVector = CIVector(x: 0, y: 0, z: CGFloat(1 - warmth * 1.2), w: 0)
+            m.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+            img = m.outputImage ?? img
+        }
+        var t = PhotoTuning(localTone: 0, sharpness: 1, detail: 1, lumaNR: 1, chromaNR: 1)
+        t.contrast = contrast
+        t.saturation = vibrance
+        img = t.post(img)
+        if self == .mono {
+            let c = CIFilter.photoEffectMono()
+            c.inputImage = img
+            img = c.outputImage ?? img
+        }
+        return img.cropped(to: ext)
+    }
+}
+
 /// v0.14: tuning proses foto ala AGC (GCam) - dipakai HDR+, Super Res, MALAM, AI Zoom.
 /// Bagian RAW masuk ke CIRAWFilter saat develop; bagian "akhir" dijalankan setelah zoom / upscale
 /// (penajaman akhir di resolusi output, bayangan/highlight, kontras, saturasi). Tidak berlaku untuk

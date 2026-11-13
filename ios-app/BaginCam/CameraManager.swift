@@ -223,6 +223,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var fusion48: Bool = Prefs.get("fusion48", true) { didSet { Prefs.set("fusion48", fusion48) } }
     /// v0.18.5: simpan foto 48MP mentah ke Documents/Debug (kalibrasi fusi; tidak masuk galeri)
     @Published var debugFusion: Bool = Prefs.get("debugFusion", true) { didSet { Prefs.set("debugFusion", debugFusion) } }
+    /// v0.19: gaya warna (chip Warna) untuk HDR+ / MALAM / Super Res / AI Zoom
+    @Published var colorStyle: ColorStyle = Prefs.raw("colorStyle", .natural) { didSet { Prefs.set("colorStyle", colorStyle.rawValue) } }
     @Published var tuning: PhotoTuning = PhotoTuning.load() { didSet { if tuning != oldValue { tuning.store() } } }
     @Published var aiStrength: Double = Prefs.get("aiStrength", 0.5) { didSet { Prefs.set("aiStrength", aiStrength) } }  // 0 = pembesaran biasa, 1 = AI penuh
     @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
@@ -392,6 +394,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstSRModel: SRModel = .fast
     private var burstStrength: Double = 0.5
     private var burstTuning = PhotoTuning()
+    private var burstStyle: ColorStyle = .natural
     private var fusionPending = false          // sessionQueue: foto 48MP masih harus diambil setelah burst
     private var fusionData: Data?              // sessionQueue: foto Apple 48MP untuk fusi
     private var fusionTaken = false            // sessionQueue: foto 48MP sudah diambil (bunyi burst dimatikan)
@@ -616,11 +619,13 @@ final class CameraManager: NSObject, ObservableObject {
         applyAuto()
         let baseText = cons.map { "\($0.localizedName)=\(bases[$0.deviceType] ?? 0)" }.joined(separator: ", ")
         Log.camera.info("Kamera virtual \(vd.localizedName, privacy: .public): \(baseText, privacy: .public), maks zoom \(Double(maxZ), privacy: .public)x")
+        // v0.19: dulu dibatasi minimal 1x -> setelah jepret 0.5x (Ultra Wide) zoom kembali ke 1x
+        let minZ: CGFloat = bases[.builtInUltraWideCamera] != nil ? 1 / max(bases[.builtInWideAngleCamera] ?? 1, 1) : 1
         DispatchQueue.main.async {
             self.lensBaseMain = bases
-            self.minAutoZoom = bases[.builtInUltraWideCamera] != nil ? 1 / max(bases[.builtInWideAngleCamera] ?? 1, 1) : 1
+            self.minAutoZoom = minZ
             self.maxTotalZoom = maxZ
-            self.totalZoom = min(max(1, startZoom), maxZ)
+            self.totalZoom = min(max(minZ, startZoom), maxZ)
         }
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
         if inVideo { applyVideoFormat() }
@@ -1632,6 +1637,7 @@ final class CameraManager: NSObject, ObservableObject {
         let tz = totalZoom, model = srModel, strength = aiStrength, tf = textFocus
         let steady = deviceSteady
         let tun = tuning
+        let style = colorStyle
         let fus = fusion48
         let dbg = debugFusion
         let motion = motionLevel?() ?? -1
@@ -1643,6 +1649,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstSaveFrames = keep
             self.burstNR = nr
             self.burstTuning = tun
+            self.burstStyle = style
             self.burstMerge = merge
             self.burstOutputMP = res
             self.burstFormat = fmt
@@ -2093,7 +2100,7 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         setStatus("Memproses HDR+ \(frames.count) frame...")
-        Log.hdr.info("Tuning: \(self.burstTuning.summary, privacy: .public)")
+        Log.hdr.info("Tuning: \(self.burstTuning.summary, privacy: .public), gaya warna \(self.burstStyle.rawValue, privacy: .public)")
         // DNG referensi dulu: butuh NoiseProfile & black/white untuk merge frekuensi
         guard let refDNG = ref.fileDataRepresentation() else {
             finish("HDR+ gagal: DNG referensi kosong")
@@ -2136,7 +2143,7 @@ final class CameraManager: NSObject, ObservableObject {
             if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
             // AI Zoom multi-frame / HDR+ zoom: kembangkan hasil merge -> crop -> upscale
             guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(burstCrop)),
-                                                 night: burstNight, tuning: burstTuning),
+                                                 night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev),
                   let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
@@ -2155,7 +2162,7 @@ final class CameraManager: NSObject, ObservableObject {
             setStatus("HDR+: mengembangkan RAW...")
             var rendered = false
             if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: burstZoomed ? 1 / max(1, Double(burstCrop)) : 1,
-                                              night: burstNight, tuning: burstTuning) {
+                                              night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev) {
                 // v0.18: detail sensor 48MP (sebelum crop rasio; ukuran = resolusi keluaran)
                 var fused = false
                 if let fd = fusion {
@@ -2182,6 +2189,7 @@ final class CameraManager: NSObject, ObservableObject {
                     }
                 }
                 if burstTuning.hasPost { img = burstTuning.post(img).settingProperties(img.properties) }
+                if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
                 let final = RawDeveloper.applyLUT(img, lut)
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
@@ -2245,6 +2253,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         // v0.14: tuning akhir (penajaman akhir di resolusi output, bayangan, kontras, saturasi)
         if burstTuning.hasPost, let t = RawDeveloper.cgImage(burstTuning.post(CIImage(cgImage: result))) { result = t }
+        if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
         var props = properties

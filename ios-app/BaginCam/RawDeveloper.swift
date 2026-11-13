@@ -56,7 +56,7 @@ enum RawDeveloper {
     /// lokal Apple mengangkat bayangan (mirip Smart HDR).
     /// `metering`: lebar area tengah (fraksi) untuk mengukur kecerahan, mis. 1/crop untuk zoom
     static func develop(dng: Data, highlight: Double? = nil, metering: Double = 1, night: Bool = false,
-                        tuning: PhotoTuning = PhotoTuning()) -> CIImage? {
+                        tuning: PhotoTuning = PhotoTuning(), styleEV: Double = 0) -> CIImage? {
         guard let f = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             Log.hdr.error("CIRAWFilter tidak bisa membuka DNG")
             return nil
@@ -99,6 +99,8 @@ enum RawDeveloper {
                     Log.hdr.info("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
             }
+            // v0.19: gaya warna (Cerah / Ala Apple ...) - setelah eksposur otomatis supaya tidak dibatalkan
+            if styleEV != 0 { f.exposure += Float(styleEV) }
         }
         f.scaleFactor = fullScale
         Log.hdr.info("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")

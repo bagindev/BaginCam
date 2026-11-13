@@ -326,6 +326,14 @@ struct ContentView: View {
                 }
                 Button("Import .cube...") { showImporter = true }
             }
+            if cam.shootMode != .video {
+                Menu("Gaya warna: \(cam.colorStyle.rawValue)") {
+                    ForEach(ColorStyle.allCases) { st in
+                        Button { cam.colorStyle = st } label: { check(st.rawValue, cam.colorStyle == st, detail: st.detail) }
+                    }
+                    Text("Untuk HDR+, MALAM, Super Res, AI Zoom (bukan proses Apple)")
+                }
+            }
             Menu("White balance: \(wbText)") {
                 ForEach(CameraManager.WBPreset.allCases) { p in
                     Button { cam.setWBPreset(p) } label: {
@@ -335,8 +343,9 @@ struct ContentView: View {
                 Button { showPro = true; proControl = .wb } label: { check("Manual (Kelvin)...", cam.manualWB) }
             }
         } label: {
-            chip("\(luts.selected.map { shortLUT($0.name) } ?? "LUT") · \(wbText)", icon: "camera.filters",
-                 on: luts.selected != nil || cam.manualWB || cam.wbPreset != .auto)
+            chip((cam.shootMode != .video && cam.colorStyle != .natural ? cam.colorStyle.rawValue + " · " : "")
+                 + "\(luts.selected.map { shortLUT($0.name) } ?? "LUT") · \(wbText)", icon: "camera.filters",
+                 on: luts.selected != nil || cam.manualWB || cam.wbPreset != .auto || (cam.shootMode != .video && cam.colorStyle != .natural))
         }
     }
 

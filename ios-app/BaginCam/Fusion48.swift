@@ -60,8 +60,11 @@ enum Fusion48 {
         // 1. geser HDR+ (bukan foto 48MP) supaya tone jatuh di tempat yang benar
         let al = align(at, ht, rect: rect)
         // v0.18.3: foto 48MP buram (HP bergerak, IMG_7012) -> jangan dipakai, kembali ke HDR+ biasa
-        if al.sharpRatio < 0.85 {
-            Log.hdr.info("Fusi 48MP: dibatalkan - foto 48MP lebih buram dari HDR+ (rasio tajam \(al.sharpRatio, format: .fixed(precision: 2), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 0), privacy: .public),\(Double(al.dy), format: .fixed(precision: 0), privacy: .public) px)")
+        // v0.19: align(at, ht) -> sharpRatio = HDR+/48MP (terbalik; v0.18.3-0.18.5 semua fusi batal, rasio 0.4-0.7
+        // padahal 48MP 1.2x lebih tajam - dikalibrasi dari foto debug IMG_7018-7026)
+        let sharp48 = al.sharpRatio > 0 ? 1 / al.sharpRatio : 1
+        if sharp48 < 0.85 {
+            Log.hdr.info("Fusi 48MP: dibatalkan - foto 48MP lebih buram dari HDR+ (48/HDR \(sharp48, format: .fixed(precision: 2), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 0), privacy: .public),\(Double(al.dy), format: .fixed(precision: 0), privacy: .public) px)")
             return nil
         }
         var hAligned = ht
@@ -79,7 +82,7 @@ enum Fusion48 {
         let lowH = blur(hAligned, sigma, rect), lowA = blur(at, sigma, rect)
         guard let out = toneK.apply(extent: rect, arguments: [at, lowA, lowH, hAligned, gg, 0.45]) else { return nil }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        let note = String(format: "fusi 48MP (geser %.0f,%.0f px, tajam %.2fx)", Double(al.dx), Double(al.dy), al.sharpRatio)
+        let note = String(format: "fusi 48MP (geser %.0f,%.0f px, tajam %.2fx)", Double(al.dx), Double(al.dy), sharp48)
         Log.hdr.info("Fusi 48MP: \(Int(W), privacy: .public)x\(Int(H), privacy: .public), dasar foto48 + tone HDR+ sigma \(sigma, format: .fixed(precision: 1), privacy: .public), geser HDR+ \(Double(al.dx), format: .fixed(precision: 1), privacy: .public),\(Double(al.dy), format: .fixed(precision: 1), privacy: .public) px (\(al.how, privacy: .public)), rasio global \(Double(gg.x), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.y), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.z), format: .fixed(precision: 2), privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return Result(image: out, note: note)
     }
