@@ -219,6 +219,8 @@ final class CameraManager: NSObject, ObservableObject {
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
     /// v0.14: tuning proses foto ala AGC (HDR+ / Super Res / MALAM / AI Zoom)
+    /// v0.18: HDR+ + 1 foto Apple 48MP -> detail sensor penuh (cahaya cukup, lensa utama, zoom 1x)
+    @Published var fusion48: Bool = Prefs.get("fusion48", true) { didSet { Prefs.set("fusion48", fusion48) } }
     @Published var tuning: PhotoTuning = PhotoTuning.load() { didSet { if tuning != oldValue { tuning.store() } } }
     @Published var aiStrength: Double = Prefs.get("aiStrength", 0.5) { didSet { Prefs.set("aiStrength", aiStrength) } }  // 0 = pembesaran biasa, 1 = AI penuh
     @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
@@ -388,6 +390,8 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstSRModel: SRModel = .fast
     private var burstStrength: Double = 0.5
     private var burstTuning = PhotoTuning()
+    private var fusionPending = false          // sessionQueue: foto 48MP masih harus diambil setelah burst
+    private var fusionData: Data?              // sessionQueue: foto Apple 48MP untuk fusi
     private var burstTextFocus = true
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
@@ -1623,6 +1627,7 @@ final class CameraManager: NSObject, ObservableObject {
         let tz = totalZoom, model = srModel, strength = aiStrength, tf = textFocus
         let steady = deviceSteady
         let tun = tuning
+        let fus = fusion48
         let motion = motionLevel?() ?? -1
         let liveReq = m == .heif && livePhoto && liveAvailable
         let flashSet = flash, asp = aspect
@@ -1782,6 +1787,15 @@ final class CameraManager: NSObject, ObservableObject {
                 }
             }
             self.burstLensName = lensName
+            // v0.18: fusi 48MP - HDR+ biasa (bukan zoom/MALAM) di lensa utama 48MP saat cahaya cukup
+            self.fusionData = nil
+            self.fusionPending = false
+            if m == .hdrplus && !zoomed {
+                let gain = Double(srcISO) * srcDur
+                let ok = fus && !night && lensName == "Utama" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
+                self.fusionPending = ok
+                Log.camera.info("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
+            }
             let hintText = hint
             DispatchQueue.main.async { self.captureHint = hintText }
             self.burstRemaining = frames
@@ -1803,6 +1817,12 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func captureNext() {
+        if burstRemaining <= 0 && fusionPending {
+            fusionPending = false
+            setStatus("Foto detail 48MP...")
+            photoOutput.capturePhoto(with: fusionSettings(), delegate: self)
+            return
+        }
         guard burstRemaining > 0 else { finishBurst(); return }
         burstRemaining -= 1
         burstIndex += 1
@@ -1840,9 +1860,11 @@ final class CameraManager: NSObject, ObservableObject {
         Log.camera.info("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
         if collectsBayer {
             let frames = hdrFrames, ref = hdrRef, nr = burstNR, ai = burstMode == .aiZoom
+            let fusion = fusionData
             hdrFrames = []
             hdrRef = nil
-            processQueue.async { self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai) }
+            fusionData = nil
+            processQueue.async { self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai, fusion: fusion) }
         } else if !burstZoomed && !burstAppleZoomAI {
             finish("Tersimpan \(n) frame (\(dir?.lastPathComponent ?? "-"))")
         }
@@ -1882,6 +1904,19 @@ final class CameraManager: NSObject, ObservableObject {
             self.progressText = text
             self.status = "\(text) - jangan tinggalkan app"
         }
+    }
+
+    /// v0.18: foto Apple 48MP (HEVC, sensor penuh) untuk fusi detail
+    private func fusionSettings() -> AVCapturePhotoSettings {
+        let s = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
+        s.photoQualityPrioritization = .quality
+        if photoOutput.supportedFlashModes.contains(.off) { s.flashMode = .off }
+        if let d = device, let full = maxDimensions(of: d),
+           Int(full.width) * Int(full.height) <= Int(photoOutput.maxPhotoDimensions.width) * Int(photoOutput.maxPhotoDimensions.height) {
+            s.maxPhotoDimensions = full
+        }
+        if #available(iOS 18.0, *), photoOutput.isShutterSoundSuppressionSupported { s.isShutterSoundSuppressionEnabled = true }
+        return s
     }
 
     private func makeSettings(_ m: Mode) -> AVCapturePhotoSettings {
@@ -1974,7 +2009,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: HDR+
     private func processHDRPlus(frames: [BayerFrame], ref: AVCapturePhoto?, dir: URL?, noiseReduction: Double,
-                                forAIZoom: Bool) {
+                                forAIZoom: Bool, fusion: Data? = nil) {
         guard let ref, let refPB = ref.pixelBuffer, let merger = self.merger, frames.count >= 2 else {
             Log.hdr.error("HDR+ batal: frame \(frames.count, privacy: .public), ref \(ref != nil, privacy: .public)")
             finish("HDR+ gagal: frame Bayer tidak lengkap (\(frames.count))")
@@ -2044,11 +2079,23 @@ final class CameraManager: NSObject, ObservableObject {
             var rendered = false
             if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: burstZoomed ? 1 / max(1, Double(burstCrop)) : 1,
                                               night: burstNight, tuning: burstTuning) {
+                // v0.18: detail sensor 48MP (sebelum crop rasio; ukuran = resolusi keluaran)
+                var fused = false
+                if let fd = fusion {
+                    setStatus("HDR+: fusi detail 48MP...")
+                    if let fr = Fusion48.fuse(hdr: img, appleData: fd, targetLong: res.longSide) {
+                        img = fr.image.settingProperties(img.properties)
+                        saved.append(fr.note)
+                        fused = true
+                    } else {
+                        saved.append("fusi 48MP gagal")
+                    }
+                }
                 if burstAspect != .r43 {
                     img = img.cropped(to: burstAspect.rect(in: img.extent)).settingProperties(img.properties)
                 }
                 // 24/48MP: data Bayer 12MP diperbesar (AI Cepat dicampur Lanczos)
-                if res != .mp12, let cg = RawDeveloper.cgImage(img) {
+                if res != .mp12 && !fused, let cg = RawDeveloper.cgImage(img) {
                     let full = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
                     let (up, note) = upscale(cg, crop: full, target: res.longSide, model: .fast,
                                              strength: burstStrength, minAIFactor: 1.2, label: "HDR+ \(res.label)")
@@ -2270,12 +2317,19 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
             let idx = self.savedCount
             let total = self.burstIndex + self.burstRemaining
             if self.collectsBayer {
-                if let frame {
-                    self.hdrFrames.append(frame)
-                    if self.hdrRef == nil { self.hdrRef = photo }
-                }
-                if self.burstSaveFrames && self.burstMode == .hdrplus, let data = photo.fileDataRepresentation() {
-                    self.save(data, fileName: String(format: "IMG_%04d.dng", idx), dir: self.burstDir)
+                if !photo.isRawPhoto {
+                    // v0.18: foto Apple 48MP untuk fusi detail
+                    self.fusionData = photo.fileDataRepresentation()
+                    let dims = photo.resolvedSettings.photoDimensions
+                    Log.camera.info("Fusi 48MP: foto Apple \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \((self.fusionData?.count ?? 0) / 1024, privacy: .public) KB")
+                } else {
+                    if let frame {
+                        self.hdrFrames.append(frame)
+                        if self.hdrRef == nil { self.hdrRef = photo }
+                    }
+                    if self.burstSaveFrames && self.burstMode == .hdrplus, let data = photo.fileDataRepresentation() {
+                        self.save(data, fileName: String(format: "IMG_%04d.dng", idx), dir: self.burstDir)
+                    }
                 }
             } else if self.burstMode == .aiZoom || (self.burstZoomed && !photo.isRawPhoto) {
                 let dir = self.burstDir

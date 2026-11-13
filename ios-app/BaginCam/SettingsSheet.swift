@@ -119,10 +119,11 @@ struct SettingsSheet: View {
                             }
                             Slider(value: $cam.hdrNoiseReduction, in: 1...23, step: 1)
                         }
+                        Toggle("Fusi detail 48MP (cahaya cukup, zoom 1x)", isOn: $cam.fusion48)
                     } header: {
                         Text("HDR+")
                     } footer: {
-                        Text("Frekuensi (default): metode asli HDR+ Google, per tile di domain frekuensi - lebih tahan gerak & detail. Spasial: metode lama. Noise reduction lebih tinggi = lebih halus, risiko bayangan ganda pada objek bergerak. Default 18.")
+                        Text("Frekuensi (default): metode asli HDR+ Google, per tile di domain frekuensi - lebih tahan gerak & detail. Spasial: metode lama. Noise reduction lebih tinggi = lebih halus, risiko bayangan ganda pada objek bergerak. Default 18. Fusi 48MP: setelah burst diambil 1 foto Apple 48MP; warna & HDR dari HDR+, detail halus dari sensor 48MP (+2-3 detik). Saat gelap / zoom / MALAM otomatis tidak dipakai.")
                     }
                 }
 
