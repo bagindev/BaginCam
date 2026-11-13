@@ -190,8 +190,12 @@ struct SettingsSheet: View {
                 Section {
                     LabeledContent("Lensa aktif", value: cam.activeLensLabel)
                     LabeledContent("Versi", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
+                    LabeledContent("Log hari ini", value: LogFile.todaySize)
+                    ShareLink(item: LogFile.todayURL) { Label("Bagikan log", systemImage: "square.and.arrow.up") }
                 } header: {
                     Text("Info")
+                } footer: {
+                    Text("Log tersimpan di app (Files > BaginCam > Logs), jadi bisa tes tanpa kabel. Saat \"cek\", colok kabel sebentar.")
                 }
             }
             .navigationTitle("Pengaturan")
@@ -204,6 +208,7 @@ struct SettingsSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .onAppear { LogFile.shared.flush() }
     }
 
     private var isVideo: Bool { cam.shootMode == .video }
