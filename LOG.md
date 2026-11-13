@@ -984,3 +984,13 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   warna di akhir (HDR+, MALAM, Super Res, AI Zoom). UI: chip Warna -> "Gaya warna". Pref colorStyle.
 - Keluhan: setelah jepret 0.5x zoom kembali ke 1x - enterAIZoom membatasi totalZoom >= 1. Fix: batas minZ (UW).
 - Versi 0.19.0 (build 45). Build run 43422879497 sukses -> `data/builds/BaginCam-v0.19.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 46 — 2026-11-13 · cek v0.19.0 -> v0.19.1 (fusi berhasil, utama + Ultra Wide)
+- Log 19:15-19:17 (tanpa mengisi daya). IMG_7027 (UW 0.5x) & IMG_7028 (utama 1x) + 48MP debug ->
+  `data/bursts/dcim-1113-v019/`.
+- FUSI JALAN: UW 48MP 1.15x lebih tajam (fusi 1.74 s, geser 17,0 px, rasio global 1.79/1.53/1.89);
+  utama 1.32x (1.22 s). Lampu kecil diabaikan: "Highlight: p99 0.196, p99.9 0.978 -> pakai 0.313".
+  Crop 100%: tanpa dobel/hantu/pinggiran menyala, detail = foto 48MP, warna HDR+. Zoom tetap 0.5x setelah jepret.
+- Catatan: UW hasil fusi sedikit berbintik - penajaman akhir preset Tajam (0.35) menajamkan noise foto 48MP yang
+  dicerahkan rasio tone. v0.19.1: saat fusi, finalSharpen x 0.3. Label log align diperjelas ("energi tepi b/a").
+- Versi 0.19.1 (build 46). Build run 43424212576 sukses -> `data/builds/BaginCam-v0.19.1-unsigned.ipa`.
