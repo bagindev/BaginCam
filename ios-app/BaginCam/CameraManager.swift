@@ -392,6 +392,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstTuning = PhotoTuning()
     private var fusionPending = false          // sessionQueue: foto 48MP masih harus diambil setelah burst
     private var fusionData: Data?              // sessionQueue: foto Apple 48MP untuk fusi
+    private var fusionTaken = false            // sessionQueue: foto 48MP sudah diambil (bunyi burst dimatikan)
     private var burstTextFocus = true
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
@@ -1826,6 +1827,7 @@ final class CameraManager: NSObject, ObservableObject {
             // v0.18: fusi 48MP - HDR+ biasa (bukan zoom/MALAM) di lensa utama 48MP saat cahaya cukup
             self.fusionData = nil
             self.fusionPending = false
+            self.fusionTaken = false
             if m == .hdrplus && !zoomed {
                 let gain = Double(srcISO) * srcDur
                 let ok = fus && !night && lensName == "Utama" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
@@ -1844,6 +1846,14 @@ final class CameraManager: NSObject, ObservableObject {
             let isMulti = bm.isBurst || self.burstAIMultiFrame
             Log.camera.info("Capture mulai: \(frames, privacy: .public) frame, mode \(bm.rawValue, privacy: .public)\(night ? " MALAM" : "", privacy: .public), zoom total \(Double(tz), privacy: .public)x, lensa \(lensName, privacy: .public), crop \(Double(crop), privacy: .public)x, cara zoom \(zoomed ? zm.rawValue : "-", privacy: .public), AI \(useAI, privacy: .public), MF \(self.burstAIMultiFrame, privacy: .public), rasio \(asp.rawValue, privacy: .public), live \(liveReq, privacy: .public)")
             self.setStatus(isMulti ? "Burst 0/\(frames)" : "Memotret...")
+            // v0.18.4: siapkan pengaturan foto (Bayer + 48MP) selama jeda pindah lensa -> foto 48MP lebih cepat
+            if self.fusionPending {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                self.photoOutput.setPreparedPhotoSettingsArray([self.makeSettings(bm), self.fusionSettings()]) { ok, err in
+                    let dt = CFAbsoluteTimeGetCurrent() - t0
+                    Log.camera.info("Fusi 48MP: pengaturan disiapkan \(ok, privacy: .public) \(dt, format: .fixed(precision: 2), privacy: .public) s \(err?.localizedDescription ?? "", privacy: .public)")
+                }
+            }
             // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
             self.sessionQueue.asyncAfter(deadline: .now() + delay) {
                 if isMulti { self.lockCurrent() }
@@ -1863,8 +1873,11 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func captureNext() {
         applyBurstAngle()
-        if burstRemaining <= 0 && fusionPending {
+        // v0.18.4: foto 48MP DULUAN (saat tombol ditekan HP paling diam), lalu burst HDR+.
+        // (v0.18.0-0.18.3: sesudah burst -> sering buram / bergeser, IMG_7012)
+        if fusionPending {
             fusionPending = false
+            fusionTaken = true
             setStatus("Foto detail 48MP...")
             photoOutput.capturePhoto(with: fusionSettings(), delegate: self)
             return
@@ -1955,7 +1968,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// v0.18: foto Apple 48MP (HEVC, sensor penuh) untuk fusi detail
     private func fusionSettings() -> AVCapturePhotoSettings {
         let s = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
-        s.photoQualityPrioritization = .quality
+        // 48MP selalu 1 frame sensor (WWDC26 sesi 304): .balanced sama detailnya, lebih cepat dari .quality
+        s.photoQualityPrioritization = .balanced
         if photoOutput.supportedFlashModes.contains(.off) { s.flashMode = .off }
         if let d = device, let full = maxDimensions(of: d),
            Int(full.width) * Int(full.height) <= Int(photoOutput.maxPhotoDimensions.width) * Int(photoOutput.maxPhotoDimensions.height) {
@@ -1988,7 +2002,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         // burst: hanya frame pertama yang berbunyi (bila iOS / wilayah mengizinkan)
-        if #available(iOS 18.0, *), burstIndex > 1, photoOutput.isShutterSoundSuppressionSupported {
+        if #available(iOS 18.0, *), burstIndex > 1 || fusionTaken, photoOutput.isShutterSoundSuppressionSupported {
             settings.isShutterSoundSuppressionEnabled = true
         }
 
