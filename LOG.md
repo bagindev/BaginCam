@@ -967,3 +967,20 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   174/123/77); 6971/6973 (atas meja putih) luma 119-127. Penyebab kemungkinan: target kecerahan develop (rata-rata
   linear > 0.30 -> turun ke 0.26) pada meja putih + LUT. Foto ini tidak bisa untuk kalibrasi fusi (tidak ada 48MP
   bersamaan); dipakai untuk menilai tone/warna HDR+.
+
+## Sesi 45 — 2026-11-13 · cek v0.18.5 -> v0.19.0 (kalibrasi fusi, gaya warna, 0.5x, lampu kecil)
+- Log 19:02-19:04 (mengisi daya). IMG_7018-7026 + 7 foto debug 48MP -> `data/bursts/dcim-1113-v0185/`
+  (debug juga di `data/applogs/debug/Debug/`). Semua 7 fusi (4 utama, 3 Ultra Wide) "dibatalkan", rasio 0.68-0.74,
+  bahkan geser 0,0.
+- Kalibrasi di PC (pasangan HDR+ keluaran vs 48MP debug): rumus app = 48/HDR 1.16-1.23 -> 48MP LEBIH tajam
+  (visual: serat kayu, kalender, huruf kaca UW). BUG: v0.18.1 align(at, ht) membalik argumen -> sharpRatio =
+  HDR/48. Fix: sharp48 = 1/ratio (< 0.85 -> batal). Simulasi fusi di PC (scratchpad sim.jpg): warna HDR+ + detail
+  48MP, tanpa dobel.
+- Ultra Wide HDR+ 1.3 stop lebih gelap dari Apple (linear 0.08 vs 0.20): log "Develop exposure -1.87 EV,
+  highlight p99.9 0.947" -> lampu plafon kecil menggelapkan seluruh foto. Fix: highlightLevel hitung p99 & p99.9;
+  bila p99.9 > 0.8 dan p99 < 0.45 x p99.9 -> pakai p99 x 1.6 (lampu kecil dibiarkan terbakar). Log "Highlight: ...".
+- Gaya warna (permintaan "opsi pilihan warna"): ColorStyle Natural / Cerah (+0.45 EV) / Hangat / Ala Apple
+  (+0.5 EV, hangat, vibrance, kontras) / Vivid / Hitam putih; EV setelah eksposur otomatis (RawDeveloper styleEV),
+  warna di akhir (HDR+, MALAM, Super Res, AI Zoom). UI: chip Warna -> "Gaya warna". Pref colorStyle.
+- Keluhan: setelah jepret 0.5x zoom kembali ke 1x - enterAIZoom membatasi totalZoom >= 1. Fix: batas minZ (UW).
+- Versi 0.19.0 (build 45). Build run 43422879497 sukses -> `data/builds/BaginCam-v0.19.0-unsigned.ipa`. Belum diuji di HP.
