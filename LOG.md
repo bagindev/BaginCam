@@ -910,3 +910,15 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Format lensa: bila lensa utama setelah pindah ke fisik tidak mendukung foto 48MP, pilih format dengan dimensi &
   subtype sama yang mendukung 8064 (log "format lensa diganti ...").
 - Versi 0.18.1 (build 39). Build run 43416678074 sukses -> `data/builds/BaginCam-v0.18.1-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 41 — 2026-11-13 · cek v0.18.1 -> v0.18.2
+- Log 18:27-18:29 (masih mengisi daya). IMG_7007-7010 -> `data/bursts/dcim-1113-v0181/`.
+- 7007 (jepretan pertama): fusi tetap tidak dipakai ("sensor 4224") - pencarian format 48MP v0.18.1 mensyaratkan
+  ukuran video sama persis, tidak ketemu.
+- 7008/7009/7010 fusi (1.1-1.6 s, geser HDR+ 11-22 px, rasio global 0.86-1.66). Teks kalender TIDAK dobel lagi.
+  Lengan 7010: bulu & tekstur kulit setajam foto Apple 48MP (lapvar 109 vs 9 di v0.17 7006).
+- Artefak: teks layar laptop 7010 berpinggiran menyala/emboss - cadangan "area putih terbakar -> HDR+" dihitung per
+  piksel, teks putih kecil diganti teks HDR+ yang sedikit meleset.
+- Fix v0.18.2: masker highlight dari lowpass (hanya area terbakar luas). Format 48MP: subtype sama + rasio 4:3 +
+  >= 30 fps, ukuran video terdekat; log bila tidak ada.
+- Versi 0.18.2 (build 40). Build run 43417606354 sukses -> `data/builds/BaginCam-v0.18.2-unsigned.ipa`. Belum diuji di HP.
