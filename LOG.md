@@ -871,3 +871,15 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Ambil saat "cek": `pymobiledevice3 apps pull --documents dev.bagincam.app.BWDD486C8J /Documents/Logs <lokal>`.
 - Versi 0.17.1 (build 37). Build run 43406328272 sukses -> `data/builds/BaginCam-v0.17.1-unsigned.ipa`
   (berisi semua perubahan v0.17.0). Belum diuji di HP.
+
+## Sesi 38 — 2026-11-13 · cek v0.17.1 (detail preset Tajam)
+- Log app pertama dari file (`data/applogs/Logs/BaginCam_20261113.txt`, ditarik dengan apps pull --documents) -
+  jalan: header versi/suhu/baterai, Tuning tercatat. Tidak ada crash.
+- Catatan: nomor foto lewat 6999 -> foto baru di `/DCIM/107APPLE` (IMG_7001...). Sampel -> `data/bursts/dcim-1113-v017/`.
+- Keluhan "Super Res Tajam masih tidak detail". Data: IMG_7001 HDR+ 15f Tajam + AI 24MP (zoom 1x), IMG_7002 HDR+ 15f
+  Tajam tanpa AI 24MP, IMG_7003 foto Apple 48MP (8064x6048) sebagai pembanding. Crop setara 24MP (lengan & buku
+  jari, lapvar): 7001 37/5, 7002 13/21, 7003 56/99. Foto Apple 48MP jelas lebih detail (bulu lengan tajam).
+  Penyebab utama: HDR+ BaginCam memakai RAW Bayer 12MP (4032x3024) lalu diperbesar ke 24MP; mode 48MP Apple membaca
+  sensor 48MP penuh -> detail asli 4x piksel saat cahaya cukup. Tuning hanya menajamkan data 12MP. Selain itu zoom
+  1x = bukan Super Res (Super Res hanya saat zoom melewati lensa). Crop pembanding: scratchpad cmp_crop2.jpg.
+- Screenshot 6998/6999 (v0.16): readout "ISO 1.005 ... 5.772K" = format angka lokal (titik ribuan).
