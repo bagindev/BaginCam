@@ -719,4 +719,4 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   diam, mask selisih luminans), HLG -> Rec.709 lewat video composition, Apple Log ditolak, audio disalin,
   HEVC, simpan Foto/Files, perkiraan waktu, batal. Kamera dihentikan selama proses.
 - SettingsSheet.swift: Zoom halus, Tajamkan zoom digital, Kunci lensa otomatis saat rekam.
-- Versi 0.12.0 (build 26).
+- Versi 0.12.0 (build 26). Build run 43340922805 sukses -> `data/builds/BaginCam-v0.12.0-unsigned.ipa`. Belum diuji di HP.
