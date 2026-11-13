@@ -861,3 +861,13 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   dengan cadangan per format (Action -> Cinematic Extended -> Cinematic -> Standard), status bila turun,
   log "stabil X (pilihan Y)". Menu stabilisasi diberi keterangan.
 - Versi 0.17.0 (build 36). Build run 43403209093 sukses -> `data/builds/BaginCam-v0.17.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 37 — 2026-11-13 · v0.17.1 (log di dalam app, tes tanpa kabel)
+- Pengguna tanya: log aktif berarti pakai kabel? Ya (pymobiledevice3 syslog lewat USB; kabel juga mengisi daya ->
+  tes suhu tidak akurat). Disetujui: log disimpan di app.
+- LogFile.swift: tiap 15 s + saat app ditinggal, pesan subsystem dev.bagincam.app proses ini dibaca dari
+  OSLogStore(.currentProcessIdentifier) -> `Documents/Logs/BaginCam_yyyyMMdd.txt` (header versi, iOS, suhu,
+  baterai/mengisi; error ditandai "!"; simpan 14 hari). Pengaturan > Info: ukuran log hari ini + "Bagikan log".
+  Ambil saat "cek": `pymobiledevice3 apps pull --documents dev.bagincam.app.BWDD486C8J /Documents/Logs <lokal>`.
+- Versi 0.17.1 (build 37). Build run 43406328272 sukses -> `data/builds/BaginCam-v0.17.1-unsigned.ipa`
+  (berisi semua perubahan v0.17.0). Belum diuji di HP.
