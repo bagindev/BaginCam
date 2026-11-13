@@ -809,3 +809,26 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   ViewModifier CompHooks (build pertama gagal: body ContentView "unable to type-check in reasonable time").
 - Versi 0.13.0 (build 31). Build run 43396019918 sukses -> `data/builds/BaginCam-v0.13.0-unsigned.ipa`
   (run 43395628709 gagal type-check). Belum diuji di HP. Termasuk perubahan v0.12.4.
+
+## Sesi 34 — 2026-11-13 · v0.14.0 (Tuning ala AGC, menu FOTO dikelompokkan) + v0.15.0 (rotasi, hemat panas)
+- v0.14.0 Tuning ala AGC (PhotoTuning.swift): RAW (CIRAWFilter) = ketajaman x, detail halus x, NR luma x, NR warna x,
+  HDR lokal, EV tambahan; akhir (setelah zoom/upscale, sebelum LUT) = penajaman akhir (unsharp, radius), bayangan &
+  selamatkan highlight (CIHighlightShadowAdjust lokal), kontras (kurva S di ruang sRGB), saturasi (vibrance).
+  Preset: Natural (= nilai lama), Tajam, Lembut, Kontras (ala GCam), Bayangan terang. Disimpan JSON "photoTuning",
+  snapshot per jepretan (burstTuning), log "Tuning: ...". Berlaku HDR+, MALAM, Super Res, AI Zoom; tidak untuk FOTO
+  proses Apple / ProRAW / video. UI: Pengaturan -> "Tuning RAW (ala AGC)" + "Tuning akhir (setelah zoom)".
+  Build 32 run 43396694259, build 33 run 43397111234 sukses (tidak dipasang - langsung lanjut 0.15.0).
+- Menu FOTO: Proses · Hasil (Format/Resolusi/Rasio/preset Tuning) · Warna (LUT + WB, juga di VIDEO) ·
+  Bantu (AI Komposisi, peaking, zebra, grid, waterpass, histogram; garis bingkai hanya VIDEO) · flash · Live.
+- "cek" v0.13.0 (log 15:51-15:58): Komposisi jalan ("HDRPLUS_15f_24MP_LUT_CROP.heic (lurus 4.0°) 0.94 s").
+- Rotasi: IMG_6962-6968 (foto lanskap jalan/pohon, HDR+) tersimpan potret miring 90°. RotationCoordinator
+  (previewLayer nil) memakai orientasi perangkat -> selalu 90 bila Rotation Lock nyala. Fix v0.15: sudut capture
+  dari gravitasi CoreMotion (LevelMonitor.captureAngle, histeresis 35°, abaikan saat HP rebah) untuk foto, video,
+  garis bingkai; log "Orientasi foto: sensor gerak X, sistem Y". Ikon (zoom, thumbnail, balik kamera, Pro, gear)
+  ikut berputar.
+- Panas tanpa rekam: suhu sudah 1 (hangat) saat app dibuka (HP habis main game, tersambung kabel/mengisi daya),
+  jadi 2 (panas) setelah ~1.5 menit diam di VIDEO. Fix v0.15: preview tidak dirender ulang bila frame sama; kamera
+  dijeda otomatis bila tidak disentuh 45 s + HP diam (atau 3 menit), ketuk untuk lanjut; saat panas & tidak rekam
+  preview 20 fps + histogram mati; suhu dipantau di semua mode (thermalStateDidChange); petunjuk komposisi saat diam
+  hanya deteksi wajah ~0.5 Hz.
+- Versi 0.15.0 (build 34). Build run 43397810663 sukses -> `data/builds/BaginCam-v0.15.0-unsigned.ipa`. Belum diuji di HP.
