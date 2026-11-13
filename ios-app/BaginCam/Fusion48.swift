@@ -2,36 +2,29 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import Vision
 
-/// v0.18: Fusi HDR+ 48MP - warna, HDR & noise dari HDR+ BaginCam (RAW 12MP, 15 frame),
-/// detail halus dari 1 foto Apple 48MP (sensor penuh) yang diambil tepat setelah burst.
-/// out = lowpass(HDR+) x (luma48 / lowpass(luma48))   -> detail relatif (rasio) dari 48MP,
-/// area yang bergerak / tidak cocok (masker hantu) kembali ke HDR+ murni.
+/// v0.18: Fusi HDR+ 48MP - detail dari 1 foto Apple 48MP (sensor penuh) yang diambil tepat setelah burst,
+/// warna & tone (HDR, bayangan, kecerahan, tuning) dari HDR+ BaginCam (RAW 12MP, 15 frame).
+/// v0.18.1: out = foto48 x clamp(lowpass(HDR+) / lowpass(foto48))  (lowpass kasar ~24 px @24MP).
+/// Dulu (v0.18.0) kebalikannya (dasar HDR+ + detail 48MP) -> HP bergeser/berputar sedikit = teks dobel
+/// (IMG_7005). Sekarang semua detail & posisi dari satu foto; meleset hanya memengaruhi gradasi kasar.
+/// Area yang sangat beda (objek bergerak) memakai rasio rata-rata global.
 enum Fusion48 {
     private static let ctx = CIContext(options: [.cacheIntermediates: false])
     private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    /// detail: rasio luma 48MP / lowpass, dikalikan ke lowpass HDR+; m = masker hantu (1 = pakai HDR+)
-    private static let fuseKernel = CIColorKernel(source: """
-    kernel vec4 fuse48(__sample h, __sample lowH, __sample a, __sample lowA, __sample m, float s) {
+    /// a = foto 48MP, lowA/lowH = lowpass kasar; gg = rasio rata-rata global per kanal; t = ambang beda (log)
+    private static let toneKernel = CIColorKernel(source: """
+    kernel vec4 tone48(__sample a, __sample lowA, __sample lowH, __sample h, vec3 gg, float t) {
         vec3 w = vec3(0.2126, 0.7152, 0.0722);
-        float la = dot(a.rgb, w);
-        float lla = dot(lowA.rgb, w);
-        float r = clamp(la / max(lla, 0.002), 0.4, 2.5);
-        r = 1.0 + s * (r - 1.0);
-        vec3 f = lowH.rgb * r;
-        return vec4(mix(f, h.rgb, clamp(m.r, 0.0, 1.0)), h.a);
-    }
-    """)
-
-    /// beda kecerahan lokal (log) antara HDR+ dan 48MP (sudah disamakan rata-ratanya) -> 0 cocok .. 1 beda
-    private static let ghostKernel = CIColorKernel(source: """
-    kernel vec4 ghost48(__sample h, __sample a, float g, float t) {
-        vec3 w = vec3(0.2126, 0.7152, 0.0722);
-        float lh = max(dot(h.rgb, w), 0.003);
-        float la = max(dot(a.rgb, w) * g, 0.003);
-        float d = abs(log(lh) - log(la));
+        vec3 la = max(lowA.rgb, vec3(0.002));
+        vec3 lh = max(lowH.rgb, vec3(0.002));
+        vec3 r = clamp(lh / la, vec3(0.25), vec3(4.0));
+        float d = abs(log(dot(lh, w)) - log(max(dot(la * gg, w), 0.002)));
         float m = smoothstep(t, 2.0 * t, d);
-        return vec4(m, m, m, 1.0);
+        vec3 rr = mix(r, gg, m);
+        // area putih terbakar di foto 48MP: detail highlight hanya ada di HDR+
+        float c = smoothstep(0.80, 0.97, max(a.r, max(a.g, a.b)));
+        return vec4(mix(a.rgb * rr, h.rgb, c), 1.0);
     }
     """)
 
@@ -42,7 +35,7 @@ enum Fusion48 {
 
     /// `hdr` dan foto Apple sama-sama sudah tegak. Ukuran keluaran = sisi panjang `targetLong`.
     static func fuse(hdr h0: CIImage, appleData: Data, targetLong: Int, strength: Double = 1) -> Result? {
-        guard let fuseK = fuseKernel, let ghostK = ghostKernel else {
+        guard let toneK = toneKernel else {
             Log.hdr.error("Fusi 48MP: kernel tidak bisa dibuat")
             return nil
         }
@@ -61,31 +54,27 @@ enum Fusion48 {
         let W = (h.extent.width * k).rounded(), H = (h.extent.height * k).rounded()
         let rect = CGRect(x: 0, y: 0, width: W, height: H)
         let ht = resize(h, to: rect.size)
-        var at = resize(a, to: rect.size)
+        let at = resize(a, to: rect.size)
 
-        // 1. sejajarkan (HP bergeser sedikit antara burst dan foto 48MP)
-        let al = align(ht, at, rect: rect)
+        // 1. geser HDR+ (bukan foto 48MP) supaya tone jatuh di tempat yang benar
+        let al = align(at, ht, rect: rect)
+        var hAligned = ht
         if al.dx != 0 || al.dy != 0 {
-            at = at.transformed(by: CGAffineTransform(translationX: al.dx, y: al.dy)).clampedToExtent().cropped(to: rect)
+            hAligned = ht.transformed(by: CGAffineTransform(translationX: al.dx, y: al.dy)).clampedToExtent().cropped(to: rect)
         }
 
-        // 2. samakan kecerahan rata-rata (tone map Apple beda) untuk masker hantu
-        let g = CGFloat(mean(ht) / max(mean(at), 0.0005))
+        // 2. rasio global per kanal (cadangan untuk area yang sangat beda)
+        let mh = meanRGB(hAligned), ma = meanRGB(at)
+        let gg = CIVector(x: CGFloat(mh.0 / max(ma.0, 0.0005)), y: CGFloat(mh.1 / max(ma.1, 0.0005)),
+                          z: CGFloat(mh.2 / max(ma.2, 0.0005)))
 
-        // 3. lowpass: sigma ~2.5 px di 24MP (frekuensi yang tidak dimiliki data 12MP)
-        let sigma = max(1.2, 2.5 * Double(max(W, H)) / 5712)
-        let lowH = blur(ht, sigma, rect), lowA = blur(at, sigma, rect)
-
-        // 4. masker hantu di skala kasar (gerak / salah sejajar / beda tone besar), dihaluskan
-        let lowH4 = blur(ht, sigma * 4, rect), lowA4 = blur(at, sigma * 4, rect)
-        var mask = ghostK.apply(extent: rect, arguments: [lowH4, lowA4, g, 0.22]) ?? CIImage(color: .black).cropped(to: rect)
-        mask = blur(mask, sigma * 3, rect)
-        let cover = mean(mask)
-
-        guard let out = fuseK.apply(extent: rect, arguments: [ht, lowH, at, lowA, mask, strength]) else { return nil }
+        // 3. lowpass kasar (~24 px @24MP) -> tone & warna HDR+ dipindah ke foto 48MP
+        let sigma = max(8, 24 * Double(max(W, H)) / 5712)
+        let lowH = blur(hAligned, sigma, rect), lowA = blur(at, sigma, rect)
+        guard let out = toneK.apply(extent: rect, arguments: [at, lowA, lowH, hAligned, gg, 0.45]) else { return nil }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        let note = String(format: "fusi 48MP (geser %.0f,%.0f px, hantu %.0f%%)", Double(al.dx), Double(al.dy), cover * 100)
-        Log.hdr.info("Fusi 48MP: \(Int(W), privacy: .public)x\(Int(H), privacy: .public), sigma \(sigma, format: .fixed(precision: 2), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 1), privacy: .public),\(Double(al.dy), format: .fixed(precision: 1), privacy: .public) px (\(al.how, privacy: .public)), gain \(Double(g), format: .fixed(precision: 2), privacy: .public), hantu \(cover * 100, format: .fixed(precision: 1), privacy: .public)%, \(dt, format: .fixed(precision: 2), privacy: .public) s (graf)")
+        let note = String(format: "fusi 48MP (geser %.0f,%.0f px)", Double(al.dx), Double(al.dy))
+        Log.hdr.info("Fusi 48MP: \(Int(W), privacy: .public)x\(Int(H), privacy: .public), dasar foto48 + tone HDR+ sigma \(sigma, format: .fixed(precision: 1), privacy: .public), geser HDR+ \(Double(al.dx), format: .fixed(precision: 1), privacy: .public),\(Double(al.dy), format: .fixed(precision: 1), privacy: .public) px (\(al.how, privacy: .public)), rasio global \(Double(gg.x), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.y), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.z), format: .fixed(precision: 2), privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return Result(image: out, note: note)
     }
 
@@ -108,6 +97,16 @@ enum Fusion48 {
         f.inputImage = i.clampedToExtent()
         f.radius = Float(sigma)
         return (f.outputImage ?? i).cropped(to: rect)
+    }
+
+    private static func meanRGB(_ i: CIImage) -> (Double, Double, Double) {
+        let f = CIFilter.areaAverage()
+        f.inputImage = i
+        f.extent = i.extent
+        guard let px = f.outputImage else { return (0, 0, 0) }
+        var v = [Float](repeating: 0, count: 4)
+        ctx.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        return (Double(v[0]), Double(v[1]), Double(v[2]))
     }
 
     private static func mean(_ i: CIImage) -> Double {

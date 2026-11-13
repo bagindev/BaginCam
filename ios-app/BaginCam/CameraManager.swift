@@ -1732,6 +1732,26 @@ final class CameraManager: NSObject, ObservableObject {
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
+                    // v0.18.1: fusi 48MP butuh format lensa yang mendukung foto 48MP (jepretan pertama setelah
+                    // app dibuka kadang format 12MP -> "sensor 4224", fusi dilewati, IMG_7004)
+                    if fus && m == .hdrplus && !zoomed && !night && lensName == "Utama",
+                       (self.maxDimensions(of: p).map { Int($0.width) < 8000 } ?? true) {
+                        let cur = p.activeFormat
+                        let cd = CMVideoFormatDescriptionGetDimensions(cur.formatDescription)
+                        let sub = CMFormatDescriptionGetMediaSubType(cur.formatDescription)
+                        if let f48 = p.formats.first(where: { f in
+                            let dd = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+                            return dd.width == cd.width && dd.height == cd.height
+                                && CMFormatDescriptionGetMediaSubType(f.formatDescription) == sub
+                                && f.supportedMaxPhotoDimensions.contains { Int($0.width) >= 8000 }
+                        }), (try? p.lockForConfiguration()) != nil {
+                            p.activeFormat = f48
+                            p.unlockForConfiguration()
+                            if let md = self.maxDimensions(of: p) { self.photoOutput.maxPhotoDimensions = md }
+                            nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
+                            Log.camera.info("Fusi 48MP: format lensa diganti ke yang mendukung 48MP (\(nativeLong, privacy: .public))")
+                        }
+                    }
                     if (try? p.lockForConfiguration()) != nil {
                         let pf = p.activeFormat
                         if p.isExposureModeSupported(.custom) {
