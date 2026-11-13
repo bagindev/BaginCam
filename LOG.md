@@ -769,3 +769,19 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   folder AIJob agar tidak hilang. Hasil AI rusak lama (tidak bisa diputar) di Videos dihapus otomatis.
   Tombol Batal -> Jeda.
 - Versi 0.12.3 (build 29). Build run 43386786395 sukses -> `data/builds/BaginCam-v0.12.3-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 32 — 2026-11-13 · v0.12.4 (UI video dikelompokkan, timer, lensa Auto saat rekam)
+- Keluhan: 720p "hanya di Ultra Wide"; saat rekam lensa Auto tidak bisa pindah; UI video susah; timer belum muncul.
+- Analisis log 14:05: 720p ada di semua lensa (Auto/virtual, Utama, UW). Yang terjadi: "kunci lensa otomatis saat
+  rekam" (bawaan nyala sejak v0.12.0, agar 180° jalan) mengunci ke lensa yang sedang aktif saat tombol rekam
+  ditekan; kamera virtual sedang memakai UW (subjek dekat) -> rekaman terkunci di UW.
+- Fix: pref baru `lockLensOnRecord2` bawaan MATI -> Auto tetap kamera virtual saat rekam, pindah lensa lewat tombol
+  zoom (.5/1/2/5, switching .restricted [videoZoomChanged]). Tombol kunci lensa dinonaktifkan selama rekam
+  (+ teks "ganti lensa: tombol zoom"). 180° hanya aktif bila lensa dikunci manual / opsi di Pengaturan dinyalakan.
+- Timer: `shutterPressed` di VIDEO langsung rekam (timer 3/10 s diabaikan). Fix: hitung mundur juga untuk mulai
+  rekam; tekan lagi saat hitung mundur = batal. Pill jam timer di baris info video.
+- UI video: 10 chip -> 6: Format (submenu Resolusi / Frame rate / Time-lapse / Codec / Warna / Stabilisasi, label
+  "1080p · 30 · HEVC · 709"), LUT, WB, Bantu (peaking, zebra, garis bingkai, grid, waterpass, histogram), AI, senter.
+  Timer rekam besar di tengah atas (merah saat rekam, 00:00 saat siap). Baris info jadi 2 baris; histogram turun.
+  Tombol AI dobel di baris zoom dihapus (sudah di chip AI).
+- Versi 0.12.4 (build 30). Build run 43392967378 sukses -> `data/builds/BaginCam-v0.12.4-unsigned.ipa`. Belum diuji di HP.
