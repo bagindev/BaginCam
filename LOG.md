@@ -720,3 +720,25 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   HEVC, simpan Foto/Files, perkiraan waktu, batal. Kamera dihentikan selama proses.
 - SettingsSheet.swift: Zoom halus, Tajamkan zoom digital, Kunci lensa otomatis saat rekam.
 - Versi 0.12.0 (build 26). Build run 43340922805 sukses -> `data/builds/BaginCam-v0.12.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 29 — 2026-11-13 · v0.12.1 (video terbakar, panas, tombol AI, HDR+ 2x)
+- Keluhan: (1) tombol on/off AI di video tidak ada, (2) rekaman terbakar/terlalu cerah, (3) HDR+ 2x aneh,
+  (4) suhu langsung naik saat rekam.
+- Data: DCIM IMG_6948-6960 -> `data/bursts/dcim-1113-v012/`, preview & crop -> `data/output/v0120/`.
+  Log `data/logs/syslog_20261113-075833.txt` (filter -pn BaginCam) hanya 08:03-08:08 (tes setelahnya tidak terekam).
+  Log 1.2 GB tanpa filter dari sesi 27 dihapus (disisakan baris BaginCam: `syslog_20261113-032904_bagincam.txt`).
+- (2) IMG_6948-6951 (1080p HEVC 709): rata-rata luma 217-236/255, **60-76 % piksel putih**, gerak buram.
+  Penyebab: saat rekam lensa dikunci otomatis -> 180° memaksa 1/60 s di siang terik; ISO sudah minimum 54 ->
+  lebih ~5 stop. Fix: 180° dihitung dari "jumlah cahaya" ISO x t; bila ISO minimum masih terlalu terang shutter
+  dipercepat (status + pill "ND"). Log "VIDEO: terlalu terang untuk 180°".
+- (4) Preview menjalankan LUT/histogram/peaking/zebra di frame 4K penuh 30x/detik. Fix: frame diperkecil ke ukuran
+  layar dulu (`highQualityDownsample`), baru filter. Pill suhu "Panas/Kritis" (ProcessInfo.thermalState) + log.
+  Catatan: rekam 4K di bawah matahari langsung tetap membuat HP panas (encoder + sensor + layar).
+- (1) Chip ✨ AI ada di ujung kanan bar chip (harus digeser). Fix: chip dipindah ke depan jadi menu
+  "AI setelah rekam" (nyala/mati) + "Buka AI Upscale", plus tombol AI di baris zoom video. AI setelah rekam: file
+  asli ditahan, layar AI Upscale terbuka otomatis dengan video itu; salinan dihapus saat ditutup (simpan ke Foto).
+- (3) IMG_6958 (HDR+ 6 frame, DNG IMG_6957 = 1x penuh 4032x3024) -> crop 2x hanya ~2016 px lalu AI 2.8x ->
+  tekstur seperti lukisan, huruf "U" berubah. Fix: Super Res di lensa utama < 3x saat terang (ISO x t < 0.25)
+  -> Crop penuh sensor 48 MP (detail asli 2x lipat). Log "Super Res -> Crop penuh 48MP".
+- Titik zoom native: 0.89 (crop UW tepat sebelum 1x) dibuang (titik < 85 % titik berikutnya).
+- Versi 0.12.1 (build 27).

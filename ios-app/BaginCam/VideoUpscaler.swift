@@ -354,6 +354,8 @@ struct PickedMovie: Transferable {
 
 struct VideoUpscaleView: View {
     @ObservedObject var cam: CameraManager
+    /// video baru direkam ("AI setelah rekam"); bila disimpan ke Foto, salinan ini dihapus saat layar ditutup
+    var initial: URL? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var pick: PhotosPickerItem?
     @State private var input: URL?
@@ -468,9 +470,11 @@ struct VideoUpscaleView: View {
             opt.model = cam.srModel
             opt.saveTo = cam.videoSaveTo
             cam.stop()                      // kamera berhenti: GPU / Neural Engine untuk AI
+            if let initial { choose(initial) }
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            if let initial, cam.videoSaveTo == .photos { try? FileManager.default.removeItem(at: initial) }
             cam.start()
         }
     }

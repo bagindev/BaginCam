@@ -59,6 +59,18 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             let cw = e.width / zoom, ch = e.height / zoom
             image = image.cropped(to: CGRect(x: e.midX - cw / 2, y: e.midY - ch / 2, width: cw, height: ch))
         }
+        // v0.12.1: perkecil ke ukuran layar DULU (4K = 8 MP -> ~1-2 MP), baru LUT / peaking / zebra / histogram.
+        // Dulu semua filter jalan di 4K penuh 30x per detik -> GPU kerja keras, HP cepat panas saat video.
+        let ds = view.drawableSize
+        do {
+            let e = image.extent
+            let k = max(ds.width / e.width, ds.height / e.height)
+            if k < 0.95 {
+                image = image.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                    .transformed(by: CGAffineTransform(scaleX: k, y: k), highQualityDownsample: true)
+                image = image.cropped(to: CGRect(x: 0, y: 0, width: (e.width * k).rounded(.down), height: (e.height * k).rounded(.down)))
+            }
+        }
         let extent = image.extent
 
         // luminans sinyal (sebelum LUT) untuk zebra / peaking / histogram
@@ -114,7 +126,6 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         if histogramEnabled, frameCounter % 6 == 0, let l = luma { computeHistogram(l) }
 
         // aspect-fill ke ukuran layar
-        let ds = view.drawableSize
         let scale = max(ds.width / extent.width, ds.height / extent.height)
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         image = image.transformed(by: CGAffineTransform(
@@ -140,7 +151,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     }
 
     private func computeHistogram(_ luma: CIImage) {
-        let small = luma.transformed(by: CGAffineTransform(scaleX: 0.125, y: 0.125))
+        let small = luma.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
         let h = CIFilter.areaHistogram()
         h.inputImage = small
         h.extent = small.extent

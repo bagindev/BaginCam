@@ -61,7 +61,10 @@ struct ContentView: View {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
                           showGrid: $showGrid, showLevel: $showLevel, hasLUT: luts.selected != nil)
         }
-        .sheet(isPresented: $showUpscale) { VideoUpscaleView(cam: cam) }
+        .sheet(isPresented: $showUpscale, onDismiss: { cam.pendingUpscale = nil }) {
+            VideoUpscaleView(cam: cam, initial: cam.pendingUpscale)
+        }
+        .onChange(of: cam.pendingUpscale) { _, u in if u != nil && !showUpscale { showUpscale = true } }
         .fullScreenCover(isPresented: $showViewer) {
             PhotoViewer(data: cam.lastImageData, name: cam.lastFileName)
         }
@@ -103,6 +106,7 @@ struct ContentView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if cam.shootMode == .video {
+                        upscaleChip
                         videoFormatChip
                         codecChip
                         colorChip
@@ -111,7 +115,6 @@ struct ContentView: View {
                         wbChip
                         guideChip
                         assistChip
-                        upscaleChip
                         torchChip
                     } else {
                         processChip
@@ -384,9 +387,16 @@ struct ContentView: View {
         }
     }
 
+    /// AI video: tidak bisa real-time -> "AI setelah rekam" (nyala/mati) + buka AI Upscale manual
     private var upscaleChip: some View {
-        Button { showUpscale = true } label: { chip("AI", icon: "sparkles") }
-            .disabled(cam.isRecording)
+        Menu {
+            Button { cam.aiAfterRecord.toggle() } label: {
+                check("AI setelah rekam (otomatis buka)", cam.aiAfterRecord)
+            }
+            Button { showUpscale = true } label: { Label("Buka AI Upscale...", systemImage: "sparkles") }
+            Text("AI terlalu berat untuk real-time; diproses setelah rekam (~1-2 s/frame)")
+        } label: { chip(cam.aiAfterRecord ? "AI ON" : "AI", icon: "sparkles", on: cam.aiAfterRecord) }
+        .disabled(cam.isRecording)
     }
 
     private var torchChip: some View {
@@ -448,6 +458,8 @@ struct ContentView: View {
                 infoPill(cam.zoomQuality, icon: cam.zoomQuality == "Native" ? "sparkle" : "plus.magnifyingglass",
                          color: cam.zoomQuality == "Native" ? .green : .orange)
             }
+            if cam.needND { infoPill("ND", icon: "sun.max.fill", color: .orange) }
+            if cam.thermal >= 2 { infoPill(cam.thermal >= 3 ? "Kritis" : "Panas", icon: "thermometer.high", color: .red) }
             Spacer(minLength: 0)
             if cam.minutesLeft > 0 { infoPill("\(cam.minutesLeft) mnt", icon: "internaldrive") }
             audioMeter
@@ -658,6 +670,16 @@ struct ContentView: View {
                         .foregroundStyle(on ? .black : .white)
                 }
                 Spacer(minLength: 0)
+                if cam.shootMode == .video {
+                    Button { cam.aiAfterRecord.toggle() } label: {
+                        Label("AI", systemImage: "sparkles")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(cam.aiAfterRecord ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
+                            .foregroundStyle(cam.aiAfterRecord ? .black : .white)
+                    }
+                    .disabled(cam.isRecording)
+                }
                 Text(String(format: "%.1fx", displayZoom))
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }

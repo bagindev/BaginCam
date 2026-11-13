@@ -277,6 +277,14 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var zoomQuality = ""
     /// kekuatan penajaman zoom digital (preview + rekaman)
     @Published private(set) var previewSharpen: Float = 0
+    /// 180° tidak tercapai karena terlalu terang (butuh filter ND)
+    @Published private(set) var needND = false
+    /// suhu HP (ProcessInfo.thermalState): 0 normal, 1 hangat, 2 panas, 3 kritis
+    @Published private(set) var thermal = 0
+    /// AI Upscale otomatis ditawarkan setelah rekam
+    @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
+    /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
+    @Published var pendingUpscale: URL?
     private var autoLockedForRec = false        // main: lensa dikunci otomatis saat mulai rekam
     @Published private(set) var isRecording = false
     @Published private(set) var recordSeconds: Double = 0
@@ -328,6 +336,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var fpsApplied = 30                 // sessionQueue
     private var shutter180Warned = false        // sessionQueue
     private var recSharpen: Float = 0           // videoQueue
+    private var ndWarned = false                // sessionQueue
     private var videoSnap = VideoSnap()         // sessionQueue: pengaturan video terakhir
     private var recorder: VideoRecorder?        // videoQueue
     private var previewLog = false              // videoQueue: preview Apple Log -> Rec.709
@@ -1126,7 +1135,9 @@ final class CameraManager: NSObject, ObservableObject {
             pts.append(n)
             pts += fmt.secondaryNativeResolutionZoomFactors.map { $0 * n }
         }
-        let clean = Array(Set(pts.map { ($0 * 100).rounded() / 100 })).filter { $0 > 0.3 && $0 < 30 }.sorted()
+        var clean = Array(Set(pts.map { ($0 * 100).rounded() / 100 })).filter { $0 > 0.3 && $0 < 30 }.sorted()
+        // titik yang terlalu dekat di bawah titik berikutnya (mis. 0.89 = crop UW tepat sebelum 1x) tidak berguna
+        clean = clean.enumerated().filter { i, v in i + 1 >= clean.count || v < clean[i + 1] * 0.85 }.map { $0.element }
         let txt = clean.map { String(format: "%.2g", Double($0)) }.joined(separator: ", ")
         let own = fmt.secondaryNativeResolutionZoomFactors.map { String(format: "%.2g", Double($0)) }.joined(separator: ",")
         Log.camera.info("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)])")
@@ -1392,16 +1403,20 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let mins = Int(seconds) / 60, secs = Int(seconds) % 60
         let summary = String(format: "%02d:%02d", mins, secs) + (dropped > 0 ? " · \(dropped) frame hilang" : "")
+        // v0.12.1: "AI setelah rekam" -> file asli disimpan dulu untuk AI Upscale (dihapus setelah layar AI ditutup)
+        let keepForAI = aiAfterRecord && seconds > 0.3
         guard to != .files else {
             setStatus("Video tersimpan di Files: \(url.lastPathComponent) (\(summary))")
+            if keepForAI { DispatchQueue.main.async { self.pendingUpscale = url } }
             return
         }
         PHPhotoLibrary.shared().performChanges({
             let req = PHAssetCreationRequest.forAsset()
             let opt = PHAssetResourceCreationOptions()
-            opt.shouldMoveFile = to == .photos
+            opt.shouldMoveFile = to == .photos && !keepForAI
             req.addResource(with: .video, fileURL: url, options: opt)
         }) { ok, err in
+            if keepForAI { DispatchQueue.main.async { self.pendingUpscale = url } }
             if ok {
                 self.setStatus("Video tersimpan (\(to.rawValue)): \(summary)")
             } else {
@@ -1421,12 +1436,19 @@ final class CameraManager: NSObject, ObservableObject {
             let fps = videoFps == .auto ? 60 : videoFps.rawValue
             let mbps = videoCodec.mbps(videoRes, fps: timelapse > 1 ? 1 : fps, tenBit: videoColor.tenBit)
             minutesLeft = Int(Double(free) * 8 / (mbps * 1_000_000) / 60) * (timelapse > 1 ? timelapse : 1)
+            let th = ProcessInfo.processInfo.thermalState.rawValue
+            if th != thermal {
+                Log.camera.info("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), rekam \(self.isRecording, privacy: .public)")
+                thermal = th
+            }
         }
+        if !shutter180 && needND { needND = false }
         guard shutter180, !manualExposure else { return }
         sessionQueue.async {
             guard self.inVideo, let d = self.device else { return }
             // v0.11.1: kamera virtual (lensa Auto) tidak mendukung eksposur custom -> dulu crash (NSException)
             guard d.isExposureModeSupported(.custom) else {
+                if self.ndWarned { self.ndWarned = false; DispatchQueue.main.async { self.needND = false } }
                 if !self.shutter180Warned {
                     self.shutter180Warned = true
                     Log.camera.info("VIDEO: 180° dilewati, \(d.localizedName, privacy: .public) tidak dukung eksposur custom")
@@ -1438,17 +1460,30 @@ final class CameraManager: NSObject, ObservableObject {
             defer { d.unlockForConfiguration() }
             let fmt = d.activeFormat
             let fps = max(self.fpsApplied, 1)
-            let t = min(max(1.0 / (2 * Double(fps)), fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
-            var iso: Float
-            if d.exposureMode != .custom {
-                let cur = d.exposureDuration.seconds
-                iso = d.iso * Float((cur.isFinite && cur > 0 ? cur : t) / t)
-            } else {
+            let t180 = min(max(1.0 / (2 * Double(fps)), fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
+            // v0.12.1: kerja dengan "jumlah cahaya" ISO x waktu. Terlalu terang untuk 1/(2xfps) di ISO minimum
+            // (siang terik tanpa filter ND) -> shutter dipercepat, bukan video terbakar (v0.12.0: 60-76 % piksel putih).
+            let curT = d.exposureDuration.seconds
+            var light = Double(d.iso) * (curT.isFinite && curT > 0 ? curT : t180)
+            if d.exposureMode == .custom {
                 let off = d.exposureTargetOffset
                 guard off.isFinite, abs(off) > 0.1 else { return }
-                iso = d.iso * pow(2, -max(-0.33, min(0.33, off)))
+                light *= pow(2, -Double(max(-0.5, min(0.5, off))))
             }
-            iso = min(max(iso, fmt.minISO), fmt.maxISO)
+            guard light.isFinite, light > 0 else { return }
+            let minISO = Double(fmt.minISO), maxISO = Double(fmt.maxISO)
+            var t = t180
+            if light / t < minISO { t = max(light / minISO, fmt.minExposureDuration.seconds) }   // perlu ND
+            let iso = Float(min(max(light / t, minISO), maxISO))
+            let tooBright = t < t180 * 0.9
+            if tooBright != self.ndWarned {
+                self.ndWarned = tooBright
+                if tooBright {
+                    Log.camera.info("VIDEO: terlalu terang untuk 180° -> shutter 1/\(Int((1 / t).rounded()), privacy: .public) (butuh ND)")
+                    self.setStatus("Terlalu terang untuk 180°: shutter dipercepat (pakai filter ND untuk gerak halus)")
+                }
+                DispatchQueue.main.async { self.needND = tooBright }
+            }
             guard iso.isFinite, t.isFinite, t > 0 else { return }
             let dur = CMTimeClampToRange(CMTime(seconds: t, preferredTimescale: 1_000_000_000),
                                          range: CMTimeRange(start: fmt.minExposureDuration, end: fmt.maxExposureDuration))
@@ -1579,6 +1614,13 @@ final class CameraManager: NSObject, ObservableObject {
             var zm = night ? ZoomMethod.superRes : method
             if zm == .auto { zm = (lensName == "Tele" || crop >= 3) ? .superRes : .fullCrop }
             if zm == .superRes && !bayerOK { zm = .fullCrop }
+            // v0.12.1: Super Res di lensa utama < 3x saat terang: 12 MP digabung lalu di-crop hanya ~2000 px
+            // (AI 2.8x -> tekstur seperti lukisan, IMG_6958). Crop sensor 48 MP memberi detail asli 2x lipat.
+            if zm == .superRes && !night && lensName == "Utama" && crop < 3 && nativeLong >= 8000
+                && Double(srcISO) * srcDur < 0.25 {
+                zm = .fullCrop
+                Log.camera.info("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
+            }
 
             let bayerBurst = (m == .hdrplus && !zoomed) || (zoomed && zm == .superRes)
             let singleFull = zoomed && zm == .fullCrop
