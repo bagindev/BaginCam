@@ -270,7 +270,7 @@ final class CameraManager: NSObject, ObservableObject {
     // v0.12: zoom video
     @Published var smoothZoom: SmoothZoom = Prefs.raw("smoothZoom", .medium) { didSet { Prefs.set("smoothZoom", smoothZoom.rawValue) } }
     @Published var sharpenZoom: Bool = Prefs.get("sharpenZoom", true) { didSet { Prefs.set("sharpenZoom", sharpenZoom); updateZoomQuality() } }
-    @Published var lockLensOnRecord: Bool = Prefs.get("lockLensOnRecord", true) { didSet { Prefs.set("lockLensOnRecord", lockLensOnRecord) } }
+    @Published var lockLensOnRecord: Bool = Prefs.get("lockLensOnRecord2", false) { didSet { Prefs.set("lockLensOnRecord2", lockLensOnRecord) } }  // v0.12.4: bawaan mati (Auto tetap bisa pindah lensa saat rekam)
     /// titik zoom tanpa crop digital (relatif lensa utama), mis. [0.5, 1, 2, 5]
     @Published private(set) var nativeZoomPoints: [CGFloat] = []
     /// "Native" / "Digital 1.4x"
@@ -1501,15 +1501,23 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: capture
     /// Tombol shutter / tombol volume: pakai timer bila diatur.
     func shutterPressed() {
-        if shootMode == .video { toggleRecording(); return }
-        guard !isCapturing, countdown == 0 else { return }
-        guard timerSeconds > 0 else { startBurst(); return }
+        if shootMode == .video {
+            // v0.12.4: timer juga untuk mulai rekam (tekan lagi saat hitung mundur = batal)
+            if countdown > 0 { countdown = 0; return }
+            if isRecording || timerSeconds == 0 { toggleRecording(); return }
+        } else {
+            guard !isCapturing, countdown == 0 else { return }
+            guard timerSeconds > 0 else { startBurst(); return }
+        }
         countdown = timerSeconds
+        let mode = shootMode
         func tick() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                guard self.countdown > 0 else { return }
+                guard self.countdown > 0, self.shootMode == mode else { self.countdown = 0; return }
                 self.countdown -= 1
-                if self.countdown == 0 { self.startBurst() } else { tick() }
+                if self.countdown == 0 {
+                    if mode == .video { if !self.isRecording { self.toggleRecording() } } else { self.startBurst() }
+                } else { tick() }
             }
         }
         tick()

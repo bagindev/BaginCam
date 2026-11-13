@@ -106,15 +106,12 @@ struct ContentView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if cam.shootMode == .video {
-                        upscaleChip
+                        // v0.12.4: dikelompokkan (Format · LUT · WB · Bantu · AI · Senter)
                         videoFormatChip
-                        codecChip
-                        colorChip
-                        stabChip
                         lutChip
                         wbChip
-                        guideChip
                         assistChip
+                        upscaleChip
                         torchChip
                     } else {
                         processChip
@@ -283,75 +280,61 @@ struct ContentView: View {
     }
 
     // MARK: - chip VIDEO (ala Blackmagic + GCam)
+    private var fpsText: String {
+        cam.videoFps == .auto ? "Auto" : (cam.videoFps.isSlowMo ? "\(cam.videoFps.label) slow-mo" : "\(cam.videoFps.label) fps")
+    }
+
+    /// v0.12.4: satu menu Format = resolusi · fps · time-lapse · codec · warna · stabilisasi
     private var videoFormatChip: some View {
         Menu {
-            Section("Resolusi") {
+            Menu("Resolusi: \(cam.videoRes.rawValue)") {
                 ForEach(VideoRes.allCases) { r in
                     Button { cam.videoRes = r } label: { check(r.rawValue, cam.videoRes == r) }
                 }
             }
-            Section("Frame rate") {
+            Menu("Frame rate: \(cam.timelapse > 1 ? "time-lapse" : fpsText)") {
                 ForEach(VideoFps.allCases) { f in
                     Button { cam.videoFps = f; cam.timelapse = 1 } label: {
                         check(f == .auto ? "Auto (60 terang / 30 gelap)" : (f.isSlowMo ? "\(f.label) slow-mo" : "\(f.label) fps"),
                               cam.videoFps == f && cam.timelapse <= 1)
                     }
                 }
-            }
-            if cam.videoFps.isSlowMo && cam.timelapse <= 1 {
-                Section("Slow-mo diputar di") {
-                    ForEach([24, 30], id: \.self) { p in
-                        Button { cam.slowPlayback = p } label: { check("\(p) fps (\(cam.videoFps.rawValue / p)x lebih lambat)", cam.slowPlayback == p) }
+                if cam.videoFps.isSlowMo && cam.timelapse <= 1 {
+                    Section("Slow-mo diputar di") {
+                        ForEach([24, 30], id: \.self) { p in
+                            Button { cam.slowPlayback = p } label: { check("\(p) fps (\(cam.videoFps.rawValue / p)x lebih lambat)", cam.slowPlayback == p) }
+                        }
                     }
                 }
             }
-            Section("Time-lapse (diputar 30 fps)") {
+            Menu("Time-lapse: \(cam.timelapse > 1 ? "\(cam.timelapse)x" : "Mati")") {
+                Button { cam.timelapse = 1 } label: { check("Mati", cam.timelapse <= 1) }
                 ForEach([5, 10, 30, 60, 120], id: \.self) { k in
-                    Button { cam.timelapse = k } label: { check("\(k)x", cam.timelapse == k) }
+                    Button { cam.timelapse = k } label: { check("\(k)x (diputar 30 fps)", cam.timelapse == k) }
+                }
+            }
+            Menu("Codec: \(cam.videoCodec.short)") {
+                ForEach(VideoCodec.allCases) { c in
+                    Button { cam.videoCodec = c } label: { check(c.rawValue, cam.videoCodec == c) }
+                }
+                Text("ProRes 4K ~5-6 GB/menit")
+            }
+            Menu("Warna: \(cam.videoColor.short)") {
+                ForEach(VideoColor.allCases) { c in
+                    Button { cam.videoColor = c } label: { check(c.rawValue, cam.videoColor == c) }
+                }
+                Text("Log: preview otomatis dikonversi ke Rec.709")
+            }
+            Menu("Stabilisasi: \(cam.videoStab.rawValue)") {
+                ForEach(VideoStab.allCases) { st in
+                    Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st) }
                 }
             }
         } label: {
-            chip(cam.timelapse > 1 ? "\(cam.videoRes.rawValue) · TL \(cam.timelapse)x" : "\(cam.videoRes.rawValue) · \(cam.videoFps.label)",
-                 icon: "video", on: true)
+            let rate = cam.timelapse > 1 ? "TL \(cam.timelapse)x" : cam.videoFps.label
+            chip("\(cam.videoRes.rawValue) · \(rate) · \(cam.videoCodec.short) · \(cam.videoColor.short)", icon: "video", on: true)
         }
         .disabled(cam.isRecording)
-    }
-
-    private var codecChip: some View {
-        Menu {
-            ForEach(VideoCodec.allCases) { c in
-                Button { cam.videoCodec = c } label: { check(c.rawValue, cam.videoCodec == c) }
-            }
-            Text("ProRes 4K ~5-6 GB/menit")
-        } label: { chip(cam.videoCodec.short, icon: "film") }
-        .disabled(cam.isRecording)
-    }
-
-    private var colorChip: some View {
-        Menu {
-            ForEach(VideoColor.allCases) { c in
-                Button { cam.videoColor = c } label: { check(c.rawValue, cam.videoColor == c) }
-            }
-            Text("Log: preview otomatis dikonversi ke Rec.709")
-        } label: { chip(cam.videoColor.short, icon: "circle.lefthalf.filled") }
-        .disabled(cam.isRecording)
-    }
-
-    private var stabChip: some View {
-        Menu {
-            ForEach(VideoStab.allCases) { st in
-                Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st) }
-            }
-        } label: { chip(cam.videoStab == .off ? "Stabil off" : cam.videoStab.rawValue, icon: "hand.raised") }
-        .disabled(cam.isRecording)
-    }
-
-    private var guideChip: some View {
-        Menu {
-            ForEach(FrameGuide.allCases) { g in
-                Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
-            }
-        } label: { chip(cam.frameGuide == .off ? "" : cam.frameGuide.rawValue, icon: "rectangle.dashed") }
     }
 
     static let peakColors = ["Merah", "Kuning", "Hijau", "Biru", "Putih"]
@@ -382,8 +365,19 @@ struct ContentView: View {
                     }
                 }
             }
+            Section("Garis bingkai") {
+                ForEach(FrameGuide.allCases) { g in
+                    Button { cam.frameGuide = g } label: { check(g.rawValue, cam.frameGuide == g) }
+                }
+            }
+            Section("Layar") {
+                Button { showGrid.toggle() } label: { check("Grid", showGrid) }
+                Button { showLevel.toggle() } label: { check("Waterpass", showLevel) }
+                Button { showHistogram.toggle() } label: { check("Histogram", showHistogram) }
+            }
         } label: {
-            chip(zebra ? "\(Int(zebraLevel * 100))%" : "", icon: peaking ? "scope" : "line.diagonal", on: peaking || zebra)
+            let n = (peaking ? 1 : 0) + (zebra ? 1 : 0) + (cam.frameGuide == .off ? 0 : 1)
+            chip(n > 0 ? "Bantu \(n)" : "Bantu", icon: "scope", on: n > 0)
         }
     }
 
@@ -446,23 +440,37 @@ struct ContentView: View {
         return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
-    private var videoInfoRow: some View {
+    /// v0.12.4: timer rekam besar (ala Blackmagic) - selalu terlihat, merah saat merekam
+    private var recTimer: some View {
         HStack(spacing: 6) {
-            lensBadge
-            if cam.isRecording {
-                infoPill(recordTimeText, icon: "record.circle.fill", color: .red)
-            } else if !cam.videoInfo.isEmpty {
-                infoPill(cam.videoInfo, icon: "video")
+            Circle().fill(cam.isRecording ? Color.white : Color.red).frame(width: 9, height: 9)
+            Text(recordTimeText).font(.system(.callout, design: .monospaced).bold())
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(cam.isRecording ? Color.red : Color.black.opacity(0.55), in: Capsule())
+        .foregroundStyle(.white)
+        .fixedSize()
+    }
+
+    private var videoInfoRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                lensBadge.frame(maxWidth: .infinity, alignment: .leading)
+                recTimer
+                audioMeter.frame(maxWidth: .infinity, alignment: .trailing)
             }
-            if !cam.zoomQuality.isEmpty && (cam.zoomQuality != "Native" || cam.totalZoom > 1.05) {
-                infoPill(cam.zoomQuality, icon: cam.zoomQuality == "Native" ? "sparkle" : "plus.magnifyingglass",
-                         color: cam.zoomQuality == "Native" ? .green : .orange)
+            HStack(spacing: 6) {
+                if !cam.isRecording && !cam.videoInfo.isEmpty { infoPill(cam.videoInfo, icon: "video") }
+                if !cam.zoomQuality.isEmpty && (cam.zoomQuality != "Native" || cam.totalZoom > 1.05) {
+                    infoPill(cam.zoomQuality, icon: cam.zoomQuality == "Native" ? "sparkle" : "plus.magnifyingglass",
+                             color: cam.zoomQuality == "Native" ? .green : .orange)
+                }
+                if cam.needND { infoPill("ND", icon: "sun.max.fill", color: .orange) }
+                if cam.thermal >= 2 { infoPill(cam.thermal >= 3 ? "Kritis" : "Panas", icon: "thermometer.high", color: .red) }
+                if cam.timerSeconds > 0 && !cam.isRecording { infoPill("\(cam.timerSeconds)s", icon: "clock") }
+                Spacer(minLength: 0)
+                if cam.minutesLeft > 0 { infoPill("\(cam.minutesLeft) mnt", icon: "internaldrive") }
             }
-            if cam.needND { infoPill("ND", icon: "sun.max.fill", color: .orange) }
-            if cam.thermal >= 2 { infoPill(cam.thermal >= 3 ? "Kritis" : "Panas", icon: "thermometer.high", color: .red) }
-            Spacer(minLength: 0)
-            if cam.minutesLeft > 0 { infoPill("\(cam.minutesLeft) mnt", icon: "internaldrive") }
-            audioMeter
         }
         .padding(8)
     }
@@ -476,7 +484,7 @@ struct ContentView: View {
             .overlay { frameGuideOverlay }
             .overlay(alignment: .bottomLeading) { readout }
             .overlay(alignment: .topTrailing) {
-                if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, 40).padding(8) }
+                if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, cam.shootMode == .video ? 72 : 40).padding(8) }
             }
             .overlay(alignment: .bottomTrailing) { assistBadges }
             .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
@@ -670,16 +678,6 @@ struct ContentView: View {
                         .foregroundStyle(on ? .black : .white)
                 }
                 Spacer(minLength: 0)
-                if cam.shootMode == .video {
-                    Button { cam.aiAfterRecord.toggle() } label: {
-                        Label("AI", systemImage: "sparkles")
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(cam.aiAfterRecord ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
-                            .foregroundStyle(cam.aiAfterRecord ? .black : .white)
-                    }
-                    .disabled(cam.isRecording)
-                }
                 Text(String(format: "%.1fx", displayZoom))
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
@@ -699,9 +697,12 @@ struct ContentView: View {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
                     .foregroundStyle(on ? .black : .white)
-                    .disabled(cam.isCapturing)
+                    .disabled(cam.isCapturing || cam.isRecording)
             }
             Spacer(minLength: 0)
+            if cam.isRecording && cam.aiLensLock == nil {
+                Text("ganti lensa: tombol zoom").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
         }
     }
 
