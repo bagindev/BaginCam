@@ -939,3 +939,12 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Pertanyaan iOS 26/27: dicari (WWDC26 sesi 304 & 341). iOS 27: deferred processing untuk fast capture balanced
   (iPhone 16/17), tidak ada RAW 48MP / quad-bayer untuk app pihak ketiga; setPreparedPhotoSettingsArray bisa dipakai
   sekarang untuk mempercepat foto 48MP fusi.
+
+## Sesi 43 — 2026-11-13 · v0.18.4 (foto 48MP fusi lebih cepat & duluan)
+- Disetujui: siapkan pengaturan 48MP lebih awal (WWDC26 sesi 304, API sudah ada sejak iOS 12).
+- setPreparedPhotoSettingsArray([Bayer, 48MP]) dipanggil selama jeda pindah lensa (log "pengaturan disiapkan ok s").
+- Foto 48MP sekarang DIAMBIL PERTAMA (saat tombol ditekan, HP paling diam), lalu burst Bayer HDR+;
+  bunyi burst dimatikan setelah foto 48MP (fusionTaken).
+- Prioritas foto 48MP .quality -> .balanced (48MP selalu 1 frame sensor; lebih cepat).
+- Versi 0.18.4 (build 42). Build run 43420118134 sukses -> `data/builds/BaginCam-v0.18.4-unsigned.ipa`
+  (berisi semua fix v0.18.3). Belum diuji di HP.
