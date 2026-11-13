@@ -2218,13 +2218,22 @@ final class CameraManager: NSObject, ObservableObject {
             hist[min(1023, max(0, Int(v * 1023)))] += 1
             n += 1
         }
-        var acc = 0
-        let target = Int(Double(n) * 0.999)
-        for (b, c) in hist.enumerated() {
-            acc += c
-            if acc >= target { return Double(b) / 1023 }
+        func pct(_ q: Double) -> Double {
+            var acc = 0
+            let target = Int(Double(n) * q)
+            for (b, c) in hist.enumerated() {
+                acc += c
+                if acc >= target { return Double(b) / 1023 }
+            }
+            return 1
         }
-        return 1
+        let p999 = pct(0.999), p99 = pct(0.99)
+        // v0.19: titik terang KECIL (lampu plafon) jangan menggelapkan seluruh foto (Ultra Wide IMG_7021:
+        // p99.9 0.95 -> eksposur -1.9 EV, 1.3 stop lebih gelap dari Apple). Bila 1 % teratas jauh lebih redup
+        // dari 0.1 % teratas -> pakai p99 (lampu dibiarkan terbakar, seperti kamera Apple). Langit luas: p99 tinggi.
+        let use = (p999 > 0.8 && p99 < 0.45 * p999) ? max(p99 * 1.6, 0.05) : p999
+        Log.hdr.info("Highlight: p99 \(p99, format: .fixed(precision: 3), privacy: .public), p99.9 \(p999, format: .fixed(precision: 3), privacy: .public) -> pakai \(use, format: .fixed(precision: 3), privacy: .public)\(use != p999 ? " (abaikan lampu kecil)" : "", privacy: .public)")
+        return use
     }
 
     // MARK: AI Zoom
