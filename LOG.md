@@ -883,3 +883,16 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   sensor 48MP penuh -> detail asli 4x piksel saat cahaya cukup. Tuning hanya menajamkan data 12MP. Selain itu zoom
   1x = bukan Super Res (Super Res hanya saat zoom melewati lensa). Crop pembanding: scratchpad cmp_crop2.jpg.
 - Screenshot 6998/6999 (v0.16): readout "ISO 1.005 ... 5.772K" = format angka lokal (titik ribuan).
+- Pilihan pengguna: "Fusi HDR+ 48MP".
+
+## Sesi 39 — 2026-11-13 · v0.18.0 (Fusi detail HDR+ 48MP)
+- Fusion48.swift: setelah burst Bayer 12MP (15 frame) diambil 1 foto Apple HEVC 48MP (.quality, sensor penuh,
+  tanpa bunyi). Proses: HDR+ dan 48MP diubah ke ukuran keluaran (Lanczos) -> sejajarkan (Vision translational di
+  1024 px, 4 kandidat tanda + tanpa geser dinilai selisih luma ternormalisasi) -> detail rasio
+  out = blur(HDR+, s) x clamp(luma48 / blur(luma48, s), 0.4..2.5), s = 2.5 px @24MP -> masker hantu (beda log luma
+  kasar > 0.22 setelah samakan rata-rata) kembali ke HDR+ murni. CIColorKernel (fuse48, ghost48).
+  Saat fusi, upscale AI 12->24/48MP dilewati (detail asli dari 48MP).
+- Syarat: HDR+ tanpa zoom, bukan MALAM, lensa Utama 48MP, ISO x t <= 40, format bukan DNG saja, setelan
+  "Fusi detail 48MP" (bawaan nyala, Pengaturan > HDR+). Log "Fusi 48MP: ya/tidak (...)", "foto Apple WxH",
+  "Fusi 48MP: ... geser, gain, hantu %, waktu". Nama catatan di status: "fusi 48MP (geser x,y px, hantu %)".
+- Versi 0.18.0 (build 38). Build run 43413373183 sukses -> `data/builds/BaginCam-v0.18.0-unsigned.ipa`. Belum diuji di HP.
