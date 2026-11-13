@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var showLevel = true
     @StateObject private var level = LevelMonitor()
     @StateObject private var comp = CompositionAI()
+    @State private var touch = TouchClock()
 
     enum ProControl: String, CaseIterable, Identifiable {
         case ev = "EV", iso = "ISO", shutter = "Shutter", wb = "WB", focus = "Fokus", timer = "Timer"
@@ -57,7 +58,9 @@ struct ContentView: View {
                 modeRow
             }
             .padding(.horizontal, 12)
+            if cam.idlePaused { idlePauseLayer }
         }
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in touch.mark() })
         .sheet(isPresented: $showSettings) {
             SettingsSheet(cam: cam, showHistogram: $showHistogram, zebra: $zebra, peaking: $peaking,
                           showGrid: $showGrid, showLevel: $showLevel, hasLUT: luts.selected != nil)
@@ -80,6 +83,7 @@ struct ContentView: View {
             r.zebraLevel = Float(zebraLevel)
             r.peakColor = Self.peakCI(peakColor)
             comp.onAutoZoom = { z in cam.setTotalZoom(cam.totalZoom * z) }
+            cam.orientationAngle = { [weak lv] in lv?.angleNow ?? 90 }
             updateComp()
             cam.start()
             level.start()
@@ -102,6 +106,8 @@ struct ContentView: View {
             if case .success(let url) = result { luts.importLUT(from: url) }
         }
         .modifier(CompHooks(cam: cam, comp: comp, level: level, update: updateComp, maxZoom: { compMaxZoom }))
+        .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer },
+                             histogram: { on in renderer.histogramEnabled = on && showHistogram; if !on { histogram = [] } }))
     }
 
     // MARK: - baris 1: chip cepat
@@ -129,6 +135,7 @@ struct ContentView: View {
             }
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill")
+                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
                     .font(.body)
                     .frame(width: 34, height: 30)
                     .background(Color.white.opacity(0.16), in: Capsule())
@@ -137,6 +144,55 @@ struct ContentView: View {
         }
         .padding(.top, 6)
     }
+
+    /// v0.15: waktu sentuhan terakhir (kelas -> tidak memicu render ulang)
+    final class TouchClock {
+        private(set) var last = Date()
+        func mark() { let n = Date(); if n.timeIntervalSince(last) > 0.5 { last = n } }
+        var idle: TimeInterval { Date().timeIntervalSince(last) }
+    }
+
+    /// v0.15: hemat panas - jeda kamera saat tidak dipakai, histogram mati saat panas
+    private struct PowerHooks: ViewModifier {
+        @ObservedObject var cam: CameraManager
+        @ObservedObject var level: LevelMonitor
+        let touch: TouchClock
+        let busy: () -> Bool
+        let histogram: (Bool) -> Void
+        func body(content: Content) -> some View {
+            content
+                .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+                    guard !cam.idlePaused, !cam.isRecording, !cam.isCapturing, cam.countdown == 0, !busy() else { return }
+                    // HP diletakkan diam 45 s tanpa disentuh, atau 3 menit tanpa disentuh
+                    if (level.steady && touch.idle > 45) || touch.idle > 180 { cam.pauseIdle() }
+                }
+                .onChange(of: cam.thermal) { _, t in histogram(t < 2 || cam.isRecording) }
+                .onChange(of: cam.isRecording) { _, _ in histogram(cam.thermal < 2 || cam.isRecording) }
+        }
+    }
+
+    /// layar kamera dijeda
+    private var idlePauseLayer: some View {
+        ZStack {
+            Color.black.opacity(0.85).ignoresSafeArea()
+            VStack(spacing: 14) {
+                Image(systemName: "pause.circle").font(.system(size: 54)).foregroundStyle(.yellow)
+                Text("Kamera dijeda").font(.headline).foregroundStyle(.white)
+                Text("Tidak dipakai beberapa saat - dijeda supaya HP tidak panas.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
+                if cam.thermal >= 2 {
+                    Label(cam.thermal >= 3 ? "Suhu kritis" : "Suhu HP panas", systemImage: "thermometer.high")
+                        .font(.caption.bold()).foregroundStyle(.red)
+                }
+            }
+            .padding(30)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { touch.mark(); cam.resumeIdle() }
+    }
+
+    /// v0.15: ikon ikut berputar saat HP lanskap (layout tetap potret seperti kamera bawaan)
+    private var uiRot: Angle { .degrees(Double(90 - level.captureAngle)) }
 
     /// v0.13: pemicu AI Komposisi dipisah dari body (body terlalu panjang untuk type-checker)
     private struct CompHooks: ViewModifier {
@@ -618,7 +674,8 @@ struct ContentView: View {
 
     // MARK: - preview + baris 2 (info)
     private var preview: some View {
-        MetalPreview(renderer: renderer, onHardwareShutter: { cam.shutterPressed() })
+        MetalPreview(renderer: renderer, onHardwareShutter: { touch.mark(); if cam.idlePaused { cam.resumeIdle() } else { cam.shutterPressed() } },
+                     fps: cam.thermal >= 2 && !cam.isRecording ? 20 : 30)
             .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
             .overlay { ratioMask }
@@ -813,7 +870,9 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 ForEach(zoomPresets, id: \.self) { z in
                     let on = abs(displayZoom - z) < 0.05
-                    Button(zoomLabel(z)) { setDisplayZoom(z) }
+                    Button { setDisplayZoom(z) } label: {
+                        Text(zoomLabel(z)).rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                    }
                         .font(.caption.bold())
                         .frame(width: 40, height: 28)
                         .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
@@ -1091,6 +1150,7 @@ struct ContentView: View {
                 Group {
                     if let t = cam.lastThumb {
                         Image(uiImage: t).resizable().scaledToFill()
+                            .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
                     } else {
                         Image(systemName: "photo").font(.title3).foregroundStyle(.white.opacity(0.6))
                     }
@@ -1125,6 +1185,7 @@ struct ContentView: View {
 
             Button(action: flipCamera) {
                 Image(systemName: "arrow.triangle.2.circlepath")
+                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
                     .font(.title2)
                     .frame(width: 54, height: 54)
                     .background(Color.white.opacity(0.12), in: Circle())
@@ -1176,6 +1237,7 @@ struct ContentView: View {
                 Spacer()
                 Button { withAnimation { showPro.toggle() } } label: {
                     Image(systemName: "slider.horizontal.3")
+                        .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
                         .font(.title3)
                         .frame(width: 40, height: 34)
                         .foregroundStyle(showPro || !cam.isAuto ? .yellow : .white)

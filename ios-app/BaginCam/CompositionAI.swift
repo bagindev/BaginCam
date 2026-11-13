@@ -86,7 +86,7 @@ final class CompositionAI: ObservableObject {
     /// dari draw preview (main), frame ukuran layar sebelum LUT
     func push(_ image: CIImage) {
         pushCount += 1
-        if phase == .idle && pushCount % 3 != 0 { return }        // petunjuk ringan ~1x/detik
+        if phase == .idle && pushCount % 8 != 0 { return }        // v0.15: petunjuk ringan ~0.5x/detik (hemat panas)
         if phase == .scanning {
             guard !scanTaken, Date().timeIntervalSince(scanStart) > 0.3 else { return }
         }
@@ -146,10 +146,17 @@ final class CompositionAI: ObservableObject {
 
     // MARK: analisis (queue)
 
+    /// v0.15: hanya deteksi wajah (tanpa badan / saliency) - ringan
     private func idleAnalyze(_ image: CIImage) -> String? {
-        guard let cg = Self.small(image, 384, ctx), let s = Self.detect(cg), s.isPerson, let top = s.faceTop else { return nil }
+        guard let cg = Self.small(image, 320, ctx) else { return nil }
+        let req = VNDetectFaceRectanglesRequest()
+        try? VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req])
+        guard let f = (req.results ?? []).filter({ $0.confidence > 0.6 }).max(by: { $0.boundingBox.height < $1.boundingBox.height })
+        else { return nil }
+        let b = f.boundingBox
+        let top = 1 - b.maxY
         if top < 0.015 { return "Kepala terpotong - mundur / zoom keluar" }
-        if top > 0.35 && s.faceH > 0.08 { return "Ruang di atas kepala terlalu banyak" }
+        if top > 0.35 && b.height > 0.08 { return "Ruang di atas kepala terlalu banyak" }
         return nil
     }
 

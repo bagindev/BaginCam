@@ -283,6 +283,11 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var needND = false
     /// suhu HP (ProcessInfo.thermalState): 0 normal, 1 hangat, 2 panas, 3 kritis
     @Published private(set) var thermal = 0
+    /// v0.15: kamera dijeda karena tidak dipakai (hemat panas / baterai)
+    @Published private(set) var idlePaused = false
+    /// sudut capture dari sensor gerak (LevelMonitor); nil = RotationCoordinator
+    var orientationAngle: (() -> CGFloat)?
+    private var thermalObserver: NSObjectProtocol?
     /// AI Upscale otomatis ditawarkan setelah rekam
     // v0.13: AI Komposisi (Susun ulang) + versi crop setelah jepret
     @Published var compAI: Bool = Prefs.get("compAI", true) { didSet { Prefs.set("compAI", compAI) } }
@@ -427,11 +432,48 @@ final class CameraManager: NSObject, ObservableObject {
         readoutTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.updateReadout()
         }
+        // v0.15: suhu dipantau di semua mode (dulu hanya VIDEO)
+        if thermalObserver == nil {
+            thermalObserver = NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification,
+                                                                     object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                let th = ProcessInfo.processInfo.thermalState.rawValue
+                if th != self.thermal {
+                    Log.camera.info("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public)")
+                    self.thermal = th
+                }
+            }
+        }
+        let th0 = ProcessInfo.processInfo.thermalState.rawValue
+        if th0 != thermal { thermal = th0; Log.camera.info("Suhu HP saat mulai: \(th0, privacy: .public)") }
     }
 
     func stop() {
         sessionQueue.async { self.session.stopRunning() }
         readoutTimer?.invalidate()
+    }
+
+    /// v0.15: jeda kamera bila tidak dipakai (tidak saat rekam / memotret / hitung mundur)
+    func pauseIdle() {
+        guard !idlePaused, !isRecording, !isCapturing, countdown == 0 else { return }
+        idlePaused = true
+        torch = false
+        stop()
+        Log.camera.info("Kamera dijeda (tidak dipakai), suhu \(self.thermal, privacy: .public)")
+        status = "Kamera dijeda untuk hemat panas - ketuk untuk lanjut"
+    }
+
+    func resumeIdle() {
+        guard idlePaused else { return }
+        idlePaused = false
+        start()
+        Log.camera.info("Kamera lanjut")
+    }
+
+    /// sudut rotasi capture: sensor gerak (benar walau Rotation Lock nyala), cadangan RotationCoordinator
+    func captureAngle() -> CGFloat {
+        if let a = orientationAngle?() { return a }
+        return rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
     }
 
     private func configure(mode: Mode, lens: Lens) {
@@ -996,10 +1038,8 @@ final class CameraManager: NSObject, ObservableObject {
         activeLensLabel = lensLabel(for: d)
         let macro = d.isVirtualDevice && d.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && totalZoom >= 0.95
         if macro != macroActive { macroActive = macro }
-        if let rc = rotationCoordinator {
-            let a = rc.videoRotationAngleForHorizonLevelCapture
-            if a != horizonAngle { horizonAngle = a }
-        }
+        let ha = captureAngle()
+        if ha != horizonAngle { horizonAngle = ha }
         if shootMode == .video { videoReadout() }
         let maxGain = d.maxWhiteBalanceGain
         let g = d.deviceWhiteBalanceGains
@@ -1332,7 +1372,7 @@ final class CameraManager: NSObject, ObservableObject {
         let color: VideoColor = tenBit ? (d.activeColorSpace == .appleLog ? .log : .hlg) : .sdr
         var codec = s.codec
         if codec == .h264 && tenBit && lut == nil { codec = .hevc }      // H.264 tidak 10-bit
-        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        let angle = captureAngle()
         let transform = CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180)
         let playback = s.fps.isSlowMo && s.timelapse <= 1 ? slowPlayback : fps
         let audio = audioInput != nil && playback == fps && s.timelapse <= 1
@@ -1603,8 +1643,11 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstDisplayZoom = Self.usesVirtual(m) ? tz : tz * lensNative
             self.burstLensName = self.lens.displayName
             // orientasi foto mengikuti cara HP dipegang (potret/lanskap)
-            if let rc = self.rotationCoordinator, let c = self.photoOutput.connection(with: .video) {
-                let a = rc.videoRotationAngleForHorizonLevelCapture
+            if let c = self.photoOutput.connection(with: .video) {
+                // v0.15: dari sensor gerak - RotationCoordinator selalu 90 (potret) bila Rotation Lock nyala
+                let a = self.captureAngle()
+                let sys = self.rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? -1
+                Log.camera.info("Orientasi foto: sensor gerak \(Double(a), privacy: .public), sistem \(Double(sys), privacy: .public)")
                 if c.isVideoRotationAngleSupported(a) { c.videoRotationAngle = a }
             }
             var frames = count

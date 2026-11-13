@@ -33,6 +33,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     var onAnalysis: ((CIImage) -> Void)?
 
     private var frameCounter = 0
+    private weak var lastDrawn: CIImage?       // v0.15: frame sama -> tidak dirender ulang (hemat GPU/panas)
     private var histBitmap = [Float](repeating: 0, count: 64 * 4)
 
     override init() {
@@ -51,7 +52,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         lock.lock(); let frame = latest; lock.unlock()
-        guard var image = frame,
+        guard var image = frame, frame !== lastDrawn,
               let drawable = view.currentDrawable,
               let commandBuffer = queue.makeCommandBuffer() else { return }
 
@@ -143,6 +144,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
                                      to: dest, at: .zero)
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        lastDrawn = frame
     }
 
     private func blend(_ top: CIImage, over background: CIImage, mask: CIImage) -> CIImage {
@@ -179,12 +181,13 @@ struct MetalPreview: UIViewRepresentable {
     let renderer: PreviewRenderer
     /// tombol volume / Camera Control ditekan (iOS 17.2+)
     var onHardwareShutter: (() -> Void)? = nil
+    var fps = 30
 
     func makeUIView(context: Context) -> MTKView {
         let v = MTKView(frame: .zero, device: renderer.device)
         v.colorPixelFormat = .bgra8Unorm
         v.framebufferOnly = false          // wajib supaya Core Image bisa menulis ke drawable
-        v.preferredFramesPerSecond = 30
+        v.preferredFramesPerSecond = fps
         v.delegate = renderer
         v.backgroundColor = .black
         if #available(iOS 17.2, *), let action = onHardwareShutter {
@@ -196,7 +199,9 @@ struct MetalPreview: UIViewRepresentable {
         return v
     }
 
-    func updateUIView(_ uiView: MTKView, context: Context) {}
+    func updateUIView(_ uiView: MTKView, context: Context) {
+        if uiView.preferredFramesPerSecond != fps { uiView.preferredFramesPerSecond = fps }
+    }
 }
 
 /// Histogram kecil di pojok preview.
@@ -244,6 +249,11 @@ final class LevelMonitor: ObservableObject {
     @Published private(set) var flat = false          // HP rebah (menghadap atas/bawah)
     /// HP diam (tripod / disandarkan) > ~1 detik: putaran gyro sangat kecil (untuk mode MALAM)
     @Published private(set) var steady = false
+    /// v0.15: sudut rotasi capture dari gravitasi (90 potret, 0 / 180 lanskap, 270 terbalik) - tidak bergantung
+    /// orientasi UI / Rotation Lock (RotationCoordinator selalu 90 bila Rotation Lock nyala)
+    @Published private(set) var captureAngle: CGFloat = 90
+    /// salinan untuk dibaca dari antrean lain
+    private(set) var angleNow: CGFloat = 90
     private var rotSmooth = 1.0
     /// putaran gyro rata-rata (rad/s) - untuk log
     var rotationLevel: Double { rotSmooth }
@@ -263,6 +273,16 @@ final class LevelMonitor: ObservableObject {
             if st != self.steady { self.steady = st }
             self.flat = abs(g.z) > 0.85
             var a = atan2(g.x, -g.y) * 180 / .pi          // potret tegak = 0
+            if !self.flat {
+                let q = (a / 90).rounded() * 90                     // kuadran terdekat
+                if abs(a - q) < 35 {                                // histeresis: hanya bila jelas
+                    var ang = 90 + q                                // 0 -> 90, -90 -> 0, 90 -> 180, 180 -> 270
+                    if ang < 0 { ang += 360 }
+                    if ang >= 360 { ang -= 360 }
+                    let c = CGFloat(ang)
+                    if c != self.angleNow { self.angleNow = c; self.captureAngle = c }
+                }
+            }
             // pegang lanskap: ukur terhadap 90 derajat terdekat
             if a > 45 && a <= 135 { a -= 90 } else if a < -45 && a >= -135 { a += 90 } else if a > 135 { a -= 180 } else if a < -135 { a += 180 }
             self.roll = a
