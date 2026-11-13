@@ -752,3 +752,20 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   nama file "720p". Bila lensa/warna tidak punya format 720p -> otomatis 1080p (status "720p tidak tersedia...").
 - Log syslog (filter -pn BaginCam) baru: `data/logs/syslog_20261113-140001.txt` (yang 124138 kosong, dihapus).
 - Versi 0.12.2 (build 28). Build run 43382529510 sukses -> `data/builds/BaginCam-v0.12.2-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 31 — 2026-11-13 · v0.12.3 (AI Upscale bisa dijeda & dilanjutkan)
+- "cek" v0.12.2: DCIM IMG_6961-6980 -> `data/bursts/dcim-1113-v0122/` (6980 = screenshot game, bukan app).
+  Tidak ada crash baru. Log `data/logs/syslog_20261113-140001.txt`.
+- 720p jalan: IMG_6977/6978 720x1280 HEVC ~8 Mbps. Kecerahan video normal (luma 114-135, clip 0-0.3 %) ->
+  fix "terbakar" v0.12.1 berhasil. Rekam 14:05:05 lensa dikunci otomatis ke UW (kamera virtual sedang pakai UW
+  untuk jarak dekat/makro) -> zoom 1x = crop UW 2x.
+- AI Upscale: 1080p 27.9 s (838 frame) mode Pertajam, model Cepat = 45 tile/frame ~1.35-1.6 s/frame
+  (melambat ke 2.6-3.5 s saat panas) -> perkiraan ~20 menit. App ditinggal setelah ~20 frame (14:07:52) ->
+  proses mati, file `..._AIsharp_C.mov` 1.4 MB tanpa moov (rusak), tidak ada yang tersimpan.
+- Fix v0.12.3: pekerjaan AI = `Documents/AIJob/job.json` + potongan video (seg*.mov). Saat app ditinggal
+  (willResignActive) proses dijeda, potongan disimpan (background task), lanjut otomatis saat kembali; bila app
+  sempat dimatikan iOS -> bagian "Belum selesai" dengan Lanjutkan/Buang. Reader mulai dari `nextTime`.
+  Selesai -> potongan digabung + audio asli (AVMutableComposition, ekspor passthrough). Video galeri dipindah ke
+  folder AIJob agar tidak hilang. Hasil AI rusak lama (tidak bisa diputar) di Videos dihapus otomatis.
+  Tombol Batal -> Jeda.
+- Versi 0.12.3 (build 29). Build run 43386786395 sukses -> `data/builds/BaginCam-v0.12.3-unsigned.ipa`. Belum diuji di HP.
