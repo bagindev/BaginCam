@@ -742,3 +742,13 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   -> Crop penuh sensor 48 MP (detail asli 2x lipat). Log "Super Res -> Crop penuh 48MP".
 - Titik zoom native: 0.89 (crop UW tepat sebelum 1x) dibuang (titik < 85 % titik berikutnya).
 - Versi 0.12.1 (build 27). Build run 43373476177 sukses -> `data/builds/BaginCam-v0.12.1-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 30 — 2026-11-13 · v0.12.2 (pilihan AI Upscale diingat, video 720p)
+- Keluhan: "pilihan AI tidak bisa disimpan". Penyebab: `VideoUpscaleView` memakai `@State UpscaleOptions()` dan
+  onAppear menimpa model/simpan-ke -> cara, model, kekuatan, kurangi kedip, simpan-ke kembali ke bawaan tiap layar dibuka.
+  Fix: `UpscaleOptions.load()/store()` (UserDefaults: upModel, upMode, upStrength, upStabilize, upSaveTo), disimpan
+  tiap pilihan berubah. (Toggle "AI setelah rekam" sudah tersimpan sejak v0.12.1.)
+- Permintaan: resolusi video 720p. `VideoRes.hd` (1280x720), bitrate HEVC 8 / H.264 12 Mbps @30, ProRes x0.111,
+  nama file "720p". Bila lensa/warna tidak punya format 720p -> otomatis 1080p (status "720p tidak tersedia...").
+- Log syslog (filter -pn BaginCam) baru: `data/logs/syslog_20261113-140001.txt` (yang 124138 kosong, dihapus).
+- Versi 0.12.2 (build 28). Build run 43382529510 sukses -> `data/builds/BaginCam-v0.12.2-unsigned.ipa`. Belum diuji di HP.
