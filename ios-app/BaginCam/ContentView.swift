@@ -97,15 +97,11 @@ struct ContentView: View {
         .onChange(of: cam.previewSharpen) { _, v in renderer.sharpen = v }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
-        .onChange(of: cam.compAI) { _, _ in updateComp() }
-        .onChange(of: cam.shootMode) { _, _ in updateComp() }
-        .onChange(of: cam.aiLensLock) { _, _ in updateComp() }
-        .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = compMaxZoom }
-        .onChange(of: level.roll) { _, v in comp.roll = v }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType(filenameExtension: "cube") ?? .data]) { result in
             if case .success(let url) = result { luts.importLUT(from: url) }
         }
+        .modifier(CompHooks(cam: cam, comp: comp, level: level, update: updateComp, maxZoom: { compMaxZoom }))
     }
 
     // MARK: - baris 1: chip cepat
@@ -142,6 +138,23 @@ struct ContentView: View {
             }
         }
         .padding(.top, 6)
+    }
+
+    /// v0.13: pemicu AI Komposisi dipisah dari body (body terlalu panjang untuk type-checker)
+    private struct CompHooks: ViewModifier {
+        @ObservedObject var cam: CameraManager
+        let comp: CompositionAI
+        @ObservedObject var level: LevelMonitor
+        let update: () -> Void
+        let maxZoom: () -> CGFloat
+        func body(content: Content) -> some View {
+            content
+                .onChange(of: cam.compAI) { _, _ in update() }
+                .onChange(of: cam.shootMode) { _, _ in update() }
+                .onChange(of: cam.aiLensLock) { _, _ in update() }
+                .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = maxZoom() }
+                .onChange(of: level.roll) { _, v in comp.roll = v }
+        }
     }
 
     // MARK: - AI Komposisi (v0.13)
