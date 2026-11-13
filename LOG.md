@@ -848,3 +848,16 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   bila ditolak -> penampil foto terakhir app.
 - Cubit (pinch) di preview untuk zoom (MagnifyGesture, simultan dengan ketuk fokus).
 - Versi 0.16.0 (build 35). Build run 43401041991 sukses -> `data/builds/BaginCam-v0.16.0-unsigned.ipa`. Belum diuji di HP.
+
+## Sesi 36 — 2026-11-13 · v0.17.0 (stabilisasi Action, panel Bantu)
+- "cek" v0.16.0: log `syslog_20261113-162158.txt` hanya 16:22-16:25 (perekam mati - koneksi diputus saat
+  Sideloadly memasang IPA). Suhu saat mulai 1, jadi 2 di FOTO 16:25. Ketukan fokus tercatat di y 1.01-1.03
+  (di bawah preview = baris zoom) -> sekarang diabaikan.
+- Perekam log baru `data/logs/syslog_loop.sh` (sambung ulang otomatis tiap 5 s, PYTHONUNBUFFERED, pid di
+  `data/logs/syslog_loop.pid`) -> `data/logs/syslog_20261113-164252.txt`.
+- Keluhan: menu Bantu tidak bisa di-scroll -> Bantu jadi panel sheet (detent sedang/penuh, Form bisa di-scroll):
+  AI Komposisi, focus peaking + warna, zebra + level, garis bingkai (video), grid/waterpass/histogram.
+- Permintaan: stabilisasi Action -> VideoStab.action = cinematicExtendedEnhanced (iOS 18). Stabilisasi kini
+  dengan cadangan per format (Action -> Cinematic Extended -> Cinematic -> Standard), status bila turun,
+  log "stabil X (pilihan Y)". Menu stabilisasi diberi keterangan.
+- Versi 0.17.0 (build 36). Build run 43403209093 sukses -> `data/builds/BaginCam-v0.17.0-unsigned.ipa`. Belum diuji di HP.
