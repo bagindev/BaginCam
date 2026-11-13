@@ -63,10 +63,12 @@ enum UpscaleError: LocalizedError {
 
 final class VideoUpscaler {
     private var cancelled = false
+    private var paused = false                  // v0.12.3: jeda -> potongan disimpan, bisa dilanjutkan
     private let ci = CIContext(options: [.cacheIntermediates: false])
     private let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
 
     func cancel() { cancelled = true }
+    func pause() { paused = true }
 
     static func perTile(_ m: SRModel) -> Double { m == .fast ? 0.035 : 0.22 }
 
@@ -109,14 +111,18 @@ final class VideoUpscaler {
         return false
     }
 
-    /// progress(selesai, total, detik per frame). Mengembalikan URL hasil (folder Documents/Videos).
-    func run(_ url: URL, _ o: UpscaleOptions, progress: @escaping (Int, Int, Double) -> Void) async throws -> URL {
+    /// progress(selesai, total, detik per frame). Kembali (job, URL hasil) — URL nil = dijeda (lanjutkan nanti).
+    /// v0.12.3: video ditulis per potongan di Documents/AIJob; dijeda bila app ditinggal, digabung + audio di akhir.
+    func run(_ job0: AIJob, progress: @escaping (Int, Int, Double) -> Void) async throws -> (AIJob, URL?) {
+        var job = job0
+        let o = job.options
+        let url = job.inputURL
         let asset = AVURLAsset(url: url)
         guard let vTrack = try await asset.loadTracks(withMediaType: .video).first else { throw UpscaleError.msg("Tidak ada trek video") }
         if try await Self.isLog(vTrack) { throw UpscaleError.msg("Apple Log belum didukung") }
-        let aTrack = try await asset.loadTracks(withMediaType: .audio).first
         let info = try await Self.inspect(url, o)
         guard let sr = SRUpscaler(model: o.model) else { throw UpscaleError.msg("Model AI \(o.model.rawValue) tidak ada") }
+        let frameDur = 1 / max(info.fps, 1)
 
         // komposisi: putar sesuai orientasi + HDR -> Rec.709
         let comp = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
@@ -128,27 +134,21 @@ final class VideoUpscaler {
         let ow = Self.even(Double(w) * k), oh = Self.even(Double(h) * k)
 
         let reader = try AVAssetReader(asset: asset)
+        if job.nextTime > 0 {
+            reader.timeRange = CMTimeRange(start: CMTime(seconds: job.nextTime, preferredTimescale: 600), duration: .positiveInfinity)
+        }
         let vOut = AVAssetReaderVideoCompositionOutput(videoTracks: [vTrack], videoSettings:
             [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         vOut.videoComposition = comp
         vOut.alwaysCopiesSampleData = false
         guard reader.canAdd(vOut) else { throw UpscaleError.msg("Video tidak bisa dibaca") }
         reader.add(vOut)
-        var aOut: AVAssetReaderTrackOutput?
-        if let aTrack {
-            let a = AVAssetReaderTrackOutput(track: aTrack, outputSettings: nil)
-            if reader.canAdd(a) { reader.add(a); aOut = a }
-        }
 
-        let base = url.deletingPathExtension().lastPathComponent
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Videos", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let tag = k > 1 ? String(format: "AI%.1fx", k) : "AIsharp"
-        let outURL = dir.appendingPathComponent("\(base)_\(tag)_\(o.model == .fast ? "C" : "D").mov")
-        try? FileManager.default.removeItem(at: outURL)
-
-        let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
+        try? FileManager.default.createDirectory(at: AIJob.dir, withIntermediateDirectories: true)
+        let segName = "seg\(job.segments.count)_\(Int(Date().timeIntervalSince1970)).mov"
+        let segURL = AIJob.dir.appendingPathComponent(segName)
+        try? FileManager.default.removeItem(at: segURL)
+        let writer = try AVAssetWriter(outputURL: segURL, fileType: .mov)
         let mbps = Double(ow * oh) / (3840.0 * 2160.0) * 60 + 8
         let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: ow, AVVideoHeightKey: oh,
@@ -164,49 +164,30 @@ final class VideoUpscaler {
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]])
         guard writer.canAdd(vIn) else { throw UpscaleError.msg("HEVC tidak tersedia") }
         writer.add(vIn)
-        var aIn: AVAssetWriterInput?
-        if aOut != nil, let aTrack, let hint = try await aTrack.load(.formatDescriptions).first {
-            let a = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: hint)
-            a.expectsMediaDataInRealTime = false
-            if writer.canAdd(a) { writer.add(a); aIn = a }
-        }
 
         guard reader.startReading() else { throw UpscaleError.msg("Baca gagal: \(reader.error?.localizedDescription ?? "-")") }
         guard writer.startWriting() else { throw UpscaleError.msg("Tulis gagal: \(writer.error?.localizedDescription ?? "-")") }
-        writer.startSession(atSourceTime: .zero)
-        Log.sr.info("AI video: \(url.lastPathComponent, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public), \(info.frames, privacy: .public) frame, model \(o.model.rawValue, privacy: .public), kedip \(o.stabilize, privacy: .public)")
-
-        // audio berjalan bersamaan (writer menyisipkan audio & video)
-        let audioDone = DispatchSemaphore(value: 0)
-        let audioQueue = DispatchQueue(label: "bagincam.ai.audio")
-        if let aIn, let aOut {
-            var finished = false
-            aIn.requestMediaDataWhenReady(on: audioQueue) { [weak self] in
-                while aIn.isReadyForMoreMediaData && !finished {
-                    if self?.cancelled ?? true { finished = true; aIn.markAsFinished(); audioDone.signal(); return }
-                    if let sb = aOut.copyNextSampleBuffer() { aIn.append(sb) } else {
-                        finished = true; aIn.markAsFinished(); audioDone.signal(); return
-                    }
-                }
-            }
-        } else {
-            audioDone.signal()
-        }
+        Log.sr.info("AI video: \(url.lastPathComponent, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public), \(info.frames, privacy: .public) frame, mulai frame \(job.done, privacy: .public) (\(job.nextTime, format: .fixed(precision: 2), privacy: .public) s), model \(o.model.rawValue, privacy: .public), kedip \(o.stabilize, privacy: .public)")
 
         var prevBase: CIImage?, prevSR: CIImage?
         var prevCG: CGImage?, prevSRCG: CGImage?
-        var done = 0
+        var segFrames = 0
+        var firstPts: CMTime?
+        var lastPts = CMTime.zero
+        var ended = false
         let t0 = CFAbsoluteTimeGetCurrent()
         var failure: String?
-        while !cancelled {
+        let startDone = job.done, skipBefore = job.nextTime - frameDur * 0.25
+        while !cancelled && !paused {
             let ok: Bool = autoreleasepool {
-                guard let sb = vOut.copyNextSampleBuffer() else { return false }
+                guard let sb = vOut.copyNextSampleBuffer() else { ended = true; return false }
                 guard let pb = CMSampleBufferGetImageBuffer(sb) else { return true }
                 let pts = CMSampleBufferGetPresentationTimeStamp(sb)
+                if pts.seconds < skipBefore { return true }                 // sudah dikerjakan sebelumnya
                 let src = CIImage(cvPixelBuffer: pb)
                 guard let cg = ci.createCGImage(src, from: src.extent, format: .BGRA8, colorSpace: srgb),
                       let up = sr.upscale(cg, crop: CGRect(x: 0, y: 0, width: cg.width, height: cg.height), outScale: k) else {
-                    failure = "AI gagal di frame \(done + 1): \(sr.lastError ?? "-")"
+                    failure = "AI gagal di frame \(startDone + segFrames + 1): \(sr.lastError ?? "-")"
                     return false
                 }
                 let cur = CIImage(cgImage: cg), curSR = CIImage(cgImage: up)
@@ -229,40 +210,97 @@ final class VideoUpscaler {
                 prevBase = curBase; prevSR = srImg
                 prevCG = cg; prevSRCG = up                         // simpan CGImage agar CIImage sebelumnya tetap valid
 
-                while !vIn.isReadyForMoreMediaData && !cancelled { usleep(3000) }
-                guard !cancelled, let pool = adaptor.pixelBufferPool else { return false }
+                while !vIn.isReadyForMoreMediaData && !cancelled && !paused { usleep(3000) }
+                // dijeda (app ditinggal): frame ini dibuang, GPU tidak boleh dipakai di latar belakang
+                guard !cancelled, !paused, let pool = adaptor.pixelBufferPool else { return false }
                 var dst: CVPixelBuffer?
                 CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
                 guard let dst else { failure = "buffer penuh"; return false }
                 ci.render(out, to: dst, bounds: CGRect(x: 0, y: 0, width: ow, height: oh), colorSpace: srgb)
+                if firstPts == nil { firstPts = pts; writer.startSession(atSourceTime: pts) }
                 if !adaptor.append(dst, withPresentationTime: pts) {
                     failure = "tulis frame gagal: \(writer.error?.localizedDescription ?? "-")"
                     return false
                 }
-                done += 1
-                let per = (CFAbsoluteTimeGetCurrent() - t0) / Double(done)
-                progress(done, max(info.frames, done), per)
+                lastPts = pts
+                segFrames += 1
+                let per = (CFAbsoluteTimeGetCurrent() - t0) / Double(segFrames)
+                progress(startDone + segFrames, max(info.frames, startDone + segFrames), per)
                 return true
             }
             if !ok { break }
         }
         _ = prevCG; _ = prevSRCG
+        reader.cancelReading()
 
-        if cancelled || failure != nil {
-            reader.cancelReading()
+        if cancelled {
             writer.cancelWriting()
-            try? FileManager.default.removeItem(at: outURL)
-            throw UpscaleError.msg(failure ?? "Dibatalkan")
+            try? FileManager.default.removeItem(at: segURL)
+            throw UpscaleError.msg("Dibatalkan")
         }
-        vIn.markAsFinished()
-        _ = audioDone.wait(timeout: .now() + 60)
-        await writer.finishWriting()
-        guard writer.status == .completed else {
-            throw UpscaleError.msg("Simpan gagal: \(writer.error?.localizedDescription ?? "-")")
+        // simpan potongan yang sudah jadi (juga saat dijeda / gagal) -> bisa dilanjutkan
+        if let fp = firstPts, segFrames > 0 {
+            vIn.markAsFinished()
+            writer.endSession(atSourceTime: lastPts + CMTime(seconds: frameDur, preferredTimescale: 6000))
+            await writer.finishWriting()
+            if writer.status == .completed {
+                job.segments.append(.init(file: segName, start: fp.seconds))
+                job.done += segFrames
+                job.nextTime = lastPts.seconds + frameDur * 0.5
+            } else {
+                try? FileManager.default.removeItem(at: segURL)
+                failure = failure ?? "Simpan potongan gagal: \(writer.error?.localizedDescription ?? "-")"
+            }
+        } else {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: segURL)
         }
-        let total = CFAbsoluteTimeGetCurrent() - t0
-        Log.sr.info("AI video selesai: \(outURL.lastPathComponent, privacy: .public), \(done, privacy: .public) frame, \(total, format: .fixed(precision: 1), privacy: .public) s")
-        return outURL
+        job.save()
+        let secs = CFAbsoluteTimeGetCurrent() - t0
+        let state = ended ? "habis" : (paused ? "dijeda" : "berhenti")
+        Log.sr.info("AI video: potongan \(segFrames, privacy: .public) frame \(secs, format: .fixed(precision: 1), privacy: .public) s, total \(job.done, privacy: .public)/\(info.frames, privacy: .public), \(state, privacy: .public)")
+        if let failure { throw UpscaleError.msg(failure + " - bisa dilanjutkan") }
+        guard ended else { return (job, nil) }
+
+        // gabung potongan + audio asli
+        let base = url.deletingPathExtension().lastPathComponent
+        let dir = AIJob.docs.appendingPathComponent("Videos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tag = k > 1 ? String(format: "AI%.1fx", k) : "AIsharp"
+        let outURL = dir.appendingPathComponent("\(base)_\(tag)_\(o.model == .fast ? "C" : "D").mov")
+        try? FileManager.default.removeItem(at: outURL)
+        try await Self.merge(job, audioFrom: asset, to: outURL)
+        Log.sr.info("AI video selesai: \(outURL.lastPathComponent, privacy: .public), \(job.done, privacy: .public) frame, \(job.segments.count, privacy: .public) potongan")
+        return (job, outURL)
+    }
+
+    private static func merge(_ job: AIJob, audioFrom asset: AVURLAsset, to out: URL) async throws {
+        let comp = AVMutableComposition()
+        guard let vt = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw UpscaleError.msg("Gabung gagal")
+        }
+        for s in job.segments {
+            let a = AVURLAsset(url: AIJob.dir.appendingPathComponent(s.file))
+            guard let t = try await a.loadTracks(withMediaType: .video).first else { continue }
+            let r = try await t.load(.timeRange)
+            try vt.insertTimeRange(r, of: t, at: vt.timeRange.end)
+        }
+        let vDur = vt.timeRange.duration
+        guard vDur.seconds > 0 else { throw UpscaleError.msg("Tidak ada frame hasil") }
+        if let at = try await asset.loadTracks(withMediaType: .audio).first,
+           let ct = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            let r = try await at.load(.timeRange)
+            try? ct.insertTimeRange(CMTimeRange(start: r.start, duration: CMTimeMinimum(r.duration, vDur)), of: at, at: .zero)
+        }
+        guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough) else {
+            throw UpscaleError.msg("Ekspor tidak tersedia")
+        }
+        ex.outputURL = out
+        ex.outputFileType = .mov
+        await ex.export()
+        guard ex.status == .completed else {
+            throw UpscaleError.msg("Gabung gagal: \(ex.error?.localizedDescription ?? "-") - potongan tetap tersimpan")
+        }
     }
 
     // MARK: operasi Core Image (ruang kerja float, nilai negatif aman)
@@ -353,6 +391,71 @@ final class VideoUpscaler {
     }
 }
 
+// MARK: - pekerjaan AI (bisa dijeda / dilanjutkan, v0.12.3)
+
+struct AIJob: Codable {
+    struct Seg: Codable { var file: String; var start: Double }
+    var input: String              // relatif ke Documents
+    var deleteInput: Bool          // hapus video sumber setelah selesai (salinan "AI setelah rekam")
+    var model: String, mode: String, strength: Double, stabilize: Bool, saveTo: String
+    var frames: Int
+    var done = 0
+    var nextTime: Double = 0       // detik (waktu frame berikutnya)
+    var segments: [Seg] = []
+
+    static var docs: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+    static var dir: URL { docs.appendingPathComponent("AIJob", isDirectory: true) }
+    static var file: URL { dir.appendingPathComponent("job.json") }
+    var inputURL: URL { Self.docs.appendingPathComponent(input) }
+    var inputName: String { (input as NSString).lastPathComponent }
+
+    var options: UpscaleOptions {
+        var o = UpscaleOptions()
+        o.model = SRModel(rawValue: model) ?? .fast
+        o.mode = UpscaleMode(rawValue: mode) ?? .enlarge
+        o.strength = strength
+        o.stabilize = stabilize
+        o.saveTo = VideoSaveTo(rawValue: saveTo) ?? .photos
+        return o
+    }
+
+    /// pekerjaan baru: video dari galeri (tmp) dipindah ke folder AIJob agar tidak hilang
+    static func create(input u: URL, options o: UpscaleOptions, frames: Int, deleteInput: Bool) throws -> AIJob {
+        clear()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let docsPath = docs.resolvingSymlinksInPath().path + "/"
+        var p = u.resolvingSymlinksInPath().path
+        var del = deleteInput
+        if !p.hasPrefix(docsPath) {
+            let dst = dir.appendingPathComponent(u.lastPathComponent)
+            try FileManager.default.moveItem(at: u, to: dst)
+            p = dst.resolvingSymlinksInPath().path
+            del = false                                   // ikut terhapus bersama folder AIJob
+        }
+        let rel = String(p.dropFirst(docsPath.count))
+        let j = AIJob(input: rel, deleteInput: del, model: o.model.rawValue, mode: o.mode.rawValue,
+                      strength: o.strength, stabilize: o.stabilize, saveTo: o.saveTo.rawValue, frames: frames)
+        j.save()
+        return j
+    }
+
+    static func load() -> AIJob? {
+        guard let d = try? Data(contentsOf: file), let j = try? JSONDecoder().decode(AIJob.self, from: d),
+              FileManager.default.fileExists(atPath: j.inputURL.path) else { return nil }
+        return j
+    }
+
+    func save() { try? JSONEncoder().encode(self).write(to: Self.file, options: .atomic) }
+
+    /// selesai / dibuang: hapus potongan (+ sumber bila salinan)
+    func finish() {
+        if deleteInput { try? FileManager.default.removeItem(at: inputURL) }
+        Self.clear()
+    }
+
+    static func clear() { try? FileManager.default.removeItem(at: dir) }
+}
+
 // MARK: - pilih video dari galeri
 
 struct PickedMovie: Transferable {
@@ -387,9 +490,14 @@ struct VideoUpscaleView: View {
     @State private var message = ""
     @State private var upscaler: VideoUpscaler?
     @State private var loading = false
+    @State private var job: AIJob?                  // pekerjaan tertunda (v0.12.3)
+    @State private var autoResume = false           // dijeda karena app ditinggal -> lanjut sendiri saat kembali
+    @State private var bgTask: UIBackgroundTaskIdentifier = .invalid
+    @State private var tick = 0
 
     private var appVideos: [URL] {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Videos")
+        _ = tick
+        let dir = AIJob.docs.appendingPathComponent("Videos")
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files.filter { ["mov", "mp4"].contains($0.pathExtension.lowercased()) }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
@@ -398,6 +506,21 @@ struct VideoUpscaleView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let j = job {
+                    Section {
+                        Text(j.inputName).font(.caption).foregroundStyle(.secondary)
+                        if running {
+                            Text("Sedang diproses...").font(.caption)
+                        } else {
+                            row("Selesai", "\(j.done)/\(j.frames) frame (\(j.frames > 0 ? j.done * 100 / j.frames : 0) %)")
+                            Button { start(j) } label: { Label("Lanjutkan", systemImage: "play.fill") }
+                            Button("Buang pekerjaan ini", role: .destructive) { j.finish(); job = nil; tick += 1 }
+                        }
+                    } header: { Text("Belum selesai") } footer: {
+                        Text("Proses dijeda bila app ditinggal / layar dikunci. Hasil yang sudah jadi tersimpan, lanjutkan kapan saja.")
+                    }
+                }
+
                 Section {
                     PhotosPicker(selection: $pick, matching: .videos) {
                         Label("Pilih video dari galeri", systemImage: "photo.on.rectangle")
@@ -436,7 +559,7 @@ struct VideoUpscaleView: View {
                         ForEach(VideoSaveTo.allCases) { Text($0.rawValue).tag($0) }
                     }
                 } header: { Text("Pengaturan") } footer: {
-                    Text("Cepat = model ringan (~0,035 s/tile). Detail = lebih tajam tapi ~6x lebih lama. Kurangi kedip mencegah tekstur 'berdenyut', tapi pada gerakan cepat detail bisa sedikit lebih lembut.")
+                    Text("Cepat = model ringan (~0,035 s/tile). Detail = lebih tajam tapi ~6x lebih lama. Kurangi kedip mencegah tekstur 'berdenyut', tapi pada gerakan cepat detail bisa sedikit lebih lembut. Video 1080p ~1,4 s/frame (30 detik video = ~20 menit).")
                 }
                 .disabled(running)
                 .onChange(of: opt.mode) { _, _ in refreshInfo() }
@@ -456,11 +579,14 @@ struct VideoUpscaleView: View {
                         ProgressView(value: Double(done), total: Double(max(total, 1)))
                         Text("\(done)/\(total) frame · \(String(format: "%.2f", perFrame)) s/frame · sisa \(duration(Double(max(total - done, 0)) * perFrame))")
                             .font(.caption.monospacedDigit())
-                        Text("Jangan tinggalkan app sampai selesai (layar tetap menyala).").font(.caption).foregroundStyle(.orange)
-                        Button("Batal", role: .destructive) { upscaler?.cancel() }
+                        Text("Biarkan app terbuka (layar tetap menyala). Bila ditinggal, proses dijeda dan bisa dilanjutkan.")
+                            .font(.caption).foregroundStyle(.orange)
+                        Button("Jeda", role: .destructive) { autoResume = false; upscaler?.pause() }
                     } else {
-                        Button { start() } label: { Label("Mulai AI Upscale", systemImage: "sparkles") }
-                            .disabled(input == nil || (info?.note.contains("tidak didukung") ?? true))
+                        Button { startNew() } label: {
+                            Label(job == nil ? "Mulai AI Upscale" : "Mulai baru (yang tertunda dibuang)", systemImage: "sparkles")
+                        }
+                        .disabled(input == nil || (info?.note.contains("tidak didukung") ?? true))
                     }
                     if !message.isEmpty { Text(message).font(.caption) }
                 }
@@ -486,14 +612,35 @@ struct VideoUpscaleView: View {
         }
         .interactiveDismissDisabled(running)
         .onChange(of: opt) { _, o in o.store() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            guard running else { return }
+            // app ditinggal / layar dikunci: jeda, simpan potongan (waktu tambahan dari iOS)
+            autoResume = true
+            if bgTask == .invalid {
+                bgTask = UIApplication.shared.beginBackgroundTask(withName: "AI Upscale") { endBg() }
+            }
+            upscaler?.pause()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if autoResume, !running, let j = job {
+                autoResume = false
+                start(j)
+            }
+        }
         .onAppear {
             opt = UpscaleOptions.load(model: cam.srModel, saveTo: cam.videoSaveTo)
             cam.stop()                      // kamera berhenti: GPU / Neural Engine untuk AI
+            job = AIJob.load()
+            if job == nil { AIJob.clear() }
             if let initial { choose(initial) }
+            cleanBroken()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
-            if let initial, cam.videoSaveTo == .photos { try? FileManager.default.removeItem(at: initial) }
+            if let initial, cam.videoSaveTo == .photos,
+               AIJob.load()?.inputURL.resolvingSymlinksInPath().path != initial.resolvingSymlinksInPath().path {
+                try? FileManager.default.removeItem(at: initial)
+            }
             cam.start()
         }
     }
@@ -523,26 +670,73 @@ struct VideoUpscaleView: View {
         }
     }
 
-    private func start() {
+    /// hasil AI lama yang terputus (versi <= 0.12.2 menulis langsung ke Videos) tidak bisa diputar -> hapus
+    private func cleanBroken() {
+        let list = appVideos.filter { $0.lastPathComponent.contains("_AI") }
+        guard !list.isEmpty else { return }
+        Task {
+            var n = 0
+            for u in list {
+                let ok = (try? await AVURLAsset(url: u).load(.isPlayable)) ?? false
+                if !ok { try? FileManager.default.removeItem(at: u); n += 1 }
+            }
+            if n > 0 { await MainActor.run { tick += 1; message = "\(n) hasil AI rusak (proses terputus) dihapus" } }
+        }
+    }
+
+    private func endBg() {
+        if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+    }
+
+    private func startNew() {
         guard let u = input else { return }
+        do {
+            let del = initial.map { $0.resolvingSymlinksInPath().path == u.resolvingSymlinksInPath().path } == true
+                && cam.videoSaveTo == .photos
+            let j = try AIJob.create(input: u, options: opt, frames: info?.frames ?? 0, deleteInput: del)
+            job = j
+            input = nil; info = nil
+            start(j)
+        } catch {
+            message = "Gagal menyiapkan: \(error.localizedDescription)"
+        }
+    }
+
+    private func start(_ j: AIJob) {
         let up = VideoUpscaler()
         upscaler = up
         running = true
-        done = 0; total = info?.frames ?? 0; perFrame = 0
+        done = j.done; total = j.frames; perFrame = 0
         message = ""
         UIApplication.shared.isIdleTimerDisabled = true
-        let o = opt
         Task.detached(priority: .userInitiated) {
             do {
-                let out = try await up.run(u, o) { d, t, per in
+                let (nj, out) = try await up.run(j) { d, t, per in
                     DispatchQueue.main.async { done = d; total = t; perFrame = per }
                 }
-                let msg = await VideoUpscaler.save(out, to: o.saveTo)
-                await MainActor.run { message = "Selesai: \(out.lastPathComponent). \(msg)"; running = false }
+                if let out {
+                    let msg = await VideoUpscaler.save(out, to: nj.options.saveTo)
+                    nj.finish()
+                    await MainActor.run { job = nil; tick += 1; message = "Selesai: \(out.lastPathComponent). \(msg)" }
+                } else {
+                    await MainActor.run {
+                        job = nj
+                        message = "Dijeda di \(nj.done)/\(nj.frames) frame. Tekan Lanjutkan (atau otomatis saat kembali ke app)."
+                    }
+                }
             } catch {
-                await MainActor.run { message = error.localizedDescription; running = false }
+                await MainActor.run { job = AIJob.load(); message = error.localizedDescription }
             }
-            await MainActor.run { UIApplication.shared.isIdleTimerDisabled = false }
+            await MainActor.run {
+                running = false
+                UIApplication.shared.isIdleTimerDisabled = false
+                endBg()
+                // kembali ke app sebelum potongan selesai disimpan -> lanjut sekarang
+                if autoResume, UIApplication.shared.applicationState == .active, let j2 = job {
+                    autoResume = false
+                    start(j2)
+                }
+            }
         }
     }
 }
