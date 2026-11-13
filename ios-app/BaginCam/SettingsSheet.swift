@@ -267,7 +267,7 @@ struct SettingsSheet: View {
 
     private var modeDetail: String {
         switch cam.shootMode {
-        case .video: return "Video ala Blackmagic Camera: 4K/1080p, 24-60 fps, slow-mo 120/240, time-lapse, HEVC / H.264 / ProRes, Rec.709 / HLG / Apple Log, stabilisasi, shutter 180°, frame guide, meter audio, senter. Laci Pro: ISO, shutter, WB, fokus manual."
+        case .video: return "Video ala Blackmagic Camera: 4K/1080p/720p, 24-60 fps, slow-mo 120/240, time-lapse, HEVC / H.264 / ProRes, Rec.709 / HLG / Apple Log, stabilisasi, shutter 180°, frame guide, meter audio, senter. Laci Pro: ISO, shutter, WB, fokus manual."
         case .night: return "HDR+ dengan shutter lebih lama (genggam 1/4 s, tele 1/8 s, HP diam/tripod sampai 1 s) dan ISO lebih rendah, 6-15 frame, lalu dicerahkan. Tahan HP sampai selesai."
         case .photo: return cam.photoProcess.detail
         case .pro: return cam.proFormat.detail + ". Laci Pro (ikon slider kanan bawah): EV, ISO, shutter, WB, fokus manual per bagian."

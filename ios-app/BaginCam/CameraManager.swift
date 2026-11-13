@@ -1208,6 +1208,13 @@ final class CameraManager: NSObject, ObservableObject {
         var note = ""
         var f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
         if f == nil && s.fps == .auto { f = pickVideoFormat(d, res: res, fps: 30, color: color, stab: s.stab) }
+        if f == nil && res == .hd {
+            // 720p tidak ada di semua lensa / warna -> 1080p
+            for alt in [needFps, 30] where f == nil {
+                f = pickVideoFormat(d, res: .fhd, fps: alt, color: color, stab: s.stab)
+                if f != nil { res = .fhd; if alt != needFps { fps = alt }; note = "720p tidak tersedia di lensa ini -> 1080p" }
+            }
+        }
         if f == nil && needFps > 60 && res == .uhd {
             res = .fhd
             f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
@@ -1329,7 +1336,7 @@ final class CameraManager: NSObject, ObservableObject {
             .appendingPathComponent("Videos", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tag = s.timelapse > 1 ? "TL\(s.timelapse)x" : (playback != fps ? "\(fps)to\(playback)" : "\(fps)")
-        let name = "BaginCam_\(f.string(from: Date()))_\(dims.width >= 3840 ? "4K" : "1080p")\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
+        let name = "BaginCam_\(f.string(from: Date()))_\(dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p"))\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
         let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: Int(dims.height), height: Int(dims.width),
                               sensorFps: fps, playbackFps: playback, timelapse: max(1, s.timelapse), codec: codec,
                               color: color, audio: audio, transform: transform, bake: lut, bakeLog: lut != nil && color == .log)

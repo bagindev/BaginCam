@@ -19,12 +19,31 @@ enum UpscaleMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct UpscaleOptions {
+struct UpscaleOptions: Equatable {
     var model: SRModel = .fast
     var mode: UpscaleMode = .enlarge
     var strength: Double = 0.8
     var stabilize = true
     var saveTo: VideoSaveTo = .photos
+
+    /// v0.12.2: pilihan diingat (dulu direset tiap layar dibuka)
+    static func load(model: SRModel, saveTo: VideoSaveTo) -> UpscaleOptions {
+        var o = UpscaleOptions()
+        o.model = Prefs.raw("upModel", model)
+        o.mode = Prefs.raw("upMode", UpscaleMode.enlarge)
+        o.strength = min(max(Prefs.get("upStrength", 0.8), 0.3), 1)
+        o.stabilize = Prefs.get("upStabilize", true)
+        o.saveTo = Prefs.raw("upSaveTo", saveTo)
+        return o
+    }
+
+    func store() {
+        Prefs.set("upModel", model.rawValue)
+        Prefs.set("upMode", mode.rawValue)
+        Prefs.set("upStrength", strength)
+        Prefs.set("upStabilize", stabilize)
+        Prefs.set("upSaveTo", saveTo.rawValue)
+    }
 }
 
 struct UpscaleInfo {
@@ -466,9 +485,9 @@ struct VideoUpscaleView: View {
             }
         }
         .interactiveDismissDisabled(running)
+        .onChange(of: opt) { _, o in o.store() }
         .onAppear {
-            opt.model = cam.srModel
-            opt.saveTo = cam.videoSaveTo
+            opt = UpscaleOptions.load(model: cam.srModel, saveTo: cam.videoSaveTo)
             cam.stop()                      // kamera berhenti: GPU / Neural Engine untuk AI
             if let initial { choose(initial) }
         }

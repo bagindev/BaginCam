@@ -8,9 +8,14 @@ import VideoToolbox
 enum VideoRes: String, CaseIterable, Identifiable {
     case uhd = "4K"
     case fhd = "1080p"
+    case hd = "720p"          // v0.12.2: file kecil, lebih dingin
     var id: String { rawValue }
     /// dimensi sensor (lanskap)
-    var size: (w: Int32, h: Int32) { self == .uhd ? (3840, 2160) : (1920, 1080) }
+    var size: (w: Int32, h: Int32) {
+        switch self { case .uhd: return (3840, 2160); case .fhd: return (1920, 1080); case .hd: return (1280, 720) }
+    }
+    /// dari jumlah piksel (untuk bitrate)
+    static func from(pixels: Int) -> VideoRes { pixels > 4_000_000 ? .uhd : (pixels > 1_000_000 ? .fhd : .hd) }
 }
 
 /// 0 = Auto (60 saat terang, 30 saat gelap - seperti AutoFps GCam taoyao)
@@ -52,11 +57,11 @@ enum VideoCodec: String, CaseIterable, Identifiable {
     }
     /// perkiraan bitrate (Mbps) untuk sisa waktu rekam
     func mbps(_ res: VideoRes, fps: Int, tenBit: Bool) -> Double {
-        let px = res == .uhd ? 1.0 : 0.25
+        let px = res == .uhd ? 1.0 : (res == .fhd ? 0.25 : 0.111)
         let f = Double(max(fps, 24)) / 30
         switch self {
-        case .hevc: return (res == .uhd ? 50 : 16) * max(1, f * 0.8) * (tenBit ? 1.2 : 1)
-        case .h264: return (res == .uhd ? 80 : 26) * max(1, f * 0.8)
+        case .hevc: return (res == .uhd ? 50 : (res == .fhd ? 16 : 8)) * max(1, f * 0.8) * (tenBit ? 1.2 : 1)
+        case .h264: return (res == .uhd ? 80 : (res == .fhd ? 26 : 12)) * max(1, f * 0.8)
         case .proresHQ: return 707 * px * f
         case .prores: return 471 * px * f
         case .proresLT: return 328 * px * f
@@ -225,7 +230,7 @@ final class VideoRecorder {
         if !c.codec.isProRes {
             let fps = c.timelapse > 1 ? 30 : c.playbackFps
             var comp: [String: Any] = [
-                AVVideoAverageBitRateKey: Int(c.codec.mbps(c.width * c.height > 4_000_000 ? .uhd : .fhd,
+                AVVideoAverageBitRateKey: Int(c.codec.mbps(VideoRes.from(pixels: c.width * c.height),
                                                             fps: c.sensorFps, tenBit: c.color.tenBit && c.bake == nil) * 1_000_000),
                 AVVideoExpectedSourceFrameRateKey: fps,
                 AVVideoMaxKeyFrameIntervalDurationKey: 1,
