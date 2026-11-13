@@ -948,3 +948,15 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Prioritas foto 48MP .quality -> .balanced (48MP selalu 1 frame sensor; lebih cepat).
 - Versi 0.18.4 (build 42). Build run 43420118134 sukses -> `data/builds/BaginCam-v0.18.4-unsigned.ipa`
   (berisi semua fix v0.18.3). Belum diuji di HP.
+
+## Sesi 44 — 2026-11-13 · cek v0.18.4 -> v0.18.5 (debug kalibrasi fusi, Ultra Wide)
+- Log 18:53 (tanpa mengisi daya). IMG_7014-7017 -> `data/bursts/dcim-1113-v0184/`.
+- Rotasi lanskap BENAR: 7016/7017 5712x4284 tegak (fix v0.18.3 berhasil).
+- Pengaturan 48MP disiapkan 0.00 s; jepretan pertama dapat sensor 8064 (fix berhasil).
+- Ketiga fusi DIBATALKAN: rasio tajam 48MP/HDR+ 0.38-0.47 (geser 28,22 / 11,56 / -17,17 px). Belum pasti apakah foto
+  48MP (diambil duluan) benar-benar buram (goyang tekan tombol / fokus belum kunci) atau ukuran bias (HDR+ LTM +
+  Tajam menaikkan energi tepi). 7014 = UW crop 2x (makro di 1x, proses Apple).
+- v0.18.5: debugFusion (bawaan nyala) -> foto 48MP mentah disimpan `Documents/Debug/<HDRPLUS_...>_48.heic`
+  (12 terakhir, tidak ke galeri) untuk kalibrasi; fusi juga di Ultra Wide 48MP (0.5x).
+- Versi 0.18.5 (build 43). Build run 43420953671 sukses -> `data/builds/BaginCam-v0.18.5-unsigned.ipa`.
+- Foto tes di PC: `data/bursts/dcim-1113-*` (v012 .. v0184), total folder bursts 15 GB; D: sisa 4.9 GB.
