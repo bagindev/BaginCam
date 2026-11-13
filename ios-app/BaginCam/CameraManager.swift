@@ -2188,7 +2188,10 @@ final class CameraManager: NSObject, ObservableObject {
                         saved.append(note)
                     }
                 }
-                if burstTuning.hasPost { img = burstTuning.post(img).settingProperties(img.properties) }
+                // v0.19.1: foto 48MP sudah tajam -> penajaman akhir dikurangi saat fusi (Tajam 0.35 = noise berbintik, IMG_7027)
+                var postT = burstTuning
+                if fused { postT.finalSharpen *= 0.3 }
+                if postT.hasPost { img = postT.post(img).settingProperties(img.properties) }
                 if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
                 let final = RawDeveloper.applyLUT(img, lut)
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {

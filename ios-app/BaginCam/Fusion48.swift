@@ -150,7 +150,7 @@ enum Fusion48 {
             if sc < best.score { best = (dx, dy, sc, String(format: "vision %+.0f%+.0f", sx, sy)) }
         }
         let sharp = Double(edge(hv, sw, sh)) > 0 ? Double(edge(av, sw, sh) / edge(hv, sw, sh)) : 1
-        let how = String(format: "%@ skor %.3f, vision %.1f,%.1f, tajam 48/HDR %.2f", best.name, best.score, Double(t.tx), Double(t.ty), sharp)
+        let how = String(format: "%@ skor %.3f, vision %.1f,%.1f, energi tepi b/a %.2f", best.name, best.score, Double(t.tx), Double(t.ty), sharp)
         return (best.dx / s, best.dy / s, how, sharp)
     }
 
