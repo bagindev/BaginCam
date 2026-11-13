@@ -960,3 +960,10 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   (12 terakhir, tidak ke galeri) untuk kalibrasi; fusi juga di Ultra Wide 48MP (0.5x).
 - Versi 0.18.5 (build 43). Build run 43420953671 sukses -> `data/builds/BaginCam-v0.18.5-unsigned.ipa`.
 - Foto tes di PC: `data/bursts/dcim-1113-*` (v012 .. v0184), total folder bursts 15 GB; D: sisa 4.9 GB.
+- Foto tambahan dari HP: IMG_6938-6947 -> `data/bursts/dcim-1113-siang/` (6938-6945 = malam 12 Nov, tele 5x;
+  6946-6947 = siang 13 Nov 11:41, proses Apple). IMG_6886-6937 sudah ada di folder dcim-1112-*.
+- Cahaya campur (restoran 13:10, `dcim-1113-v0122`): HDR+ 6975 vs Apple 6976 (adegan sama, 10 s beda):
+  luma rata-rata 97 vs 130 (HDR+ ~0.6 EV lebih gelap), HDR+ lebih dingin/kurang saturasi (RGB 130/90/74 vs
+  174/123/77); 6971/6973 (atas meja putih) luma 119-127. Penyebab kemungkinan: target kecerahan develop (rata-rata
+  linear > 0.30 -> turun ke 0.26) pada meja putih + LUT. Foto ini tidak bisa untuk kalibrasi fusi (tidak ada 48MP
+  bersamaan); dipakai untuk menilai tone/warna HDR+.
