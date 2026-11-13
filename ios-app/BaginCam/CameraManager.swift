@@ -397,6 +397,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
     private var burstNight = false
     private var burstAspect: AspectRatio = .r43
+    private var burstAngle: CGFloat = 90           // v0.18.3: sudut foto jepretan ini (dipasang ulang tiap capture)
     private var burstFlash: FlashSetting = .off
     private var burstLive = false
     private var livePending: (data: Data, name: String)?
@@ -1665,6 +1666,7 @@ final class CameraManager: NSObject, ObservableObject {
                 let sys = self.rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? -1
                 Log.camera.info("Orientasi foto: sensor gerak \(Double(a), privacy: .public), sistem \(Double(sys), privacy: .public)")
                 if c.isVideoRotationAngleSupported(a) { c.videoRotationAngle = a }
+                self.burstAngle = a
             }
             var frames = count
             var delay = m.isBurst ? 0.15 : 0.0
@@ -1732,6 +1734,8 @@ final class CameraManager: NSObject, ObservableObject {
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
+                    // v0.18.3: ukuran sensor dibaca ulang SETELAH pindah lensa (sebelumnya format 12MP -> 4224)
+                    nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
                     // v0.18.1: fusi 48MP butuh format lensa yang mendukung foto 48MP (jepretan pertama setelah
                     // app dibuka kadang format 12MP -> "sensor 4224", fusi dilewati, IMG_7004)
                     if fus && m == .hdrplus && !zoomed && !night && lensName == "Utama",
@@ -1848,7 +1852,17 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// v0.18.3: install() (pindah ke lensa fisik untuk HDR+/Super Res) mengembalikan sudut koneksi ke 90 ->
+    /// foto HDR+ lanskap tersimpan potret miring sejak awal (IMG_6962-6968, IMG_7013). Pasang ulang tiap capture.
+    private func applyBurstAngle() {
+        if let c = photoOutput.connection(with: .video), c.isVideoRotationAngleSupported(burstAngle),
+           c.videoRotationAngle != burstAngle {
+            c.videoRotationAngle = burstAngle
+        }
+    }
+
     private func captureNext() {
+        applyBurstAngle()
         if burstRemaining <= 0 && fusionPending {
             fusionPending = false
             setStatus("Foto detail 48MP...")

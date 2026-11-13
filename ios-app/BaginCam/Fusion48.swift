@@ -59,6 +59,11 @@ enum Fusion48 {
 
         // 1. geser HDR+ (bukan foto 48MP) supaya tone jatuh di tempat yang benar
         let al = align(at, ht, rect: rect)
+        // v0.18.3: foto 48MP buram (HP bergerak, IMG_7012) -> jangan dipakai, kembali ke HDR+ biasa
+        if al.sharpRatio < 0.85 {
+            Log.hdr.info("Fusi 48MP: dibatalkan - foto 48MP lebih buram dari HDR+ (rasio tajam \(al.sharpRatio, format: .fixed(precision: 2), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 0), privacy: .public),\(Double(al.dy), format: .fixed(precision: 0), privacy: .public) px)")
+            return nil
+        }
         var hAligned = ht
         if al.dx != 0 || al.dy != 0 {
             hAligned = ht.transformed(by: CGAffineTransform(translationX: al.dx, y: al.dy)).clampedToExtent().cropped(to: rect)
@@ -74,7 +79,7 @@ enum Fusion48 {
         let lowH = blur(hAligned, sigma, rect), lowA = blur(at, sigma, rect)
         guard let out = toneK.apply(extent: rect, arguments: [at, lowA, lowH, hAligned, gg, 0.45]) else { return nil }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        let note = String(format: "fusi 48MP (geser %.0f,%.0f px)", Double(al.dx), Double(al.dy))
+        let note = String(format: "fusi 48MP (geser %.0f,%.0f px, tajam %.2fx)", Double(al.dx), Double(al.dy), al.sharpRatio)
         Log.hdr.info("Fusi 48MP: \(Int(W), privacy: .public)x\(Int(H), privacy: .public), dasar foto48 + tone HDR+ sigma \(sigma, format: .fixed(precision: 1), privacy: .public), geser HDR+ \(Double(al.dx), format: .fixed(precision: 1), privacy: .public),\(Double(al.dy), format: .fixed(precision: 1), privacy: .public) px (\(al.how, privacy: .public)), rasio global \(Double(gg.x), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.y), format: .fixed(precision: 2), privacy: .public)/\(Double(gg.z), format: .fixed(precision: 2), privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return Result(image: out, note: note)
     }
@@ -122,14 +127,15 @@ enum Fusion48 {
 
     /// geser (piksel CI, y ke atas) yang menyejajarkan `a` ke `h`: Vision (translasi) lalu dicek
     /// dengan selisih luma ternormalisasi - pilih kandidat terbaik (termasuk tanpa geser).
-    private static func align(_ h: CIImage, _ a: CIImage, rect: CGRect) -> (dx: CGFloat, dy: CGFloat, how: String) {
+    /// sharpRatio = energi tepi a / h (di 1024 px): < 1 = a lebih buram
+    private static func align(_ h: CIImage, _ a: CIImage, rect: CGRect) -> (dx: CGFloat, dy: CGFloat, how: String, sharpRatio: Double) {
         let s: CGFloat = 1024 / max(rect.width, rect.height)
         let sw = Int((rect.width * s).rounded(.down)), sh = Int((rect.height * s).rounded(.down))
         let sr = CGRect(x: 0, y: 0, width: sw, height: sh)
         let hs = h.transformed(by: CGAffineTransform(scaleX: s, y: s)).cropped(to: sr)
         let asm = a.transformed(by: CGAffineTransform(scaleX: s, y: s)).cropped(to: sr)
         guard let hcg = ctx.createCGImage(hs, from: sr, format: .RGBA8, colorSpace: sRGB),
-              let acg = ctx.createCGImage(asm, from: sr, format: .RGBA8, colorSpace: sRGB) else { return (0, 0, "render gagal") }
+              let acg = ctx.createCGImage(asm, from: sr, format: .RGBA8, colorSpace: sRGB) else { return (0, 0, "render gagal", 1) }
         let req = VNTranslationalImageRegistrationRequest(targetedCGImage: acg)
         try? VNImageRequestHandler(cgImage: hcg).perform([req])
         let t = (req.results?.first as? VNImageTranslationAlignmentObservation)?.alignmentTransform ?? .identity
@@ -140,8 +146,27 @@ enum Fusion48 {
             let sc = score(hv, av, sw, sh, Int(dx.rounded()), Int(dy.rounded()))
             if sc < best.score { best = (dx, dy, sc, String(format: "vision %+.0f%+.0f", sx, sy)) }
         }
-        let how = String(format: "%@ skor %.3f, vision %.1f,%.1f", best.name, best.score, Double(t.tx), Double(t.ty))
-        return (best.dx / s, best.dy / s, how)
+        let sharp = Double(edge(hv, sw, sh)) > 0 ? Double(edge(av, sw, sh) / edge(hv, sw, sh)) : 1
+        let how = String(format: "%@ skor %.3f, vision %.1f,%.1f, tajam 48/HDR %.2f", best.name, best.score, Double(t.tx), Double(t.ty), sharp)
+        return (best.dx / s, best.dy / s, how, sharp)
+    }
+
+    /// energi tepi rata-rata (luma ternormalisasi) - ukuran ketajaman
+    private static func edge(_ v: [Float], _ w: Int, _ h: Int) -> Float {
+        var s: Float = 0
+        var n = 0
+        var y = 1
+        while y < h - 1 {
+            var x = 1
+            while x < w - 1 {
+                let p = y * w + x
+                s += abs(v[p + 1] - v[p - 1]) + abs(v[p + w] - v[p - w])
+                n += 1
+                x += 2
+            }
+            y += 2
+        }
+        return n > 0 ? s / Float(n) : 0
     }
 
     /// luma kecil, baris 0 = atas, dinormalisasi (rata-rata 0, simpangan 1)
