@@ -1164,4 +1164,24 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   diblurkan otomatis pakai Vision person segmentation."
 - Filename prefix: POTRET_Xf_RES.heic.
 - Commit `1f83a1b` + fix `10c0670`. Build `BaginCam-ipa/BaginCam-unsigned.ipa`.
-  Berikutnya: uji portrait di HP, cinematic video bokeh, dual video / camera switch.
+
+### Cek v0.24.0 + enhance portrait & face beauty (build 55)
+- **Log analysis**: 7 foto POTRET, semua "Portrait bokeh diterapkan" berhasil.
+  Face beauty v0.23.1 masih muncul di zoom path (build 53 lama), v0.24.0 sudah benar.
+- **Masalah ditemukan**:
+  1. Autofokus wajah gagal — kamera fokus ke titik tengah (0.5, 0.5) sebelum capture,
+     bukan ke wajah. Fix: portrait mode pakai `.continuousAutoFocus` (tidak override focus point),
+     biarkan face-driven AF bawaan Apple tetap aktif.
+  2. Tepian rambut kasar — Gaussian blur + blend bikin transisi hard edge.
+     Fix: ganti ke **CIMaskedVariableBlur** — blur per-piksel mengikuti mask gradual.
+     Inverted mask (person=0 tajam, background=1 blur) + edge feathering.
+  3. Bokeh intensity fixed — tambah slider "Kedalaman Bokeh" (10-100%) di panel Bantu.
+     10% = subtle (f/5.6), 50% = natural (f/2.8), 100% = kuat (f/1.4).
+     Max blur radius = minDim/60 × intensity.
+- **Face Beauty level** diganti dari toggle ke 3 level:
+  - Mati: tidak ada efek
+  - Standard: opacity 35%, blur 1x — halus natural
+  - Strong: opacity 65%, blur 1.8x — lebih mulus
+  Segmented picker di panel Bantu.
+- Commit `89169f3`. Build `BaginCam-unsigned.ipa`.
+  Berikutnya: uji di HP, cinematic video bokeh, dual video / camera switch.
