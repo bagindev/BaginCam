@@ -64,6 +64,7 @@ final class CameraManager: NSObject, ObservableObject {
     enum ShootMode: String, CaseIterable, Identifiable {
         case night = "MALAM"
         case photo = "FOTO"
+        case portrait = "POTRET"
         case video = "VIDEO"
         case pro = "PRO"
         var id: String { rawValue }
@@ -444,6 +445,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
     private var burstNight = false
     private var burstFaceBeauty = false
+    private var burstPortrait = false
     private var burstAspect: AspectRatio = .r43
     private var burstAngle: CGFloat = 90           // v0.18.3: sudut foto jepretan ini (dipasang ulang tiap capture)
     private var burstFlash: FlashSetting = .off
@@ -926,6 +928,7 @@ final class CameraManager: NSObject, ObservableObject {
         switch s {
         case .night: return .hdrplus
         case .photo: return p == .apple ? .heif : .hdrplus
+        case .portrait: return .hdrplus
         case .video: return .heif          // kamera virtual; sesi video diatur enterVideo()
         case .pro: return f == .proraw ? .proraw : (f == .bayer ? .bayer : .hdrplus)
         }
@@ -1804,6 +1807,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstAppleZoomAI = false
             self.burstNight = night
             self.burstFaceBeauty = self.faceBeauty
+            self.burstPortrait = self.shootMode == .portrait
             self.burstAspect = asp
             self.burstFlash = flashSet
             self.burstLive = liveReq
@@ -2384,14 +2388,19 @@ final class CameraManager: NSObject, ObservableObject {
                 if postT.hasPost { img = postT.post(img).settingProperties(img.properties) }
                 if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
                 var final = RawDeveloper.applyLUT(img, lut)
-                if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
+                if burstPortrait, let cg = RawDeveloper.cgImage(final),
+                   let b = Self.applyPortraitBokeh(cg) {
+                    final = CIImage(cgImage: b).settingProperties(final.properties)
+                    Log.sr.info("Portrait bokeh diterapkan")
+                } else if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
                    let b = Self.applyFaceBeauty(cg) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Face Beauty diterapkan")
                 }
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
-                    save(data, fileName: "\(burstNight ? "MALAM" : "HDRPLUS")_\(frames.count)f_\(res.label)\(lut != nil ? "_LUT" : "").\(ext)", dir: dir)
+                    let prefix = burstPortrait ? "POTRET" : (burstNight ? "MALAM" : "HDRPLUS")
+                    save(data, fileName: "\(prefix)_\(frames.count)f_\(res.label)\(lut != nil ? "_LUT" : "").\(ext)", dir: dir)
                     saved.append("\(ext.uppercased()) \(res.label)")
                     rendered = true
                 }
@@ -2485,6 +2494,11 @@ final class CameraManager: NSObject, ObservableObject {
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
+        if burstPortrait, let b = Self.applyPortraitBokeh(result) {
+            result = b
+            Log.sr.info("Portrait bokeh diterapkan (zoom)")
+        }
+
         var props = properties
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
         props.removeValue(forKey: kCGImagePropertyPixelWidth as String)
@@ -2567,6 +2581,32 @@ final class CameraManager: NSObject, ObservableObject {
         let result = blurred.applyingFilter("CIBlendWithMask", parameters: [
             "inputBackgroundImage": ci,
             "inputMaskImage": softMask
+        ])
+        return RawDeveloper.cgImage(result)
+    }
+
+    // MARK: portrait bokeh
+
+    static func applyPortraitBokeh(_ img: CGImage) -> CGImage? {
+        let segReq = VNGeneratePersonSegmentationRequest()
+        segReq.qualityLevel = .accurate
+        let handler = VNImageRequestHandler(cgImage: img, options: [:])
+        guard (try? handler.perform([segReq])) != nil,
+              let mask = segReq.results?.first?.pixelBuffer else { return nil }
+        let rawMask = CIImage(cvPixelBuffer: mask)
+        let sx = CGFloat(img.width) / rawMask.extent.width
+        let sy = CGFloat(img.height) / rawMask.extent.height
+        let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        let feather = Double(min(img.width, img.height)) / 300.0
+        let featheredMask = ciMask.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": feather])
+            .cropped(to: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+        let ci = CIImage(cgImage: img)
+        let bokehR = Double(min(img.width, img.height)) / 120.0
+        let bgBlurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": bokehR])
+            .cropped(to: ci.extent)
+        let result = ci.applyingFilter("CIBlendWithMask", parameters: [
+            "inputBackgroundImage": bgBlurred,
+            "inputMaskImage": featheredMask
         ])
         return RawDeveloper.cgImage(result)
     }

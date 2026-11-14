@@ -319,6 +319,8 @@ struct ContentView: View {
             }
         case .night:
             chip("MALAM", icon: "moon.stars.fill", on: true)
+        case .portrait:
+            chip("POTRET", icon: "person.crop.rectangle", on: true)
         case .video:
             chip("VIDEO", icon: "video.fill", on: true)
         case .pro:
@@ -1303,6 +1305,7 @@ struct ContentView: View {
         case .pro: return .white
         case .video: return .red
         case .photo: return cam.photoProcess == .apple ? .white : .yellow
+        case .portrait: return Color(red: 1.0, green: 0.85, blue: 0.4)
         }
     }
 
