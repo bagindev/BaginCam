@@ -332,6 +332,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var faceBeauty: Bool = Prefs.get("faceBeauty", false) { didSet { Prefs.set("faceBeauty", faceBeauty) } }
+    @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) { didSet { Prefs.set("bokehIntensity", bokehIntensity) } }
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
     @Published var pendingUpscale: URL?
@@ -446,6 +447,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstNight = false
     private var burstFaceBeauty = false
     private var burstPortrait = false
+    private var burstBokehIntensity: Double = 50
     private var burstAspect: AspectRatio = .r43
     private var burstAngle: CGFloat = 90           // v0.18.3: sudut foto jepretan ini (dipasang ulang tiap capture)
     private var burstFlash: FlashSetting = .off
@@ -620,12 +622,27 @@ final class CameraManager: NSObject, ObservableObject {
         }
         session.commitConfiguration()
         applyLive()
+        applyFaceAF(d)
         let flashOK = photoOutput.supportedFlashModes.contains(.on)
         let liveOK = photoOutput.isLivePhotoCaptureSupported
         DispatchQueue.main.async {
             self.flashAvailable = flashOK
             self.liveAvailable = liveOK
         }
+    }
+
+    private func applyFaceAF(_ d: AVCaptureDevice) {
+        guard (try? d.lockForConfiguration()) != nil else { return }
+        let want = shootMode == .portrait
+        if d.isAutoFocusFaceDrivenEnabled != want {
+            d.automaticallyAdjustsFaceDrivenAutoFocusEnabled = false
+            d.isAutoFocusFaceDrivenEnabled = want
+        }
+        if d.isAutoExposureFaceDrivenEnabled != want {
+            d.automaticallyAdjustsFaceDrivenAutoExposureEnabled = false
+            d.isAutoExposureFaceDrivenEnabled = want
+        }
+        d.unlockForConfiguration()
     }
 
     // MARK: kamera virtual (AI Zoom)
@@ -952,6 +969,7 @@ final class CameraManager: NSObject, ObservableObject {
         if !want { applyLiveSoon(want) }
         setMode(Self.internalMode(shootMode, photoProcess, proFormat))
         if want { applyLiveSoon(want) }
+        sessionQueue.async { if let d = self.device { self.applyFaceAF(d) } }
         if isVideo && !wasVideo { beginVideo() }
     }
 
@@ -1808,6 +1826,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstNight = night
             self.burstFaceBeauty = self.faceBeauty
             self.burstPortrait = self.shootMode == .portrait
+            self.burstBokehIntensity = self.bokehIntensity
             self.burstAspect = asp
             self.burstFlash = flashSet
             self.burstLive = liveReq
@@ -2389,7 +2408,7 @@ final class CameraManager: NSObject, ObservableObject {
                 if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
                 var final = RawDeveloper.applyLUT(img, lut)
                 if burstPortrait, let cg = RawDeveloper.cgImage(final),
-                   let b = Self.applyPortraitBokeh(cg) {
+                   let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Portrait bokeh diterapkan")
                 } else if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
@@ -2494,7 +2513,7 @@ final class CameraManager: NSObject, ObservableObject {
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
-        if burstPortrait, let b = Self.applyPortraitBokeh(result) {
+        if burstPortrait, let b = Self.applyPortraitBokeh(result, intensity: burstBokehIntensity) {
             result = b
             Log.sr.info("Portrait bokeh diterapkan (zoom)")
         }
@@ -2515,7 +2534,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let tz = Double(burstDisplayZoom)
         let prefix = burstAppleZoomAI ? "APPLEZOOM" : (burstMode == .aiZoom ? "AIZOOM"
-            : (burstMode == .hdrplus ? (burstNight ? "MALAM_ZOOM" : "SUPERRES") : "CROPZOOM"))
+            : (burstMode == .hdrplus ? (burstPortrait ? "POTRET_ZOOM" : (burstNight ? "MALAM_ZOOM" : "SUPERRES")) : "CROPZOOM"))
         let mfTag = multiFrame > 0 ? "_MF\(multiFrame)" : ""
         let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(burstSRModel == .detail ? "D" : "C")" : ""
         let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, burstLensName, mfTag, aiTag, res.label)
@@ -2587,7 +2606,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: portrait bokeh
 
-    static func applyPortraitBokeh(_ img: CGImage) -> CGImage? {
+    static func applyPortraitBokeh(_ img: CGImage, intensity: Double = 50) -> CGImage? {
         let segReq = VNGeneratePersonSegmentationRequest()
         segReq.qualityLevel = .accurate
         let handler = VNImageRequestHandler(cgImage: img, options: [:])
@@ -2597,17 +2616,23 @@ final class CameraManager: NSObject, ObservableObject {
         let sx = CGFloat(img.width) / rawMask.extent.width
         let sy = CGFloat(img.height) / rawMask.extent.height
         let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-        let feather = Double(min(img.width, img.height)) / 300.0
-        let featheredMask = ciMask.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": feather])
-            .cropped(to: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+        let bounds = CGRect(x: 0, y: 0, width: img.width, height: img.height)
+        // invert: person=0 (tajam), background=1 (blur) — CIMaskedVariableBlur blur per-piksel
+        let inverted = ciMask.applyingFilter("CIColorInvert")
+        // feather tepi mask agar transisi rambut/tepian halus
+        let feather = Double(min(img.width, img.height)) / 400.0
+        let blurMask = inverted
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": feather])
+            .cropped(to: bounds)
         let ci = CIImage(cgImage: img)
-        let bokehR = Double(min(img.width, img.height)) / 120.0
-        let bgBlurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": bokehR])
-            .cropped(to: ci.extent)
-        let result = ci.applyingFilter("CIBlendWithMask", parameters: [
-            "inputBackgroundImage": bgBlurred,
-            "inputMaskImage": featheredMask
-        ])
+        // radius blur skala berdasarkan intensity (0-100) dan ukuran gambar
+        let t = max(0, min(100, intensity)) / 100.0
+        let maxR = Double(min(img.width, img.height)) / 60.0
+        let bokehR = maxR * t
+        let result = ci.applyingFilter("CIMaskedVariableBlur", parameters: [
+            "inputMask": blurMask,
+            "inputRadius": bokehR
+        ]).cropped(to: bounds)
         return RawDeveloper.cgImage(result)
     }
 

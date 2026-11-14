@@ -1397,6 +1397,18 @@ private struct AssistPanel: View {
                     Text("Haluskan kulit wajah secara otomatis pakai segmentasi AI (Vision). Berlaku untuk foto (HDR+ dan Zoom). Area selain orang tetap tajam.")
                 }
                 Section {
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Kedalaman Bokeh")
+                            Spacer()
+                            Text("\(Int(cam.bokehIntensity))%").foregroundStyle(.secondary)
+                        }
+                        Slider(value: $cam.bokehIntensity, in: 10...100, step: 5)
+                    }
+                } header: { Text("Potret") } footer: {
+                    Text("Atur kekuatan blur latar belakang saat mode POTRET. 10% = subtle (f/5.6), 50% = natural (f/2.8), 100% = kuat (f/1.4). Autofokus wajah aktif otomatis di mode POTRET.")
+                }
+                Section {
                     Toggle("Focus peaking", isOn: $peaking)
                     if peaking {
                         Picker("Warna", selection: $peakColor) {
