@@ -1138,4 +1138,30 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Gaussian blur (radius 3.5) di-blend via CIBlendWithMask: area orang dihaluskan, background tajam.
   Diterapkan di akhir pipeline (setelah tuning/style/LUT) untuk HDR+ dan AI Zoom.
 - Commit `2486eeb`. Build `data/ipa-v0.23.1/BaginCam-ipa/BaginCam-unsigned.ipa`.
-  Berikutnya: uji drizzle + deconv + beauty di HP, uji face tracking, uji kontrol gimbal layar.
+
+### Fix: Face Beauty terlalu agresif (v0.23.1 lanjutan)
+- User report: foto jadi blur/"ga fokus" — face beauty terlalu kuat.
+- Penyebab: radius blur 3.5 diterapkan ke seluruh area person (termasuk mata, rambut, baju).
+  VNGeneratePersonSegmentationRequest menemukan "orang" bahkan di foto landscape tele 75x.
+- Fix: (1) tambah VNDetectFaceRectanglesRequest gate — wajah harus terdeteksi dulu,
+  (2) skip jika gambar < 400px, (3) mask diturunkan ke 40% opacity via CIColorMatrix inputAVector,
+  (4) radius blur di-scale berdasarkan ukuran gambar (1-3px, bukan fix 3.5),
+  (5) face beauty dihapus dari zoom path (hanya HDR+ non-zoom).
+- Commit `49c2343`.
+
+### Fitur: Mode Portrait / POTRET dengan bokeh AI (v0.24.0 build 54)
+- **Mode POTRET** ditambahkan di antara FOTO dan VIDEO di mode row.
+- Pipeline: HDR+ burst → merge → tuning/style/LUT → **portrait bokeh** → HEIC.
+- **Bokeh AI**: VNGeneratePersonSegmentationRequest quality `.accurate` → person mask.
+  Mask di-feather (Gaussian blur radius = minDim/300) untuk transisi halus tepi orang.
+  Background diblur (radius = minDim/120) → blend: orang tajam, latar belakang bokeh.
+- Diterapkan di kedua path: HDR+ non-zoom dan AI Zoom.
+- Portrait vs Face Beauty: portrait blur background (latar), face beauty blur foreground (kulit).
+  Portrait pakai `.accurate` quality (lebih lambat tapi mask lebih presisi).
+  Jika mode portrait aktif, face beauty di-skip (hanya salah satu).
+- UI: chip "POTRET" icon person.crop.rectangle, shutter color amber hangat.
+  Deskripsi di Settings Sheet: "HDR+ dengan bokeh AI: orang tetap tajam, latar belakang
+  diblurkan otomatis pakai Vision person segmentation."
+- Filename prefix: POTRET_Xf_RES.heic.
+- Commit `1f83a1b` + fix `10c0670`. Build `BaginCam-ipa/BaginCam-unsigned.ipa`.
+  Berikutnya: uji portrait di HP, cinematic video bokeh, dual video / camera switch.
