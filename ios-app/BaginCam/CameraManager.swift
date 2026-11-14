@@ -1803,7 +1803,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstAIFull = false
             self.burstAppleZoomAI = false
             self.burstNight = night
-            self.burstFaceBeauty = faceBeauty
+            self.burstFaceBeauty = self.faceBeauty
             self.burstAspect = asp
             self.burstFlash = flashSet
             self.burstLive = liveReq
