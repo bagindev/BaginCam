@@ -1288,3 +1288,28 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   chip matahari muncul saat kamera depan aktif.
 - Alat cek: `%TEMP%\claude\vidchk\dcim.py` + `parse.py` (baca moov dari DCIM tanpa menarik video).
 - Build `data/ipa-v0.26.3/BaginCam-unsigned.ipa`. **Belum diuji di HP.** D: tinggal 2.7 GB.
+
+### Cek build 62 + bokeh baru + menu dirapikan + fix lompat Ultra Wide + bidik video layar penuh (v0.27.0 build 64)
+- **Log / file build 62**: fix sinkron suara TERBUKTI - IMG_7105.MOV (2x ganti kamera): trek gambar 33.05 s,
+  trek suara 33.09 s; log `jeda suara diisi hening 0.68 s`. SINEMA 4K30 5-6 ms/frame. Tidak ada laporan crash.
+- **Bokeh POTRET baru** (`subjectMatte` + `applyPortraitBokeh`):
+  - Matte dari `VNGenerateForegroundInstanceMaskRequest` (fitur "angkat subjek" iOS 17, matte seukuran
+    gambar, tepi rambut jauh lebih halus). Bila ada orang, hanya objek yang >= 25 % areanya tertutup mask
+    orang yang dipakai; tanpa hasil -> jatuh ke segmentasi orang; tanpa keduanya -> foto dibiarkan tajam.
+  - Latar diblur TANPA subjek: subjek dibuat transparan (alpha = 1 - matte), CIDiscBlur di 1/4 resolusi
+    pada warna premultiplied, lalu dinormalkan (CIColorMatrix alpha = 1) -> warna subjek tidak bocor ke
+    latar (halo di sekeliling rambut/bahu hilang). Blur cakram, bukan Gaussian.
+  - Log: `Bokeh: matte <subjek n dari m | segmentasi orang>, kekuatan x%, radius y px, z s`.
+- **Percantik wajah** sekarang juga jalan di POTRET (dulu dilewati bila bokeh aktif).
+- **Baris chip atas**: chip label "POTRET" dihapus, diganti chip Bokeh (25/50/75/100 %); chip Percantik
+  (Mati/Standard/Strong) di FOTO & POTRET; chip Bokeh juga di SINEMA.
+- **Panel Bantu** disusun ulang per mode: Wajah & Bokeh -> AI Komposisi (foto) / Video (layar penuh,
+  face tracking, garis bingkai) -> Tampilan layar (grid, waterpass, histogram, peaking, zebra) -> Gimbal.
+- **Fix FOTO lompat ke Ultra Wide setelah ganti mode**: keluar dari VIDEO memasang preset foto, yang
+  mengembalikan videoZoomFactor kamera virtual ke 1 (= Ultra Wide) sementara layar tetap menulis 1x.
+  `reapplyZoom()` memasang ulang zoom setelah `leaveVideo()`. Log: `Zoom dipasang ulang setelah keluar VIDEO`.
+  (Dugaan dari kode - belum ada bukti log; baris log itu akan membuktikannya.)
+- **Jendela bidik video layar penuh** (VIDEO / SINEMA / DUAL): preview selebar layar, kontrol melayang
+  di atasnya dengan gradasi gelap. Saklar: Bantu > Video > "Jendela bidik layar penuh" (default nyala).
+  Hanya tata letak, tidak menambah beban proses.
+- Build 63 & 64 sukses. Build `data/ipa-v0.27.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
