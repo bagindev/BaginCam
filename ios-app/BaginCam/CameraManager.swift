@@ -338,6 +338,11 @@ final class CameraManager: NSObject, ObservableObject {
     var motionLevel: (() -> Double)?
     // kontrol manual per bagian (laci Pro): eksposur / WB / fokus
     @Published private(set) var manualExposure = false
+    /// v0.20: aperture variabel (iPhone 18 Pro / Pro Max, iOS 27). 0 = auto. Hanya lensa fisik yang dukung eksposur custom.
+    @Published var aperture: Float = 0 { didSet { if aperture != oldValue { applyManual() } } }
+    /// nilai f yang bisa dipilih (kosong = lensa aperture tetap, mis. iPhone 16/17 Pro Max)
+    @Published private(set) var apertureStops: [Float] = []
+    @Published private(set) var liveAperture: Float = 0
     @Published private(set) var manualWB = false
     @Published private(set) var manualFocus = false
     // foto terakhir (thumbnail + penampil)
@@ -845,9 +850,23 @@ final class CameraManager: NSObject, ObservableObject {
             || photoOutput.isAppleProRAWEnabled   // saat ProRAW aktif, daftar Bayer disembunyikan
         let pro = photoOutput.isAppleProRAWSupported
         let mp = maxDimensions(of: d).map { Int($0.width) * Int($0.height) / 1_000_000 } ?? 12
+        var stops: [Float] = []
+        if #available(iOS 27.0, *) {
+            // kamera virtual (Auto): baca dari lensa utama di dalamnya (aperture dipakai saat jepret di lensa fisik)
+            let af = d.isVirtualDevice ? (d.constituentDevices.first { $0.deviceType == .builtInWideAngleCamera }?.activeFormat ?? fmt) : fmt
+            let lo = af.minLensAperture, hi = af.maxLensAperture
+            if lo > 0 && hi > lo + 0.05 {
+                for f in [lo, 1.8, 2.8, 4.0, 5.6, hi] where f >= lo - 0.01 && f <= hi + 0.01 && !stops.contains(where: { abs($0 - f) < 0.15 }) {
+                    stops.append(f)
+                }
+                stops.sort()
+                Log.camera.info("Lensa \(label, privacy: .public): aperture variabel f/\(lo, privacy: .public)-f/\(hi, privacy: .public)")
+            }
+        }
         Log.camera.info("Lensa \(label, privacy: .public): ISO \(fmt.minISO, privacy: .public)-\(fmt.maxISO, privacy: .public), shutter \(minS, privacy: .public)-\(maxS, privacy: .public)s, Bayer \(bayer, privacy: .public), ProRAW \(pro, privacy: .public), maks \(mp, privacy: .public)MP")
         DispatchQueue.main.async {
             self.isoRange = fmt.minISO...fmt.maxISO
+            self.apertureStops = stops
             self.shutterRange = minS...maxS
             self.supportsBayer = bayer
             self.supportsProRAW = pro
@@ -984,6 +1003,27 @@ final class CameraManager: NSObject, ObservableObject {
     private struct ManualState {
         var exposure = false, wb = false, focus = false
         var iso: Float = 400, shutter: Double = 1.0 / 60, temp: Float = 5500, lens: Float = 0.5
+        var aperture: Float = 0
+    }
+
+    /// v0.20: iOS 27 - aperture + (shutter, ISO) atau prioritas aperture (shutter & ISO auto). device sudah di-lock.
+    private static func applyAperture(_ d: AVCaptureDevice, _ f: Float, duration: CMTime?, iso: Float?) -> Bool {
+        guard f > 0 else { return false }
+        if #available(iOS 27.0, *) {
+            let fmt = d.activeFormat
+            guard fmt.maxLensAperture > fmt.minLensAperture + 0.05 else { return false }
+            let a = min(max(f, fmt.minLensAperture), fmt.maxLensAperture)
+            let dur = duration ?? AVCaptureDevice.autoExposureDuration
+            let i = iso ?? AVCaptureDevice.autoISO
+            guard fmt.supportsExposureModeCustom(lensAperture: a, duration: dur, iso: i) else {
+                Log.camera.info("Aperture f/\(a, privacy: .public): kombinasi tidak didukung (manual \(duration != nil, privacy: .public))")
+                return false
+            }
+            d.setExposureModeCustom(lensAperture: a, duration: dur, iso: i, completionHandler: nil)
+            Log.camera.info("Aperture f/\(a, privacy: .public) \(duration == nil ? "prioritas aperture" : "manual", privacy: .public)")
+            return true
+        }
+        return false
     }
     private var manualS = ManualState()   // sessionQueue
 
@@ -1000,10 +1040,16 @@ final class CameraManager: NSObject, ObservableObject {
         if m.exposure {
             if d.isExposureModeSupported(.custom) {
                 let s = min(max(m.shutter, fmt.minExposureDuration.seconds), fmt.maxExposureDuration.seconds)
-                d.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
-                                        iso: min(max(m.iso, fmt.minISO), fmt.maxISO), completionHandler: nil)
+                let t = CMTime(seconds: s, preferredTimescale: 1_000_000_000)
+                let i = min(max(m.iso, fmt.minISO), fmt.maxISO)
+                if !Self.applyAperture(d, m.aperture, duration: t, iso: i) {
+                    d.setExposureModeCustom(duration: t, iso: i, completionHandler: nil)
+                }
             }
-        } else if all || prev.exposure {
+        } else if m.aperture > 0, d.isExposureModeSupported(.custom),
+                  Self.applyAperture(d, m.aperture, duration: nil, iso: nil) {
+            // prioritas aperture: shutter & ISO diatur otomatis
+        } else if all || prev.exposure || prev.aperture > 0 {
             if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
             d.setExposureTargetBias(min(max(evBiasSession, d.minExposureTargetBias), d.maxExposureTargetBias), completionHandler: nil)
         }
@@ -1028,7 +1074,7 @@ final class CameraManager: NSObject, ObservableObject {
     /// Kirim nilai manual ke kamera.
     func applyManual() {
         let st = ManualState(exposure: manualExposure, wb: manualWB, focus: manualFocus,
-                             iso: iso, shutter: shutter, temp: temperature, lens: lensPosition)
+                             iso: iso, shutter: shutter, temp: temperature, lens: lensPosition, aperture: aperture)
         sessionQueue.async {
             let prev = self.manualS
             self.manualS = st
@@ -1067,6 +1113,7 @@ final class CameraManager: NSObject, ObservableObject {
         let s = d.exposureDuration.seconds
         liveShutter = s.isFinite ? s : 0
         liveLens = d.lensPosition.isFinite ? d.lensPosition : 0
+        liveAperture = d.lensAperture
         activeLensLabel = lensLabel(for: d)
         let macro = d.isVirtualDevice && d.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && totalZoom >= 0.95
         if macro != macroActive { macroActive = macro }
@@ -1705,6 +1752,7 @@ final class CameraManager: NSObject, ObservableObject {
             var nativeLong = 4032
             let srcISO = self.device?.iso ?? 400
             let srcDur = self.device?.exposureDuration.seconds ?? 1.0 / 30
+            let srcAp = self.device?.lensAperture ?? 0
             let virtualWide = self.isVirtual ? self.wideBase : 1
             if let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
                 base = self.lensBase[p.deviceType] ?? 1
@@ -1800,8 +1848,23 @@ final class CameraManager: NSObject, ObservableObject {
                         let pf = p.activeFormat
                         if p.isExposureModeSupported(.custom) {
                             let s = min(max(srcDur, pf.minExposureDuration.seconds), pf.maxExposureDuration.seconds)
-                            p.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
-                                                    iso: min(max(srcISO, pf.minISO), pf.maxISO), completionHandler: nil)
+                            // v0.20: aperture pilihan (iPhone 18 Pro) -> eksposur dikompensasi (f/a vs f/asal)^2:
+                            // shutter dulu sampai 1/30 s, sisanya ISO
+                            var apDone = false
+                            let fA = self.manualS.aperture
+                            if fA > 0 && srcAp > 0 {
+                                let k = Double(fA / srcAp) * Double(fA / srcAp)
+                                let tot = srcDur * Double(srcISO) * k
+                                let t2 = min(max(srcDur * k > srcDur ? min(srcDur * k, max(srcDur, 1.0 / 30)) : srcDur * k,
+                                                 pf.minExposureDuration.seconds), pf.maxExposureDuration.seconds)
+                                let i2 = min(max(Float(tot / t2), pf.minISO), pf.maxISO)
+                                apDone = Self.applyAperture(p, fA, duration: CMTime(seconds: t2, preferredTimescale: 1_000_000_000), iso: i2)
+                                Log.camera.info("Capture aperture f/\(fA, privacy: .public) (asal f/\(srcAp, privacy: .public)): \(t2, privacy: .public)s ISO \(i2, privacy: .public), \(apDone ? "ok" : "tidak didukung", privacy: .public)")
+                            }
+                            if !apDone {
+                                p.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
+                                                        iso: min(max(srcISO, pf.minISO), pf.maxISO), completionHandler: nil)
+                            }
                         }
                         if let tt, p.isWhiteBalanceModeSupported(.locked), p.maxWhiteBalanceGain >= 1 {
                             p.setWhiteBalanceModeLocked(with: Self.clamp(p.deviceWhiteBalanceGains(for: tt), p.maxWhiteBalanceGain),

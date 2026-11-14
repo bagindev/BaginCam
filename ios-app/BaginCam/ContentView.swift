@@ -31,13 +31,14 @@ struct ContentView: View {
     @State private var showAssist = false
 
     enum ProControl: String, CaseIterable, Identifiable {
-        case ev = "EV", iso = "ISO", shutter = "Shutter", wb = "WB", focus = "Fokus", timer = "Timer"
+        case ev = "EV", iso = "ISO", shutter = "Shutter", aperture = "Aperture", wb = "WB", focus = "Fokus", timer = "Timer"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .ev: return "plusminus.circle"
             case .iso: return "camera.aperture"
             case .shutter: return "timer"
+            case .aperture: return "f.cursive"
             case .wb: return "thermometer.medium"
             case .focus: return "scope"
             case .timer: return "clock"
@@ -1001,7 +1002,8 @@ struct ContentView: View {
         VStack(spacing: 8) {
             proRuler
             HStack(spacing: 0) {
-                ForEach(ProControl.allCases) { c in
+                // v0.20: tab Aperture hanya di HP dengan aperture variabel (iPhone 18 Pro / Pro Max)
+                ForEach(ProControl.allCases.filter { $0 != .aperture || !cam.apertureStops.isEmpty }) { c in
                     Button { proControl = c } label: {
                         VStack(spacing: 2) {
                             Image(systemName: c.icon).font(.body)
@@ -1027,6 +1029,7 @@ struct ContentView: View {
         switch c {
         case .ev: return cam.evBias != 0
         case .iso, .shutter: return cam.manualExposure
+        case .aperture: return cam.aperture > 0
         case .wb: return cam.manualWB
         case .focus: return cam.manualFocus
         case .timer: return cam.timerSeconds > 0
@@ -1074,6 +1077,18 @@ struct ContentView: View {
                                           cam.lensPosition = v
                                           cam.applyManual()
                                       }), in: 0...1)
+            }
+        case .aperture:
+            HStack(spacing: 8) {
+                Text("Aperture").font(.caption).frame(width: 56, alignment: .leading)
+                Picker("Aperture", selection: $cam.aperture) {
+                    Text("A").tag(Float(0))
+                    ForEach(cam.apertureStops, id: \.self) { f in Text(String(format: "f/%.1f", f)).tag(f) }
+                }
+                .pickerStyle(.segmented)
+                Text(cam.liveAperture > 0 ? String(format: "f/%.1f", cam.liveAperture) : "-")
+                    .font(.caption.monospacedDigit()).frame(width: 40, alignment: .trailing)
+                    .foregroundStyle(cam.aperture > 0 ? .yellow : .white)
             }
         case .timer:
             HStack {
