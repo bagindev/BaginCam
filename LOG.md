@@ -1092,4 +1092,40 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - ContentView: gimbalZoomStrip overlay di trailing preview.
 - Tetap bisa pinch-zoom dan zoomRow horizontal biasa.
 - Commit `df24408`. Build `data/builds/BaginCam-v0.22.1-b50-mimo-unsigned.ipa`.
-  Berikutnya: uji kontrol layar di gimbal, uji face tracking.
+
+## Sesi 51: Fix zoom malam burem + Drizzle super-resolution + Deconvolution
+
+### Fix: zoom malam 1 frame → multi-frame merge (v0.22.2 build 51)
+- Bug: foto zoom malam (50x, mode FOTO) menggunakan 1 frame HEIF padahal auto-process mendeteksi gelap
+  (ISO×t=61 → HDR+). Penyebab: alur zoom `fullCrop` selalu memaksa HEIF 1 frame terlepas kondisi cahaya.
+- Fix: variabel `darkCrop` mendeteksi (mode HDR+ + zoomed + fullCrop) → paksa multi-frame burst merge
+  sebelum crop. Noise dikurangi dari rata-rata beberapa frame, lalu crop + AI upscale.
+- CameraManager.swift baris 1859-1863: `darkCrop` override `bayerBurst` dan `singleFull`.
+- Commit `73864a8`.
+
+### Fitur: Drizzle 2x sub-pixel super-resolution (v0.23.0 build 52)
+- Teknik astrofotografi "drizzle" (Fruchter & Hook 2002) diadaptasi untuk burst handheld:
+  tremor tangan alami menggeser tiap frame sebagian piksel → akumulasi di grid 2x menghasilkan
+  resolusi efektif 2x lipat (400px → 800px sumber nyata untuk AI upscale).
+- **3 kernel Metal baru** di HDRPlus.metal:
+  - `refine_subpx`: refinement sub-piksel parabolic dari alignment integer pyramid (SAD 5 titik → float2)
+  - `drizzle_warp_acc`: warp 1 frame ke grid 2x crop dengan interpolasi bilinear + akumulasi
+  - `drizzle_to_bayer`: normalisasi akumulator → Bayer uint16
+- HDRPlusMerger.swift: method `mergeDrizzle()` — alignment pyramid + sub-pixel refinement + drizzle
+  hanya di area crop (memori ~2 MB, sangat cepat vs merge penuh).
+- CameraManager.swift: saat zoom multi-frame (≥3 frame), coba drizzle dulu. Jika sukses: develop
+  DNG 2x crop → processAIZoomImage(cropOverride: 1). Fallback ke merge biasa jika gagal.
+- Untuk 50x zoom: crop 400×300 → drizzle 800×600 (4x lebih banyak piksel nyata) → SR 4x → output
+  jauh lebih tajam.
+- Commit `f63e74a`. Build `data/ipa-v0.23.0/BaginCam-unsigned.ipa`.
+
+### Fitur: Deconvolution + adaptive luminance sharpening
+- **Deconvolution** (CIUnsharpMask terkalibrasi): diterapkan ke sumber crop SEBELUM AI upscale.
+  Parameter otomatis berdasarkan lensa (tele/utama), crop factor, malam/siang, jumlah frame merge.
+  Sigma: tele 50x → 1.2, tele 10x → 0.9. Alpha: siang 0.6, malam 0.25 (x1.3 jika ≥6 frame merge).
+  Mengembalikan ~20-30% ketajaman yang hilang akibat difraksi lensa.
+- **Adaptive luminance sharpening** (CISharpenLuminance): diterapkan SETELAH AI upscale.
+  Hanya menajamkan channel luminance → mempertahankan transisi warna halus tanpa artefak chroma.
+  Kekuatan dikurangi saat malam (0.25 vs 0.45).
+- Commit `60b5e2c`.
+  Berikutnya: uji drizzle + deconv di HP, uji face tracking, uji kontrol gimbal layar.
