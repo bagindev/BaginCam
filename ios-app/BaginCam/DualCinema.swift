@@ -94,10 +94,11 @@ final class CinematicProcessor {
 
 // MARK: - DUAL: kamera belakang + depan sekaligus (picture-in-picture)
 
-/// Sesi multi-kamera sendiri. configure/start/stop/setZoom dari antrean sesi; frame & `swapped` di antrean video.
+/// Sesi multi-kamera sendiri. configure/setZoom dari antrean sesi; frame, `swapped`, `pipCenter` di antrean video.
 final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     static var supported: Bool { AVCaptureMultiCamSession.isMultiCamSupported }
-    static let outW = 1080, outH = 1920
+    /// kotak kecil = 30 % lebar & tinggi frame
+    static let pipScale: CGFloat = 0.3
 
     let session = AVCaptureMultiCamSession()
     private let backOut = AVCaptureVideoDataOutput()
@@ -105,21 +106,25 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
     private let audioOut = AVCaptureAudioDataOutput()
     private var backDevice: AVCaptureDevice?
     private(set) var hasAudio = false
+    private(set) var outW = 1080, outH = 1920
+    /// lensa belakang fisik; nil = kamera virtual (iOS pindah lensa sendiri mengikuti zoom, juga saat merekam)
+    private(set) var backLens: CameraManager.Lens?
+    /// zoom di layar saat videoZoomFactor = 1
+    private(set) var backBase: CGFloat = 1
+    private(set) var backName = ""
     /// true = kamera depan jadi gambar utama, belakang jadi kotak kecil
     var swapped = false
+    /// pusat kotak kecil, 0..1 dari kiri-atas frame
+    var pipCenter = CGPoint(x: 0.817, y: 0.228)
     var onVideo: ((CVPixelBuffer, CMTime) -> Void)?
     var onAudio: ((CMSampleBuffer) -> Void)?
 
-    private var latestBack: CVPixelBuffer?
     private var latestFront: CVPixelBuffer?
     private let ctx = CIContext(options: [.cacheIntermediates: false])
     private var pool: CVPixelBufferPool?
-    private lazy var pipRect: CGRect = {
-        let w = CGFloat(Self.outW) * 0.3, h = CGFloat(Self.outH) * 0.3
-        return CGRect(x: CGFloat(Self.outW) - w - 36, y: CGFloat(Self.outH) - h - 150, width: w, height: h)
-    }()
-    private lazy var pipMask = Self.roundedRect(pipRect, radius: 26)
-    private lazy var pipBorder = Self.roundedRect(pipRect.insetBy(dx: -5, dy: -5), radius: 31)
+    private var maskRect = CGRect.null
+    private var pipMask = CIImage.empty()
+    private var pipBorder = CIImage.empty()
 
     private static func roundedRect(_ r: CGRect, radius: CGFloat) -> CIImage {
         CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
@@ -127,19 +132,44 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         ])?.outputImage?.cropped(to: r) ?? CIImage(color: .white).cropped(to: r)
     }
 
-    private static func pickFormat(_ d: AVCaptureDevice) -> AVCaptureDevice.Format? {
-        func ok(_ f: AVCaptureDevice.Format, _ w: Int32, _ h: Int32) -> Bool {
-            let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-            let sub = CMFormatDescriptionGetMediaSubType(f.formatDescription)
-            return f.isMultiCamSupported && dim.width == w && dim.height == h
-                && (sub == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-                && f.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
-        }
-        return d.formats.first { ok($0, 1920, 1080) } ?? d.formats.first { ok($0, 1280, 720) }
+    private static func multiCamOK(_ f: AVCaptureDevice.Format) -> Bool {
+        let sub = CMFormatDescriptionGetMediaSubType(f.formatDescription)
+        return f.isMultiCamSupported
+            && (sub == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+            && f.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
     }
 
-    private func addCamera(_ d: AVCaptureDevice, out: AVCaptureVideoDataOutput, mirrored: Bool, queue: DispatchQueue) -> Bool {
-        guard let fmt = Self.pickFormat(d), let input = try? AVCaptureDeviceInput(device: d),
+    private static func pickFormat(_ d: AVCaptureDevice, uhd: Bool) -> AVCaptureDevice.Format? {
+        let sizes: [(Int32, Int32)] = uhd ? [(3840, 2160), (1920, 1080), (1280, 720)] : [(1920, 1080), (1280, 720)]
+        for (w, h) in sizes {
+            if let f = d.formats.first(where: { f in
+                let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+                return multiCamOK(f) && dim.width == w && dim.height == h
+            }) { return f }
+        }
+        return nil
+    }
+
+    /// untuk log: ukuran format multi-kamera yang disediakan iOS per kamera
+    static func describeFormats() -> String {
+        let types: [(String, AVCaptureDevice.DeviceType, AVCaptureDevice.Position)] = [
+            ("virtual", .builtInTripleCamera, .back), ("utama", .builtInWideAngleCamera, .back),
+            ("uw", .builtInUltraWideCamera, .back), ("tele", .builtInTelephotoCamera, .back),
+            ("depan", .builtInWideAngleCamera, .front)]
+        return types.map { name, t, pos in
+            guard let d = AVCaptureDevice.default(t, for: .video, position: pos) else { return "\(name): -" }
+            var seen: [String] = []
+            for f in d.formats where multiCamOK(f) {
+                let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+                let k = "\(dim.width)x\(dim.height)"
+                if !seen.contains(k) { seen.append(k) }
+            }
+            return "\(name): \(seen.isEmpty ? "tidak ada" : seen.joined(separator: " "))"
+        }.joined(separator: "; ")
+    }
+
+    private func addCamera(_ d: AVCaptureDevice, out: AVCaptureVideoDataOutput, mirrored: Bool, uhd: Bool, queue: DispatchQueue) -> Bool {
+        guard let fmt = Self.pickFormat(d, uhd: uhd), let input = try? AVCaptureDeviceInput(device: d),
               session.canAddInput(input) else { return false }
         session.addInputWithNoConnections(input)
         if (try? d.lockForConfiguration()) != nil {
@@ -147,7 +177,6 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
             let dur = CMTime(value: 1, timescale: 30)
             d.activeVideoMinFrameDuration = dur
             d.activeVideoMaxFrameDuration = dur
-            d.videoZoomFactor = 1
             d.unlockForConfiguration()
         }
         out.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -167,15 +196,32 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         return true
     }
 
-    func configure(queue: DispatchQueue) -> Bool {
-        guard Self.supported,
-              let back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else { return false }
+    /// lens nil = kamera virtual belakang. uhd = coba 4K untuk kamera belakang (depan tetap 1080p).
+    func configure(queue: DispatchQueue, lens: CameraManager.Lens?, uhd: Bool, zoom: CGFloat) -> Bool {
+        guard Self.supported, let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else { return false }
+        let back: AVCaptureDevice
+        if let lens {
+            guard let d = AVCaptureDevice.default(lens.deviceType, for: .video, position: .back) else { return false }
+            back = d
+            backBase = lens == .ultraWide ? 0.5 : (lens == .tele ? CameraManager.teleNative : 1)
+        } else {
+            guard let d = AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back)
+                    ?? AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) else { return false }
+            back = d
+            let sw = d.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat($0.doubleValue) } ?? 1
+            backBase = d.constituentDevices.first?.deviceType == .builtInUltraWideCamera ? 1 / max(sw, 1) : 1
+        }
+        backLens = lens
+        backName = lens?.displayName ?? "Auto"
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        guard addCamera(back, out: backOut, mirrored: false, queue: queue),
-              addCamera(front, out: frontOut, mirrored: true, queue: queue) else { return false }
+        guard addCamera(back, out: backOut, mirrored: false, uhd: uhd, queue: queue),
+              addCamera(front, out: frontOut, mirrored: true, uhd: false, queue: queue) else { return false }
         backDevice = back
+        let dim = CMVideoFormatDescriptionGetDimensions(back.activeFormat.formatDescription)
+        outW = Int(dim.height)
+        outH = Int(dim.width)
+        _ = setZoom(zoom)
         if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
            let mic = AVCaptureDevice.default(for: .audio), let inp = try? AVCaptureDeviceInput(device: mic),
            session.canAddInput(inp), session.canAddOutput(audioOut) {
@@ -195,17 +241,20 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         return true
     }
 
-    func setZoom(_ z: CGFloat) {
-        guard let d = backDevice, (try? d.lockForConfiguration()) != nil else { return }
-        d.videoZoomFactor = min(max(z, d.minAvailableVideoZoomFactor), min(d.maxAvailableVideoZoomFactor, 6))
+    /// zoom di layar (1x = lensa utama) -> zoom yang benar-benar terpasang
+    func setZoom(_ z: CGFloat) -> CGFloat {
+        guard let d = backDevice, (try? d.lockForConfiguration()) != nil else { return z }
+        let maxF = min(d.maxAvailableVideoZoomFactor, backLens == nil ? 15 / backBase : 6)
+        let f = min(max(z / backBase, d.minAvailableVideoZoomFactor), maxF)
+        d.videoZoomFactor = f
         d.unlockForConfiguration()
+        return f * backBase
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         if output === audioOut { onAudio?(sampleBuffer); return }
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         if output === frontOut { latestFront = pb; return }
-        latestBack = pb
         // kamera belakang jadi jam: satu frame keluaran per frame belakang
         let main = swapped ? (latestFront ?? pb) : pb
         let small = swapped ? pb : latestFront
@@ -224,7 +273,7 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
     private func compose(main: CVPixelBuffer, small: CVPixelBuffer?) -> CVPixelBuffer? {
         if pool == nil {
             let attrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                                        kCVPixelBufferWidthKey as String: Self.outW, kCVPixelBufferHeightKey as String: Self.outH,
+                                        kCVPixelBufferWidthKey as String: outW, kCVPixelBufferHeightKey as String: outH,
                                         kCVPixelBufferIOSurfacePropertiesKey as String: [:]]
             CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
         }
@@ -232,11 +281,20 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         var dst: CVPixelBuffer?
         CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
         guard let dst else { return nil }
-        let full = CGRect(x: 0, y: 0, width: Self.outW, height: Self.outH)
+        let W = CGFloat(outW), H = CGFloat(outH)
+        let full = CGRect(x: 0, y: 0, width: W, height: H)
         var img = fit(main, into: full)
         if let small {
+            let w = W * Self.pipScale, h = H * Self.pipScale
+            let r = CGRect(x: pipCenter.x * W - w / 2, y: (1 - pipCenter.y) * H - h / 2, width: w, height: h).integral
+            if r != maskRect {
+                maskRect = r
+                let b = (w * 0.015).rounded()
+                pipMask = Self.roundedRect(r, radius: w * 0.08)
+                pipBorder = Self.roundedRect(r.insetBy(dx: -b, dy: -b), radius: w * 0.08 + b)
+            }
             let bg = pipBorder.composited(over: img)
-            img = fit(small, into: pipRect).applyingFilter("CIBlendWithMask", parameters: [
+            img = fit(small, into: r).applyingFilter("CIBlendWithMask", parameters: [
                 kCIInputBackgroundImageKey: bg, kCIInputMaskImageKey: pipMask,
             ]).cropped(to: full)
         }

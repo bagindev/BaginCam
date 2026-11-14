@@ -365,6 +365,12 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { let c = videoKind == .cinematic; videoQueue.async { self.cineOn = c } }
     }
     @Published private(set) var dualSwapped = false
+    /// pusat kotak kecil DUAL, 0..1 dari kiri-atas preview
+    @Published private(set) var dualPip = CGPoint(x: 0.817, y: 0.228)
+    private var dualSwapS = false                           // sessionQueue
+    private var dualPipS = CGPoint(x: 0.817, y: 0.228)      // sessionQueue
+    private var dualBadLens: Set<Lens> = []                 // sessionQueue: lensa tanpa format multi-kamera
+    private var dualFormatsLogged = false                   // sessionQueue
     let dualSupported = DualCam.supported
     private var cineOn = false                              // videoQueue
     private var cineIntensity: Double = Prefs.get("bokehIntensity", 50.0)   // videoQueue
@@ -802,9 +808,10 @@ final class CameraManager: NSObject, ObservableObject {
     /// Zoom total (1x = lensa utama). Panggil dari main thread.
     func setTotalZoom(_ z: CGFloat) {
         if videoKind == .dual {
-            let zz = min(max(1, z), 6)
+            let zz = min(max(availableLenses.contains(.ultraWide) ? 0.5 : 1, z), 15)
             totalZoom = zz
-            sessionQueue.async { self.dual?.setZoom(zz) }
+            let rec = isRecording
+            sessionQueue.async { self.dualZoom(zz, canSwitch: !rec) }
             return
         }
         var minZ: CGFloat = 1
@@ -1037,32 +1044,104 @@ final class CameraManager: NSObject, ObservableObject {
         guard videoKind == .dual else { return }
         dualSwapped.toggle()
         let v = dualSwapped
-        sessionQueue.async { let dc = self.dual; self.videoQueue.async { dc?.swapped = v } }
+        sessionQueue.async { self.dualSwapS = v; let dc = self.dual; self.videoQueue.async { dc?.swapped = v } }
+    }
+
+    /// main: geser kotak kecil (pusat 0..1 dari kiri-atas), dijaga tetap di dalam frame
+    func setDualPip(_ p: CGPoint) {
+        let m = DualCam.pipScale / 2 + 0.02
+        let c = CGPoint(x: min(max(p.x, m), 1 - m), y: min(max(p.y, m), 1 - m))
+        dualPip = c
+        sessionQueue.async { self.dualPipS = c; let dc = self.dual; self.videoQueue.async { dc?.pipCenter = c } }
+    }
+
+    /// sessionQueue: sesi DUAL baru. lens nil = coba kamera virtual dulu, lalu lensa utama. 4K dicoba bila resolusi video 4K.
+    private func makeDual(lens: Lens?, zoom: CGFloat) -> DualCam? {
+        if !dualFormatsLogged {
+            dualFormatsLogged = true
+            Log.camera.info("DUAL: format multi-kamera -> \(DualCam.describeFormats(), privacy: .public)")
+        }
+        var tries: [(Lens?, Bool)] = []
+        for uhd in (videoSnap.res == .uhd ? [true, false] : [false]) {
+            if lens == nil { tries.append((nil, uhd)) }
+            tries.append((lens ?? .wide, uhd))
+        }
+        for (l, uhd) in tries {
+            let dc = DualCam()
+            let name = l?.displayName ?? "Auto"
+            guard dc.configure(queue: videoQueue, lens: l, uhd: uhd, zoom: zoom) else {
+                Log.camera.info("DUAL: lensa \(name, privacy: .public) (4K \(uhd, privacy: .public)) tidak bisa disiapkan")
+                continue
+            }
+            guard dc.session.hardwareCost <= 1 else {
+                Log.camera.info("DUAL: lensa \(name, privacy: .public) \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) terlalu berat (biaya \(dc.session.hardwareCost, privacy: .public))")
+                continue
+            }
+            return dc
+        }
+        return nil
+    }
+
+    /// sessionQueue: pasang & jalankan sesi DUAL (menggantikan yang lama bila ada)
+    private func installDual(_ dc: DualCam) {
+        dc.onVideo = { [weak self] pb, pts in
+            guard let self else { return }
+            self.recorder?.appendVideo(pb, pts: pts)
+            self.onFrame?(CIImage(cvPixelBuffer: pb))
+        }
+        dc.onAudio = { [weak self] sb in self?.recorder?.appendAudio(sb) }
+        dc.swapped = dualSwapS
+        dc.pipCenter = dualPipS
+        dual = dc
+        dc.session.startRunning()
+        let res = dc.outW >= 2160 ? "4K" : (dc.outW >= 1080 ? "1080p" : "720p")
+        Log.camera.info("DUAL: aktif \(res, privacy: .public) lensa \(dc.backName, privacy: .public), biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
+        let lensName = dc.backName
+        DispatchQueue.main.async {
+            self.videoInfo = "Dual \(res) · 30 · \(self.videoCodec.short) · \(lensName)"
+            self.nativeZoomPoints = []
+        }
+    }
+
+    /// sessionQueue: zoom DUAL. Kamera virtual: iOS pindah lensa sendiri. Lensa fisik: sesi dibangun ulang
+    /// dengan lensa lain saat zoom melewati 0.5x / 1x / tele (hanya bila tidak sedang merekam).
+    private func dualZoom(_ zz: CGFloat, canSwitch: Bool) {
+        guard let dc = dual else { return }
+        if let cur = dc.backLens, canSwitch {
+            let t = Self.teleNative
+            let want: Lens
+            switch cur {
+            case .ultraWide: want = zz >= t ? .tele : (zz >= 1 ? .wide : .ultraWide)
+            case .tele: want = zz < 0.95 ? .ultraWide : (zz < t * 0.98 ? .wide : .tele)
+            default: want = zz < 0.95 ? .ultraWide : (zz >= t ? .tele : .wide)
+            }
+            if want != cur, !dualBadLens.contains(want) {
+                dc.session.stopRunning()
+                if let n = makeDual(lens: want, zoom: zz) { installDual(n); return }
+                dualBadLens.insert(want)
+                dc.session.startRunning()
+            }
+        }
+        let applied = dc.setZoom(zz)
+        if abs(applied - zz) > 0.01 {
+            DispatchQueue.main.async { if self.videoKind == .dual { self.totalZoom = applied } }
+        }
     }
 
     /// sessionQueue: samakan sesi multi-kamera dengan `dualWanted`
     private func syncDual() {
         if dualWanted && inVideo && dual == nil {
-            let dc = DualCam()
             session.stopRunning()
-            guard dc.configure(queue: videoQueue) else {
+            guard let dc = makeDual(lens: nil, zoom: 1) else {
                 Log.camera.error("DUAL: sesi multi-kamera gagal disiapkan")
                 dualWanted = false
                 session.startRunning()
                 DispatchQueue.main.async { self.videoKind = .normal; self.status = "Dual video tidak didukung di HP ini" }
                 return
             }
-            dc.onVideo = { [weak self] pb, pts in
-                guard let self else { return }
-                self.recorder?.appendVideo(pb, pts: pts)
-                self.onFrame?(CIImage(cvPixelBuffer: pb))
-            }
-            dc.onAudio = { [weak self] sb in self?.recorder?.appendAudio(sb) }
-            dual = dc
-            dc.session.startRunning()
+            dualSwapS = false
+            installDual(dc)
             videoQueue.async { self.previewLog = false }
-            Log.camera.info("DUAL: masuk, biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
-            DispatchQueue.main.async { self.videoInfo = "Dual 1080p · 30 · \(self.videoCodec.short) · 709"; self.nativeZoomPoints = [] }
         } else if let dc = dual, !(dualWanted && inVideo) {
             dc.session.stopRunning()
             dual = nil
@@ -1671,14 +1750,15 @@ final class CameraManager: NSObject, ObservableObject {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Videos", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let name = "BaginCam_\(f.string(from: Date()))_DUAL1080p30_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : "709").mov"
-        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: DualCam.outW, height: DualCam.outH,
+        let res = dc.outW >= 2160 ? "4K" : (dc.outW >= 1080 ? "1080p" : "720p")
+        let name = "BaginCam_\(f.string(from: Date()))_DUAL\(res)30_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : "709").mov"
+        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: dc.outW, height: dc.outH,
                               sensorFps: 30, playbackFps: 30, timelapse: 1, codec: codec, color: .sdr, audio: dc.hasAudio,
                               transform: CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180), bake: lut, bakeLog: false)
         do {
             let r = try VideoRecorder(cfg)
             videoQueue.async { self.recorder = r }
-            Log.camera.info("VIDEO: rekam \(name, privacy: .public) dual, sudut \(Double(angle), privacy: .public), audio \(dc.hasAudio, privacy: .public)")
+            Log.camera.info("VIDEO: rekam \(name, privacy: .public) dual \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) lensa \(dc.backName, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(dc.hasAudio, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()
                 self.status = "Merekam \(name)"

@@ -738,19 +738,7 @@ struct ContentView: View {
             .overlay { focusLayer }
             .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
             .overlay(alignment: .trailing) { if cam.gimbalMode && showsZoom { gimbalZoomStrip } }
-            .overlay(alignment: .leading) {
-                // DUAL: tukar kamera utama <-> kotak kecil, juga saat merekam (tombol flip jadi jeda)
-                if cam.videoKind == .dual && cam.isRecording {
-                    Button(action: flipCamera) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.title3)
-                            .frame(width: 46, height: 46)
-                            .background(.black.opacity(0.45), in: Circle())
-                            .foregroundStyle(isFront ? .yellow : .white)
-                    }
-                    .padding(.leading, 10)
-                }
-            }
+            .overlay { if cam.videoKind == .dual { dualPipLayer } }
             .overlay(alignment: .top) {
                 if cam.shootMode == .video { videoInfoRow } else { infoRow }
             }
@@ -914,7 +902,7 @@ struct ContentView: View {
         default: return 1
         }
     }
-    private var maxZoom: Double { Double(cam.maxTotalZoom) }
+    private var maxZoom: Double { cam.videoKind == .dual ? 15 : Double(cam.maxTotalZoom) }
     private var displayZoom: Double { Double(cam.totalZoom) }
 
     private func setDisplayZoom(_ z: Double) { cam.setTotalZoom(CGFloat(z)) }
