@@ -1056,3 +1056,25 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Bisa aktif bersamaan gimbal (modul gerakan besar, crop digital merapikan), atau tanpa gimbal (tripod).
 - Versi 0.22.0 (build 49). Build run 43569416778 sukses -> `data/builds/BaginCam-v0.22.0-unsigned.ipa`.
   Berikutnya: uji face tracking (preview + rekam video), cek halus gerakan & performa (suhu).
+
+## Sesi 50 — 2026-11-14 · v0.22.1 Auto-deteksi gimbal + cek file
+
+### Cek file HP
+- Pull log app (Documents/Logs): BaginCam_20261113.txt, BaginCam_20261114.txt -> `data/logs/app-1114-v022/`
+- Pull debug (Documents/Debug): 10 HDRPLUS_*.heic -> sudah ada di laptop dari pull sebelumnya.
+- Pull DCIM 107APPLE: IMG_7029-7034.HEIC + IMG_7043-7044.PNG -> `data/bursts/dcim-1114-v022/`
+  IMG_7036.MOV & IMG_7037.MOV dilewati (D: hampir penuh).
+- Documents/Videos: kosong.
+- Crash logs: tidak ada crash baru (hanya crash lama 2026-11-12 era ModKamera).
+- DCIM 100-106APPLE (~7120 file): foto kamera bawaan iPhone, bukan BaginCam — belum dipindah.
+
+### v0.22.1 Auto-deteksi gimbal
+- Permintaan user: otomatis aktifkan mode gimbal saat HP tersambung gimbal Bluetooth.
+- HardwareInput (Gimbal.swift): callback onControllerConnect(vendor, category) dan onControllerDisconnect().
+  Property hasController = !GCController.controllers().isEmpty.
+- CameraManager: pref gimbalAuto (default true).
+- ContentView: saat controller tersambung dan gimbalAuto aktif, gimbalMode otomatis = true.
+  Saat terputus dan tidak ada controller lain, gimbalMode otomatis = false.
+- AssistPanel: toggle "Auto-deteksi gimbal" di bagian Gimbal + penjelasan di footer.
+- Versi 0.22.1 (build 50). Commit `36e36c1`.
+  Berikutnya: tunggu CI build, uji auto-deteksi dengan DJI OM 7P, uji face tracking.
