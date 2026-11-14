@@ -2485,11 +2485,6 @@ final class CameraManager: NSObject, ObservableObject {
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
-        if burstFaceBeauty, let b = Self.applyFaceBeauty(result) {
-            result = b
-            Log.sr.info("Face Beauty diterapkan (zoom)")
-        }
-
         var props = properties
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
         props.removeValue(forKey: kCGImagePropertyPixelWidth as String)
@@ -2548,21 +2543,30 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: face beautification
 
     static func applyFaceBeauty(_ img: CGImage) -> CGImage? {
-        let request = VNGeneratePersonSegmentationRequest()
-        request.qualityLevel = .balanced
-        let handler = VNImageRequestHandler(cgImage: img, options: [:])
-        guard (try? handler.perform([request])) != nil,
-              let mask = request.results?.first?.pixelBuffer else { return nil }
+        guard min(img.width, img.height) >= 400 else { return nil }
+        let faceReq = VNDetectFaceRectanglesRequest()
+        let faceHandler = VNImageRequestHandler(cgImage: img, options: [:])
+        guard (try? faceHandler.perform([faceReq])) != nil,
+              let faces = faceReq.results, !faces.isEmpty else { return nil }
+        let segReq = VNGeneratePersonSegmentationRequest()
+        segReq.qualityLevel = .balanced
+        let segHandler = VNImageRequestHandler(cgImage: img, options: [:])
+        guard (try? segHandler.perform([segReq])) != nil,
+              let mask = segReq.results?.first?.pixelBuffer else { return nil }
         let rawMask = CIImage(cvPixelBuffer: mask)
         let sx = CGFloat(img.width) / rawMask.extent.width
         let sy = CGFloat(img.height) / rawMask.extent.height
         let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        let softMask = ciMask.applyingFilter("CIColorMatrix", parameters: [
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.4)
+        ])
         let ci = CIImage(cgImage: img)
-        let blurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 3.5])
+        let r = max(1.0, min(3.0, Double(min(img.width, img.height)) / 1200.0 * 2.0))
+        let blurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": r])
             .cropped(to: ci.extent)
         let result = blurred.applyingFilter("CIBlendWithMask", parameters: [
             "inputBackgroundImage": ci,
-            "inputMaskImage": ciMask
+            "inputMaskImage": softMask
         ])
         return RawDeveloper.cgImage(result)
     }
