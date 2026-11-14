@@ -1206,3 +1206,24 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   mendukung multi-kamera.
 - Commit `0303fba`. Build `data/ipa-v0.25.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
   Berikutnya: uji SINEMA (fps/panas), uji DUAL, uji potret build 55 (AF wajah, tepi rambut, slider).
+
+### Cek v0.25.0 + DUAL ganti lensa / 4K / kotak geser + lampu isi (v0.25.1 build 58)
+- **Log v0.25.0**: SINEMA 12-21 ms/frame (di bawah 33 ms), rekaman 20.8 s tanpa frame hilang.
+  DUAL aktif, biaya hardware 0.50, rekaman 12.3 s tanpa frame hilang, mikrofon jalan.
+- **DUAL lensa belakang**: sesi dicoba dengan kamera virtual belakang dulu (iOS pindah lensa sendiri
+  mengikuti zoom, juga saat merekam). Bila tidak bisa -> lensa fisik; zoom melewati 0.5x / 1x / tele
+  membangun ulang sesi dengan lensa itu (hanya saat tidak merekam). Baris zoom tampil di DUAL (0.5-15x).
+- **DUAL 4K**: bila resolusi video = 4K, kamera belakang dicoba 4K (depan tetap 1080p). Jatuh ke
+  1080p bila iOS tidak punya format multi-kamera 4K atau biaya hardware > 1. Log baru:
+  `DUAL: format multi-kamera -> ...` (daftar ukuran per kamera) dan `DUAL: aktif <res> lensa <nama>`.
+- **Kotak kecil DUAL**: ketuk = tukar besar/kecil, seret = pindah posisi (ikut terekam). Ada ikon putar
+  kecil di sudut kotak. Tombol di kiri preview (build 56) dihapus.
+- **Lampu isi (flash)**: penyebab flash tidak pernah nyala = chip flash hanya ada di FOTO dan hanya
+  proses Apple yang memakainya; HDR+/POTRET/kamera depan tidak pernah. Sekarang:
+  kamera depan -> layar putih kecerahan penuh selama jepretan; belakang HDR+/POTRET/PRO -> senter
+  menyala selama burst; belakang FOTO proses Apple -> flash asli. Auto = saat ISO x t >= 8.
+  AE dibuat otomatis 0.9 s sebelum dikunci. MALAM tidak memakai lampu isi. Log: `Lampu isi: ...`.
+- Build 57 gagal (edit UI belum masuk), build 58 sukses. Commit terakhir kode: lihat `git log`.
+  Build `data/ipa-v0.25.1/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
+  Ide berikutnya (belum dikerjakan): di mode VIDEO biasa, ganti kamera belakang <-> depan saat merekam
+  dengan suara tetap menyambung.
