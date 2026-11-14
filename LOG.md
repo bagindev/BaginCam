@@ -1185,3 +1185,24 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Segmented picker di panel Bantu.
 - Commit `89169f3`. Build `BaginCam-unsigned.ipa`.
   Berikutnya: uji di HP, cinematic video bokeh, dual video / camera switch.
+
+### Fitur: mode SINEMA + DUAL + baris mode geser (v0.25.0 build 56)
+- **SINEMA** (video bokeh real-time): `CinematicProcessor` di `DualCinema.swift`. Tiap frame:
+  VNGeneratePersonSegmentationRequest `.balanced` (VNSequenceRequestHandler) -> mask -> latar diblur
+  di 1/4 resolusi -> CIBlendWithMask. Hasil dipakai untuk preview DAN rekaman (satu render per frame).
+  Dipaksa 1080p Rec.709 maks 30 fps, tanpa time-lapse. Kekuatan blur = slider "Kedalaman Bokeh".
+  Tidak ada orang di frame (<1% mask) -> frame asli (tidak diblur semua).
+  Log tiap 300 frame: `SINEMA: x ms/frame, orang terdeteksi y%`. Nama file `..._SINEMA1080p30_...`.
+- **DUAL** (belakang + depan): `DualCam` = AVCaptureMultiCamSession sendiri (sesi utama dihentikan
+  selama DUAL). Dua kamera 1080p30 digabung jadi satu video 1080x1920: gambar utama penuh + kotak
+  kecil 30% di kanan atas (sudut bulat, garis putih). Tombol putar kamera = tukar utama <-> kotak
+  kecil, juga saat merekam (tombol di kiri preview) -> menjawab "ganti ke kamera depan saat rekam".
+  Zoom 1-6x (kamera belakang). Belum ada: tap fokus, senter, stabilisasi, pilih lensa di DUAL.
+  Log: `DUAL: masuk, biaya hardware ..`. Nama file `..._DUAL1080p30_...`.
+- Internal: SINEMA/DUAL = `videoKind` di dalam ShootMode.video (bukan ShootMode baru), jadi semua
+  logika `shootMode == .video` tetap berlaku. `setVideoKind()`, `syncDual()`, `startDualRecording()`.
+- **UI**: baris mode sekarang bisa digeser (MALAM FOTO POTRET VIDEO SINEMA DUAL PRO), mode aktif
+  ditarik ke tengah, tepi memudar; tombol laci Pro tetap di kanan. DUAL disembunyikan bila HP tidak
+  mendukung multi-kamera.
+- Commit `0303fba`. Build `data/ipa-v0.25.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
+  Berikutnya: uji SINEMA (fps/panas), uji DUAL, uji potret build 55 (AF wajah, tepi rambut, slider).
