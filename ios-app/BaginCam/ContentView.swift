@@ -835,7 +835,9 @@ struct ContentView: View {
             if !p.contains(where: { abs($0 - 10) < 0.5 }) { p.append(10) }
             return p.sorted().filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
         }
-        return [0.5, 1, 2, 5, 10, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+        // v0.20: titik tele mengikuti HP (16 Pro Max 5x/10x, 17/18 Pro Max 4x/8x)
+        let t = Double(CameraManager.teleNative)
+        return [0.5, 1, 2, t, 2 * t, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
     }
 
     private func isNative(_ z: Double) -> Bool {
@@ -900,7 +902,7 @@ struct ContentView: View {
         case nil: return "Auto"
         case .ultraWide?: return "UW .5x"
         case .wide?: return "Utama 1x"
-        case .tele?: return "Tele 5x"
+        case .tele?: return "Tele " + CameraManager.lensTitle(.tele)
         case .front?: return "Depan"
         }
     }
@@ -982,7 +984,7 @@ struct ContentView: View {
             ForEach(cam.availableLenses) { l in
                 Button { cam.setLens(l) } label: {
                     Group {
-                        if l == .front { Image(systemName: "person.crop.circle") } else { Text(l.rawValue) }
+                        if l == .front { Image(systemName: "person.crop.circle") } else { Text(CameraManager.lensTitle(l)) }
                     }
                     .font(.footnote.bold())
                     .frame(width: 44, height: 44)

@@ -190,6 +190,13 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    HStack(spacing: 14) {
+                        Image("Logo").resizable().frame(width: 56, height: 56)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("BaginCam").font(.headline)
+                            Text(LogFile.model).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     LabeledContent("Lensa aktif", value: cam.activeLensLabel)
                     LabeledContent("Versi", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
                     LabeledContent("Log hari ini", value: LogFile.todaySize)

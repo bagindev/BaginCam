@@ -13,13 +13,19 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # v0.20: Xcode 27 (SDK iOS 27) -> tampilan & API iOS 26/27, iPhone 17/18 Pro Max. App tetap jalan di iOS 17+.
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Info Xcode
-        run: xcodebuild -version
+        run: |
+          xcodebuild -version
+          echo "SDK iOS: $(xcrun --sdk iphoneos --show-sdk-version)"
+          H="$(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks/AVFoundation.framework/Headers"
+          echo "--- API aperture (iPhone 18 Pro) ---"
+          grep -n -i "aperture" "$H"/AVCaptureDevice*.h | head -80 || true
 
       - name: Install XcodeGen
         run: brew install xcodegen

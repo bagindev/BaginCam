@@ -27,6 +27,15 @@ final class LogFile {
 
     private init() { lastDate = Date().addingTimeInterval(-5) }
 
+    /// v0.20: model HP, mis. "iPhone17,2 (16 Pro Max)" - untuk uji di iPhone 17/18 Pro Max
+    static let model: String = {
+        var u = utsname()
+        uname(&u)
+        let id = withUnsafeBytes(of: &u.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        let names = ["iPhone17,1": "16 Pro", "iPhone17,2": "16 Pro Max", "iPhone18,1": "17 Pro", "iPhone18,2": "17 Pro Max"]
+        return names[id].map { "\(id) (\($0))" } ?? id
+    }()
+
     /// main
     func start() {
         guard timer == nil else { return }
@@ -37,7 +46,7 @@ final class LogFile {
         dev.isBatteryMonitoringEnabled = true
         let batt = dev.batteryLevel >= 0 ? "\(Int(dev.batteryLevel * 100))%" : "?"
         let charging = dev.batteryState == .charging || dev.batteryState == .full
-        write("\n===== \(Self.stamp(Date())) BaginCam \(ver) · iOS \(dev.systemVersion) · suhu \(th) · baterai \(batt)\(charging ? " (mengisi)" : "") =====\n")
+        write("\n===== \(Self.stamp(Date())) BaginCam \(ver) · \(Self.model) · iOS \(dev.systemVersion) · suhu \(th) · baterai \(batt)\(charging ? " (mengisi)" : "") =====\n")
         cleanup()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.flush() }
         let nc = NotificationCenter.default

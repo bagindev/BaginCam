@@ -155,6 +155,21 @@ final class CameraManager: NSObject, ObservableObject {
         return NightPlan(frames: frames, shutter: t, iso: i.isFinite ? i : mISO)
     }
 
+    /// v0.20: faktor tele relatif lensa utama (16 Pro Max 5x, 17/18 Pro Max 4x) dari kamera virtual
+    static let teleNative: CGFloat = {
+        guard let d = AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back) else { return 5 }
+        let sw = d.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
+        guard sw.count >= 2, sw[0] > 0 else { return 5 }
+        return sw[1] / sw[0]
+    }()
+
+    /// label tombol lensa: "0.5x" / "1x" / "4x" atau "5x" / "Depan"
+    static func lensTitle(_ l: Lens) -> String {
+        guard l == .tele else { return l.rawValue }
+        let t = Double(teleNative)
+        return abs(t - t.rounded()) < 0.05 ? String(format: "%.0fx", t) : String(format: "%.1fx", t)
+    }
+
     enum Lens: String, CaseIterable, Identifiable {
         case ultraWide = "0.5x"
         case wide = "1x"
@@ -1712,7 +1727,8 @@ final class CameraManager: NSObject, ObservableObject {
             if zm == .superRes && !bayerOK { zm = .fullCrop }
             // v0.12.1: Super Res di lensa utama < 3x saat terang: 12 MP digabung lalu di-crop hanya ~2000 px
             // (AI 2.8x -> tekstur seperti lukisan, IMG_6958). Crop sensor 48 MP memberi detail asli 2x lipat.
-            if zm == .superRes && !night && lensName == "Utama" && crop < 3 && nativeLong >= 8000
+            // v0.20: tele 48MP (17/18 Pro Max, mis. 8x = tele 4x crop 2x) juga pakai crop sensor saat terang
+            if zm == .superRes && !night && (lensName == "Utama" || (lensName == "Tele" && crop > 1.05)) && crop < 3 && nativeLong >= 8000
                 && Double(srcISO) * srcDur < 0.25 {
                 zm = .fullCrop
                 Log.camera.info("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
@@ -1750,7 +1766,7 @@ final class CameraManager: NSObject, ObservableObject {
                     nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
                     // v0.18.1: fusi 48MP butuh format lensa yang mendukung foto 48MP (jepretan pertama setelah
                     // app dibuka kadang format 12MP -> "sensor 4224", fusi dilewati, IMG_7004)
-                    if fus && m == .hdrplus && !zoomed && !night && (lensName == "Utama" || lensName == "Ultra Wide"),
+                    if fus && m == .hdrplus && !zoomed && !night && lensName != "Depan",
                        (self.maxDimensions(of: p).map { Int($0.width) < 8000 } ?? true) {
                         let cur = p.activeFormat
                         let cd = CMVideoFormatDescriptionGetDimensions(cur.formatDescription)
@@ -1843,7 +1859,8 @@ final class CameraManager: NSObject, ObservableObject {
             if m == .hdrplus && !zoomed {
                 let gain = Double(srcISO) * srcDur
                 // v0.18.5: Ultra Wide 48MP juga (iPhone 16 Pro)
-                let ok = fus && !night && (lensName == "Utama" || lensName == "Ultra Wide") && nativeLong >= 8000 && gain <= 40 && fmt != .dng
+                // v0.20: semua lensa belakang 48MP (iPhone 17/18 Pro Max: tele 4x juga 48MP)
+                let ok = fus && !night && lensName != "Depan" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
                 self.fusionPending = ok
                 Log.camera.info("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
             }
@@ -2454,7 +2471,9 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
             if let pb = photo.pixelBuffer, idx == 1 {
                 Log.camera.info("RAW buffer \(CVPixelBufferGetWidth(pb), privacy: .public)x\(CVPixelBufferGetHeight(pb), privacy: .public) format \(CVPixelBufferGetPixelFormatType(pb), privacy: .public)")
             }
-            Log.camera.info("Frame \(idx, privacy: .public)/\(total, privacy: .public): raw=\(photo.isRawPhoto, privacy: .public) ISO \(iso, privacy: .public) exp \(exp, privacy: .public)")
+            // v0.20: foto 48MP fusi ikut terhitung (log lama "Frame 7/6") -> ditandai
+            let fx = self.collectsBayer && !photo.isRawPhoto ? " (foto fusi 48MP, di luar burst)" : ""
+            Log.camera.info("Frame \(idx, privacy: .public)/\(total, privacy: .public)\(fx, privacy: .public): raw=\(photo.isRawPhoto, privacy: .public) ISO \(iso, privacy: .public) exp \(exp, privacy: .public)")
             if total > 1 { self.setStatus("Burst \(idx)/\(total)") }
         }
     }
