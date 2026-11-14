@@ -1227,3 +1227,18 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Build `data/ipa-v0.25.1/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
   Ide berikutnya (belum dikerjakan): di mode VIDEO biasa, ganti kamera belakang <-> depan saat merekam
   dengan suara tetap menyambung.
+
+### Fitur: ganti kamera saat rekam + lampu layar video depan (v0.26.0 build 59)
+- **Ganti kamera saat rekam (VIDEO / SINEMA)**: tombol putar di kiri preview selama merekam ->
+  `flipWhileRecording()` -> `setAILensLock(.front / kunci sebelumnya, whileRecording: true)`.
+  Hanya input kamera yang diganti; mikrofon tidak disentuh, jadi suara menyambung. Gambar berhenti
+  sebentar selama sesi berganti kamera. Hanya untuk rekaman Rec.709 kecepatan normal (`recCanFlip`);
+  HLG / Log / slow-mo / time-lapse ditolak dengan pesan status.
+  VideoRecorder: frame yang ukurannya beda dari rekaman diskalakan penuh ke ukuran rekaman.
+  Log: `VIDEO: ganti kamera saat rekam -> <lensa> di <detik> s`.
+- **Lampu video depan**: chip matahari di baris chip VIDEO (muncul saat kamera depan / DUAL).
+  Mati / Soft / Medium / Terang = bingkai putih 7 / 13 / 20 % lebar preview + kecerahan layar minimal
+  0.7 / 0.85 / 1.0 (dikembalikan saat dimatikan). Hanya di layar, tidak ikut terekam.
+  Log: `Lampu video depan: <level>`.
+- Commit kode: lihat `git log`. Build `data/ipa-v0.26.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
+  Perlu diuji: build 58 (DUAL lensa/4K/kotak geser, lampu isi foto) + build 59 (dua fitur di atas).
