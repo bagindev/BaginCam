@@ -71,7 +71,10 @@ struct ContentView: View {
             VStack(spacing: 6) {
                 topBar
                 if !videoFullActive { preview }
-                if videoFullActive { Spacer(minLength: 0) }
+                if videoFullActive {
+                    Spacer(minLength: 0)
+                    HStack { readout; Spacer(minLength: 0); assistBadges }.padding(.horizontal, -8)
+                }
                 if showsZoom { zoomRow }
                 if !videoFullActive { Spacer(minLength: 0) }
                 if showPro { proDrawer }
@@ -312,12 +315,16 @@ struct ContentView: View {
     private var appleCapable: Bool { cam.shootMode == .photo }
 
     private func chip(_ text: String, icon: String, on: Bool = false) -> some View {
-        Label(text, systemImage: icon)
-            .font(.footnote.weight(on ? .bold : .regular))
-            .lineLimit(1)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(on ? Color.yellow : Color.white.opacity(0.14), in: Capsule())
-            .foregroundStyle(on ? .black : .white)
+        Group {
+            if text.isEmpty { Image(systemName: icon) } else { Label(text, systemImage: icon) }
+        }
+        .font(.footnote.weight(.semibold))
+        .lineLimit(1)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(on ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+        .foregroundStyle(on ? Color.yellow : Color.white)
+        .environment(\.colorScheme, .dark)
     }
 
     private func check(_ title: String, _ on: Bool, detail: String? = nil) -> some View {
@@ -466,7 +473,11 @@ struct ContentView: View {
     }
 
     private func shortLUT(_ n: String) -> String {
-        n.replacingOccurrences(of: "SonyLook_", with: "").replacingOccurrences(of: "_100", with: "")
+        var t = n.replacingOccurrences(of: "SonyLook_", with: "").replacingOccurrences(of: "_100", with: "")
+        if t.hasPrefix("v"), let i = t.firstIndex(of: "_"), t.distance(from: t.startIndex, to: i) <= 6 {
+            t = String(t[t.index(after: i)...])
+        }
+        return t
     }
 
     private var wbChip: some View {
@@ -767,7 +778,7 @@ struct ContentView: View {
                 audioMeter.frame(maxWidth: .infinity, alignment: .trailing)
             }
             HStack(spacing: 6) {
-                if !cam.isRecording && !cam.videoInfo.isEmpty { infoPill(cam.videoInfo, icon: "video") }
+                if !cam.isRecording && cam.videoKind == .dual && !cam.videoInfo.isEmpty { infoPill(cam.videoInfo, icon: "video") }
                 if !cam.zoomQuality.isEmpty && (cam.zoomQuality != "Native" || cam.totalZoom > 1.05) {
                     infoPill(cam.zoomQuality, icon: cam.zoomQuality == "Native" ? "sparkle" : "plus.magnifyingglass",
                              color: cam.zoomQuality == "Native" ? .green : .orange)
@@ -805,11 +816,11 @@ struct ContentView: View {
             .overlay { frameGuideOverlay }
             .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
             .overlay { if cam.faceTrack { FaceTrackOverlay(tracker: faceTracker) } }
-            .overlay(alignment: .bottomLeading) { readout }
+            .overlay(alignment: .bottomLeading) { if !videoFullActive { readout } }
             .overlay(alignment: .topTrailing) {
                 if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, cam.shootMode == .video ? 72 : 40).padding(8) }
             }
-            .overlay(alignment: .bottomTrailing) { assistBadges }
+            .overlay(alignment: .bottomTrailing) { if !videoFullActive { assistBadges } }
             .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay { countdownLayer }
@@ -1062,18 +1073,25 @@ struct ContentView: View {
     private var zoomRow: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
-                ForEach(zoomPresets, id: \.self) { z in
-                    let on = abs(displayZoom - z) < 0.05
-                    Button { setDisplayZoom(z) } label: {
-                        Text(zoomLabel(z)).rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(zoomPresets, id: \.self) { z in
+                            let on = abs(displayZoom - z) < 0.05
+                            Button { setDisplayZoom(z) } label: {
+                                Text(zoomLabel(z)).fixedSize()
+                                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                                    .font(.caption.bold())
+                                    .frame(minWidth: 38, minHeight: 28)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .overlay(Capsule().stroke(on ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+                                    .foregroundStyle(on ? Color.yellow : Color.white)
+                            }
+                        }
                     }
-                        .font(.caption.bold())
-                        .frame(width: 40, height: 28)
-                        .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
-                        .foregroundStyle(on ? .black : .white)
+                    .padding(.vertical, 1)
                 }
-                Spacer(minLength: 0)
-                Text(String(format: "%.1fx", displayZoom))
+                .environment(\.colorScheme, .dark)
+                Text(String(format: "%.1fx", displayZoom)).fixedSize()
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
             Slider(value: zoomBinding, in: 0...1).tint(.yellow)
