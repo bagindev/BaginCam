@@ -1908,6 +1908,9 @@ final class CameraManager: NSObject, ObservableObject {
             guard let r = self.recorder else { DispatchQueue.main.async { self.isRecording = false }; return }
             self.recorder = nil
             let dur = r.seconds, dropped = r.droppedFrames
+            if r.silenceFilled > 0 {
+                Log.camera.info("VIDEO: jeda suara diisi hening \(r.silenceFilled, format: .fixed(precision: 2), privacy: .public) s")
+            }
             self.sessionQueue.async {
                 if let d = self.device, d.isVirtualDevice, (try? d.lockForConfiguration()) != nil {
                     d.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])

@@ -246,6 +246,9 @@ final class VideoRecorder {
     private lazy var lutFilter: CIFilter? = config.bake?.makeFilter()
     private lazy var logFilter = AppleLogLUT.makeFilter()
     private(set) var droppedFrames = 0
+    private var audioEnd = CMTime.invalid
+    /// total jeda suara yang diisi hening (detik)
+    private(set) var silenceFilled = 0.0
     /// v0.22: face tracking crop rect (normalized 0..1, origin kiri-atas). nil = tanpa crop.
     var faceTrackCrop: CGRect?
     /// penajaman zoom digital (0 = mati), diubah dari antrean video
@@ -448,8 +451,41 @@ final class VideoRecorder {
             guard let s = Self.shift(sb, by: total) else { return }
             buf = s
         }
-        guard CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(buf), startPTS) >= 0 else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(buf)
+        guard CMTimeCompare(pts, startPTS) >= 0 else { return }
+        // Suara yang terputus (sesi kamera diatur ulang saat ganti kamera) ditulis rapat oleh encoder,
+        // sehingga suara berikutnya maju mendahului gambar. Jeda diisi hening supaya waktunya tetap.
+        if audioEnd.isValid, let fmt = CMSampleBufferGetFormatDescription(buf),
+           let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee,
+           asbd.mFormatID == kAudioFormatLinearPCM {
+            let gap = CMTimeSubtract(pts, audioEnd).seconds
+            if gap > 0.03, gap < 15, let s = Self.silence(fmt, asbd, at: audioEnd, seconds: gap) {
+                aIn.append(s)
+                silenceFilled += gap
+            }
+        }
+        let dur = CMSampleBufferGetDuration(buf)
+        audioEnd = dur.isValid && dur.seconds > 0 ? CMTimeAdd(pts, dur) : pts
         aIn.append(buf)
+    }
+
+    private static func silence(_ fmt: CMAudioFormatDescription, _ asbd: AudioStreamBasicDescription,
+                                at pts: CMTime, seconds: Double) -> CMSampleBuffer? {
+        let frames = Int(seconds * asbd.mSampleRate)
+        let bytes = frames * Int(asbd.mBytesPerFrame)
+        guard frames > 0, bytes > 0 else { return nil }
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes,
+                                                 blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+                                                 offsetToData: 0, dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag,
+                                                 blockBufferOut: &block) == noErr, let block else { return nil }
+        CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes)
+        var out: CMSampleBuffer?
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: kCFAllocatorDefault, dataBuffer: block,
+                                                             formatDescription: fmt, sampleCount: frames,
+                                                             presentationTimeStamp: pts, packetDescriptions: nil,
+                                                             sampleBufferOut: &out)
+        return out
     }
 
     private static func shift(_ sb: CMSampleBuffer, by off: CMTime) -> CMSampleBuffer? {

@@ -152,6 +152,7 @@ struct ContentView: View {
                         colorGroupChip
                         assistChip
                         if cam.flashAvailable || isFront { flashChip }
+                        if isFront { videoLightChip }
                         if appleCapable && cam.liveAvailable { liveChip }
                     }
                 }
@@ -628,7 +629,7 @@ struct ContentView: View {
             ForEach(CameraManager.VideoLight.allCases) { l in
                 Button { cam.videoLight = l } label: { check(l.rawValue, cam.videoLight == l) }
             }
-            Text("Tepi preview jadi putih terang untuk menerangi wajah. Tidak ikut terekam.")
+            Text("Lampu layar kamera depan (foto, potret, video): tepi preview jadi putih terang untuk menerangi wajah. Tidak ikut terekam / terfoto.")
         } label: {
             chip(cam.videoLight == .off ? "" : cam.videoLight.rawValue, icon: cam.videoLight == .off ? "sun.max" : "sun.max.fill",
                  on: cam.videoLight != .off)
@@ -636,7 +637,7 @@ struct ContentView: View {
     }
 
     private var activeVideoLight: CameraManager.VideoLight {
-        cam.shootMode == .video && (isFront || cam.videoKind == .dual) ? cam.videoLight : .off
+        isFront || cam.videoKind == .dual ? cam.videoLight : .off
     }
 
     /// bingkai putih di tepi preview (lubang bersudut bulat di tengah)
