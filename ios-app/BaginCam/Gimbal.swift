@@ -407,3 +407,33 @@ struct GimbalOverlay: View {
         .allowsHitTesting(false)
     }
 }
+
+/// v0.22.1: slider zoom vertikal ala DJI Mimo (T di atas = tele, W di bawah = wide)
+struct GimbalVerticalSlider: View {
+    @Binding var value: Double  // 0..1
+
+    var body: some View {
+        GeometryReader { g in
+            let h = g.size.height
+            let w = g.size.width
+            let thumbY = h * (1 - CGFloat(value))
+            ZStack {
+                Capsule().fill(Color.white.opacity(0.15)).frame(width: 4)
+                Capsule().fill(Color.yellow.opacity(0.7))
+                    .frame(width: 4, height: max(0, h - thumbY))
+                    .position(x: w / 2, y: (h + thumbY) / 2)
+                Circle()
+                    .fill(Color.yellow)
+                    .frame(width: 22, height: 22)
+                    .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+                    .position(x: w / 2, y: thumbY)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    let t = 1.0 - Double(min(h, max(0, v.location.y)) / h)
+                    self.value = t
+                })
+        }
+    }
+}

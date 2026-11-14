@@ -731,9 +731,29 @@ struct ContentView: View {
             .overlay { countdownLayer }
             .overlay { focusLayer }
             .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
+            .overlay(alignment: .trailing) { if cam.gimbalMode && showsZoom { gimbalZoomStrip } }
             .overlay(alignment: .top) {
                 if cam.shootMode == .video { videoInfoRow } else { infoRow }
             }
+    }
+
+    /// v0.22.1: slider zoom vertikal ala DJI Mimo (T di atas, W di bawah) + tombol flip kamera
+    private var gimbalZoomStrip: some View {
+        VStack(spacing: 10) {
+            Text("T").font(.caption2.bold()).foregroundStyle(.white.opacity(0.7))
+            GimbalVerticalSlider(value: zoomBinding)
+                .frame(width: 36, height: 180)
+            Text("W").font(.caption2.bold()).foregroundStyle(.white.opacity(0.7))
+            Button(action: flipCamera) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.body.bold())
+                    .frame(width: 40, height: 40)
+                    .background(isFront ? Color.yellow.opacity(0.8) : Color.white.opacity(0.2), in: Circle())
+                    .foregroundStyle(isFront ? .black : .white)
+            }
+            .disabled(cam.isCapturing)
+        }
+        .padding(.trailing, 6).padding(.vertical, 40)
     }
 
     /// area di luar rasio foto digelapkan (seperti kamera bawaan)
