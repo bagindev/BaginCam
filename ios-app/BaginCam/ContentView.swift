@@ -90,6 +90,7 @@ struct ContentView: View {
                 Log.camera.info("Auto-gimbal: controller terputus, sisa controller=\(still, privacy: .public)")
                 if cam.gimbalAuto && cam.gimbalMode && !still { cam.gimbalMode = false }
             }
+            HardwareInput.shared.onZoom = { factor in cam.zoomStep(factor) }
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }

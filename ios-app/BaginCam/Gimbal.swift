@@ -18,6 +18,8 @@ enum GimbalAction: String {
 final class HardwareInput {
     static let shared = HardwareInput()
     var handler: ((GimbalAction, String) -> Void)?
+    /// v0.22.1: zoom halus dari roda gimbal — factor per tick (mis. 1.01 zoom in, 0.99 zoom out)
+    var onZoom: ((CGFloat) -> Void)?
     /// v0.22.1: dipanggil saat controller (gimbal/remote) tersambung — (vendorName, productCategory)
     var onControllerConnect: ((String, String) -> Void)?
     /// v0.22.1: dipanggil saat controller terputus
@@ -64,21 +66,61 @@ final class HardwareInput {
         }
     }
 
+    private var zoomTimer: Timer?
+
     private func attach(_ c: GCController) {
         c.physicalInputProfile.valueDidChangeHandler = { [weak self, weak c] _, element in
-            guard let b = element as? GCControllerButtonInput, b.isPressed else {
-                if let d = element as? GCControllerDirectionPad {
-                    Log.camera.info("Tombol: controller \(element.localizedName ?? "?", privacy: .public) x \(d.xAxis.value, privacy: .public) y \(d.yAxis.value, privacy: .public)")
-                }
+            // direction pad / roda zoom gimbal -> zoom halus berkelanjutan
+            if let d = element as? GCControllerDirectionPad {
+                let y = d.yAxis.value  // +1 zoom in, -1 zoom out (OM 7P roda zoom)
+                let x = d.xAxis.value
+                let val = abs(y) >= abs(x) ? y : x
+                DispatchQueue.main.async { self?.handleZoomAxis(val) }
                 return
             }
+            guard let b = element as? GCControllerButtonInput, b.isPressed else { return }
             let name = element.localizedName ?? element.aliases.first ?? "?"
-            Log.camera.info("Tombol: controller tombol \(name, privacy: .public)")
-            // pemetaan awal: A / tombol utama = shutter; disesuaikan setelah log dicek
-            if b === c?.extendedGamepad?.buttonA || b === c?.microGamepad?.buttonA {
-                DispatchQueue.main.async { self?.handler?(.shutter, "controller \(name)") }
+            let aliases = element.aliases.joined(separator: ",")
+            Log.camera.info("Tombol: controller tombol \(name, privacy: .public) aliases=[\(aliases, privacy: .public)]")
+            let gp = c?.extendedGamepad
+            let mgp = c?.microGamepad
+            let action: GimbalAction?
+            if b === gp?.buttonA || b === mgp?.buttonA || b === gp?.rightTrigger {
+                action = .shutter
+            } else if b === gp?.buttonB || b === gp?.leftShoulder || b === gp?.leftTrigger {
+                action = .flip
+            } else if b === gp?.buttonX || b === gp?.buttonY || b === gp?.rightShoulder {
+                action = .pause
+            } else {
+                action = Self.guessAction(name: name, aliases: aliases)
+            }
+            if let action {
+                Log.camera.info("Tombol: controller -> \(action.rawValue, privacy: .public)")
+                DispatchQueue.main.async { self?.handler?(action, "controller \(name)") }
             }
         }
+    }
+
+    private func handleZoomAxis(_ value: Float) {
+        zoomTimer?.invalidate()
+        zoomTimer = nil
+        let dead: Float = 0.12
+        guard abs(value) > dead else { return }
+        let speed = CGFloat(value)  // -1..+1
+        let tick: TimeInterval = 0.04  // 25 fps
+        zoomTimer = Timer.scheduledTimer(withTimeInterval: tick, repeats: true) { [weak self] _ in
+            // faktor per tick: proporsional ke posisi roda, ~1.005–1.03 per 40ms
+            let f: CGFloat = 1.0 + CGFloat(speed) * 0.015
+            DispatchQueue.main.async { self?.onZoom?(f) }
+        }
+    }
+
+    static func guessAction(name: String, aliases: String) -> GimbalAction? {
+        let low = (name + " " + aliases).lowercased()
+        if low.contains("switch") || low.contains("flip") { return .flip }
+        if low.contains("record") || low.contains("shutter") || low.contains("capture") { return .shutter }
+        if low.contains("pause") { return .pause }
+        return nil
     }
 
     /// pemetaan tombol keyboard umum remote Bluetooth / gimbal
