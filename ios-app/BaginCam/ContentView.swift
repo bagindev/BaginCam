@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var showViewer = false
     @State private var showPro = false
     @State private var pipDragStart: CGPoint?
+    @State private var lightSavedBrightness: CGFloat = 0.5
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
     @State private var showHistogram = true
@@ -143,6 +144,7 @@ struct ContentView: View {
                         assistChip
                         upscaleChip
                         torchChip
+                        if isFront || cam.videoKind == .dual { videoLightChip }
                     } else {
                         // v0.14: dikelompokkan (Proses · Hasil · Warna · Bantu · flash · Live)
                         processChip
@@ -620,6 +622,37 @@ struct ContentView: View {
         .disabled(cam.isRecording)
     }
 
+    /// lampu layar untuk video kamera depan
+    private var videoLightChip: some View {
+        Menu {
+            ForEach(CameraManager.VideoLight.allCases) { l in
+                Button { cam.videoLight = l } label: { check(l.rawValue, cam.videoLight == l) }
+            }
+            Text("Tepi preview jadi putih terang untuk menerangi wajah. Tidak ikut terekam.")
+        } label: {
+            chip(cam.videoLight == .off ? "" : cam.videoLight.rawValue, icon: cam.videoLight == .off ? "sun.max" : "sun.max.fill",
+                 on: cam.videoLight != .off)
+        }
+    }
+
+    private var activeVideoLight: CameraManager.VideoLight {
+        cam.shootMode == .video && (isFront || cam.videoKind == .dual) ? cam.videoLight : .off
+    }
+
+    /// bingkai putih di tepi preview (lubang bersudut bulat di tengah)
+    private var videoLightLayer: some View {
+        GeometryReader { g in
+            let b = g.size.width * activeVideoLight.border
+            Path { p in
+                p.addRect(CGRect(origin: .zero, size: g.size))
+                p.addRoundedRect(in: CGRect(origin: .zero, size: g.size).insetBy(dx: b, dy: b),
+                                 cornerSize: CGSize(width: b * 0.6, height: b * 0.6))
+            }
+            .fill(Color(red: 1, green: 0.97, blue: 0.92), style: FillStyle(eoFill: true))
+        }
+        .allowsHitTesting(false)
+    }
+
     private var torchChip: some View {
         Button { cam.torch.toggle() } label: {
             chip("", icon: cam.torch ? "flashlight.on.fill" : "flashlight.off.fill", on: cam.torch)
@@ -740,7 +773,25 @@ struct ContentView: View {
             .overlay { focusLayer }
             .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
             .overlay(alignment: .trailing) { if cam.gimbalMode && showsZoom { gimbalZoomStrip } }
+            .overlay { if activeVideoLight != .off { videoLightLayer } }
             .overlay { if cam.videoKind == .dual { dualPipLayer } }
+            .overlay(alignment: .leading) {
+                // VIDEO / SINEMA: pindah kamera belakang <-> depan di tengah rekaman (tombol flip jadi jeda)
+                if cam.isRecording && cam.recCanFlip && cam.videoKind != .dual {
+                    Button(action: flipCamera) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.title3)
+                            .frame(width: 46, height: 46)
+                            .background(.black.opacity(0.45), in: Circle())
+                            .foregroundStyle(isFront ? .yellow : .white)
+                    }
+                    .padding(.leading, 10)
+                }
+            }
+            .onChange(of: activeVideoLight) { old, new in
+                if old == .off { lightSavedBrightness = UIScreen.main.brightness }
+                UIScreen.main.brightness = new == .off ? lightSavedBrightness : max(lightSavedBrightness, new.brightness)
+            }
             .overlay(alignment: .top) {
                 if cam.shootMode == .video { videoInfoRow } else { infoRow }
             }
@@ -1352,6 +1403,8 @@ struct ContentView: View {
     private func flipCamera() {
         if cam.videoKind == .dual {
             cam.swapDual()
+        } else if cam.isRecording {
+            cam.flipWhileRecording()
         } else if CameraManager.usesVirtual(cam.mode) {
             cam.setAILensLock(cam.aiLensLock == .front ? nil : .front)
         } else {

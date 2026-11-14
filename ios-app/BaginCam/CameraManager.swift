@@ -85,6 +85,23 @@ final class CameraManager: NSObject, ObservableObject {
     /// jenis rekaman di mode VIDEO: biasa, SINEMA (bokeh latar real-time), DUAL (belakang + depan)
     enum VideoKind: String { case normal, cinematic, dual }
 
+    /// lampu layar untuk video kamera depan: bingkai putih di tepi preview + kecerahan layar dinaikkan
+    enum VideoLight: String, CaseIterable, Identifiable {
+        case off = "Mati"
+        case soft = "Soft"
+        case medium = "Medium"
+        case bright = "Terang"
+        var id: String { rawValue }
+        /// tebal bingkai putih, bagian dari lebar preview
+        var border: CGFloat {
+            switch self { case .off: return 0; case .soft: return 0.07; case .medium: return 0.13; case .bright: return 0.2 }
+        }
+        /// kecerahan layar minimal
+        var brightness: CGFloat {
+            switch self { case .off: return 0; case .soft: return 0.7; case .medium: return 0.85; case .bright: return 1 }
+        }
+    }
+
     /// mode di layar (niat memotret, seperti GCam). Mesin proses = `Mode` internal.
     enum ShootMode: String, CaseIterable, Identifiable {
         case night = "MALAM"
@@ -382,6 +399,12 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var pendingUpscale: URL?
     private var autoLockedForRec = false        // main: lensa dikunci otomatis saat mulai rekam
     @Published private(set) var isRecording = false
+    /// rekaman ini boleh ganti kamera belakang <-> depan (Rec.709, kecepatan normal)
+    @Published private(set) var recCanFlip = false
+    private var recPrevLock: Lens?              // main: kunci lensa sebelum pindah ke depan saat rekam
+    @Published var videoLight: VideoLight = Prefs.raw("videoLight", .off) {
+        didSet { Prefs.set("videoLight", videoLight.rawValue); Log.camera.info("Lampu video depan: \(self.videoLight.rawValue, privacy: .public)") }
+    }
     @Published private(set) var recordSeconds: Double = 0
     @Published private(set) var audioLevel: Float = -160        // dB (meter)
     @Published private(set) var videoInfo = ""                   // mis. "4K · 30 · HEVC · Log"
@@ -738,8 +761,8 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
-    func setAILensLock(_ l: Lens?) {
-        guard Self.usesVirtual(mode), !isCapturing, !isRecording, videoKind != .dual, l != aiLensLock else { return }
+    func setAILensLock(_ l: Lens?, whileRecording: Bool = false) {
+        guard Self.usesVirtual(mode), !isCapturing, !isRecording || whileRecording, videoKind != .dual, l != aiLensLock else { return }
         aiLensLock = l
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
@@ -1051,6 +1074,20 @@ final class CameraManager: NSObject, ObservableObject {
             self.syncDual()
             if !wasDual && k != .dual { self.applyVideoFormat() }
         }
+    }
+
+    /// main: VIDEO / SINEMA - pindah kamera belakang <-> depan di tengah rekaman. Mikrofon tidak disentuh,
+    /// jadi suara menyambung; gambar berhenti sebentar selama kamera berganti.
+    func flipWhileRecording() {
+        guard isRecording, shootMode == .video, videoKind != .dual else { return }
+        guard recCanFlip else { status = "Ganti kamera saat rekam hanya untuk Rec.709 kecepatan normal"; return }
+        if aiLensLock == .front {
+            setAILensLock(recPrevLock, whileRecording: true)
+        } else {
+            recPrevLock = aiLensLock
+            setAILensLock(.front, whileRecording: true)
+        }
+        Log.camera.info("VIDEO: ganti kamera saat rekam -> \(self.aiLensLock?.displayName ?? "Auto", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
     }
 
     /// main: tukar gambar utama <-> kotak kecil (boleh saat merekam)
@@ -1719,6 +1756,8 @@ final class CameraManager: NSObject, ObservableObject {
         let transform = CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180)
         let playback = s.fps.isSlowMo && s.timelapse <= 1 ? slowPlayback : fps
         let audio = audioInput != nil && playback == fps && s.timelapse <= 1
+        let canFlip = color == .sdr && playback == fps && s.timelapse <= 1
+        DispatchQueue.main.async { self.recCanFlip = canFlip }
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd_HHmmss"
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1832,6 +1871,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func stopRecording() {
+        recCanFlip = false
         recordTimer?.invalidate()
         recordTimer = nil
         recPaused = false

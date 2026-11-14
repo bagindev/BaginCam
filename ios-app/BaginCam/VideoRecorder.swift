@@ -350,6 +350,23 @@ final class VideoRecorder {
                 }
             }
         }
+        // ganti kamera saat rekam: frame kamera lain bisa beda ukuran -> diisi penuh ke ukuran rekaman
+        if CVPixelBufferGetWidth(pb) != config.width || CVPixelBufferGetHeight(pb) != config.height,
+           let pool = adaptor.pixelBufferPool {
+            var dst: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
+            if let dst {
+                let src = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])
+                let W = CGFloat(config.width), H = CGFloat(config.height)
+                let k = max(W / src.extent.width, H / src.extent.height)
+                let scaled = src.transformed(by: CGAffineTransform(scaleX: k, y: k))
+                let img = scaled.transformed(by: CGAffineTransform(translationX: (W - scaled.extent.width) / 2 - scaled.extent.minX,
+                                                                   y: (H - scaled.extent.height) / 2 - scaled.extent.minY))
+                ciContext.render(img, to: dst, bounds: CGRect(x: 0, y: 0, width: W, height: H), colorSpace: nil)
+                CVBufferPropagateAttachments(pb, dst)
+                pb = dst
+            }
+        }
         if !started {
             guard writer.startWriting() else {
                 Log.camera.error("Video: startWriting gagal \(String(describing: self.writer.error), privacy: .public)")
