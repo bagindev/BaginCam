@@ -994,3 +994,29 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Catatan: UW hasil fusi sedikit berbintik - penajaman akhir preset Tajam (0.35) menajamkan noise foto 48MP yang
   dicerahkan rasio tone. v0.19.1: saat fusi, finalSharpen x 0.3. Label log align diperjelas ("energi tepi b/a").
 - Versi 0.19.1 (build 46). Build run 43424212576 sukses -> `data/builds/BaginCam-v0.19.1-unsigned.ipa`.
+
+## Sesi 47 — 2026-11-14 · cek v0.19.1 -> v0.20.0 (logo, Xcode 27 / iOS 26-27, iPhone 17/18 Pro Max, aperture)
+- Log 09:28-10:09 (tanpa mengisi daya, cuaca 37 °C "Excessive Heat", screenshot IMG_7038). Video Action stabil
+  jalan (1080p30, 44 s, frame hilang 0, suhu 1 setelah ~37 s rekam). HDR+ utama + fusi 48MP 1.32 s (geser 11,-39 px,
+  rasio global 1.24/1.26/1.34); suhu 2 (panas) setelah foto - wajar di 37 °C. Gaya warna belum dicoba (Natural).
+  Log "Frame 7/6" = foto fusi 48MP ikut terhitung (kosmetik) -> v0.20 ditandai "(foto fusi 48MP, di luar burst)".
+- Foto: IMG_7035, 7038 (PNG), 7039-7042 + debug 48MP -> `data/bursts/dcim-1114-v0191/` (debug 13 Nov duplikat
+  dihapus, sudah ada di v0185/v019). Crop 100% IMG_7040 (fusi): detail tajam, tanpa bintik, bokeh bersih.
+- Logo: `tools/brand/make_icon.py` (Pillow, offline) -> lensa + 6 bilah aperture kuning-oranye, bukaan kaca gelap,
+  latar biru-arang. `Assets.xcassets/AppIcon.appiconset` (terang / gelap / tinted, 1024 single-size) +
+  `Logo.imageset` (Pengaturan > Info). Preview `data/brand/preview.png`, PNG `data/brand/BaginCam-icon-1024.png`.
+  project.yml ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon.
+- iOS 26/27: CI pindah dari macos-15 (Xcode 16.4, SDK 18) ke runner `xcode-27` (GA 16 Okt 2026) -> Xcode 27.1,
+  SDK iOS 27.1. Minimal iOS tetap 17.0 (HP sekarang iOS 18.7.8 tetap bisa). Di iOS 26/27 kontrol sistem
+  (menu, sheet, slider) otomatis tampil Liquid Glass. Warning build hanya 2 (CIColorKernel deprecated, weak self).
+- iPhone 17/18 Pro Max (tele 4x 48MP, bukan 5x 12MP): CameraManager.teleNative dari switch-over kamera virtual;
+  label lensa & titik zoom foto [0.5,1,2,t,2t,25,50] (16 PM 5/10, 17/18 PM 4/8). Fusi 48MP untuk semua lensa
+  belakang 48MP (tele 17/18 PM); Super Res -> crop sensor 48MP juga untuk tele 48MP saat terang. Model HP di header
+  log + Pengaturan (LogFile.model, mis. iPhone17,2 (16 Pro Max); 18 Pro Max US = iPhone19,3).
+- iPhone 18 Pro aperture variabel (f/1.48-f/4): API iOS 27 dicek dari header SDK di CI (setExposureModeCustom(
+  lensAperture:duration:iso:), autoLensAperture, format.min/maxLensAperture, supportsExposureModeCustom(...)).
+  Tab "Aperture" di laci Pro (hanya muncul bila lensa punya aperture variabel): A / f-stop; dengan ISO/shutter
+  auto = prioritas aperture, manual = aperture + shutter + ISO. Saat jepret pindah ke lensa fisik, eksposur
+  dikompensasi (f/a / f/asal)^2 (shutter dulu s/d 1/30 s, sisanya ISO). Belum bisa diuji (butuh iPhone 18 Pro).
+- Versi 0.20.0 (build 47). Build run 43554285877 (logo + Xcode 27) & 43554604850 (aperture) sukses ->
+  `data/builds/BaginCam-v0.20.0-unsigned.ipa` (36.6 MB; Info.plist DTXcode 2710, SDK 27.1, MinimumOS 17.0).
