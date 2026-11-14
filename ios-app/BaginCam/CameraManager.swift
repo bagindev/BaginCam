@@ -392,6 +392,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var dualFormatsLogged = false                   // sessionQueue
     let dualSupported = DualCam.supported
     private var cineOn = false                              // videoQueue
+    private var lastSyncClock: CMClock?                     // videoQueue
     private var cineIntensity: Double = Prefs.get("bokehIntensity", 50.0)   // videoQueue
     private lazy var cine = CinematicProcessor()            // videoQueue
     private var dual: DualCam?                              // sessionQueue
@@ -1134,14 +1135,29 @@ final class CameraManager: NSObject, ObservableObject {
         return nil
     }
 
+    /// antrean video: selisih jam sesi terhadap jam host untuk waktu ini. Saat kamera diganti di tengah
+    /// rekaman, jam sinkronisasi sesi bisa berganti -> gambar & suara ditulis di jam host supaya tetap sinkron.
+    private func hostShift(_ s: AVCaptureSession, _ pts: CMTime) -> CMTime {
+        guard let clk = s.synchronizationClock else { return .zero }
+        let d = CMTimeSubtract(pts, CMSyncConvertTime(pts, from: clk, to: CMClockGetHostTimeClock()))
+        if clk !== lastSyncClock {
+            lastSyncClock = clk
+            Log.camera.info("VIDEO: jam sesi berganti, selisih ke jam host \(d.seconds * 1000, format: .fixed(precision: 1), privacy: .public) ms, rekam \(self.recorder != nil, privacy: .public)")
+        }
+        return d
+    }
+
     /// sessionQueue: pasang & jalankan sesi DUAL (menggantikan yang lama bila ada)
     private func installDual(_ dc: DualCam) {
-        dc.onVideo = { [weak self] pb, pts in
-            guard let self else { return }
-            self.recorder?.appendVideo(pb, pts: pts)
+        dc.onVideo = { [weak self, weak dc] pb, pts in
+            guard let self, let dc else { return }
+            self.recorder?.appendVideo(pb, pts: CMTimeSubtract(pts, self.hostShift(dc.session, pts)))
             self.onFrame?(CIImage(cvPixelBuffer: pb))
         }
-        dc.onAudio = { [weak self] sb in self?.recorder?.appendAudio(sb) }
+        dc.onAudio = { [weak self, weak dc] sb in
+            guard let self, let dc else { return }
+            self.recorder?.appendAudio(sb, clockShift: self.hostShift(dc.session, CMSampleBufferGetPresentationTimeStamp(sb)))
+        }
         dc.swapped = dualSwapS
         dc.pipCenter = dualPipS
         dual = dc
@@ -3138,8 +3154,10 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     /// antrean video (audio juga dikirim ke antrean ini supaya perekam aman satu thread)
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let rawPTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let shift = hostShift(session, rawPTS)
         if output === audioOutput {
-            recorder?.appendAudio(sampleBuffer)
+            recorder?.appendAudio(sampleBuffer, clockShift: shift)
             return
         }
         guard var pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -3147,7 +3165,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         if faceTrack, let ft = faceTrackerCrop {
             recorder?.faceTrackCrop = ft
         }
-        recorder?.appendVideo(pb, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        recorder?.appendVideo(pb, pts: CMTimeSubtract(rawPTS, shift))
         if previewLog {
             // Apple Log: nilai mentah (tanpa manajemen warna) -> LUT Log -> Rec.709 untuk dilihat
             let raw = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])

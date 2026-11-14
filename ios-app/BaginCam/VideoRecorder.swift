@@ -439,11 +439,13 @@ final class VideoRecorder {
     }
 
     /// antrean video (output audio memakai antrean yang sama)
-    func appendAudio(_ sb: CMSampleBuffer) {
+    /// clockShift = selisih jam sesi terhadap jam host untuk buffer ini (lihat CameraManager.hostShift)
+    func appendAudio(_ sb: CMSampleBuffer, clockShift: CMTime = .zero) {
         guard started, !stopping, !paused, !resumePending, let aIn, aIn.isReadyForMoreMediaData else { return }
         var buf = sb
-        if CMTimeCompare(offset, .zero) > 0 {
-            guard let s = Self.shift(sb, by: offset) else { return }
+        let total = CMTimeAdd(offset, clockShift)
+        if CMTimeCompare(total, .zero) != 0 {
+            guard let s = Self.shift(sb, by: total) else { return }
             buf = s
         }
         guard CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(buf), startPTS) >= 0 else { return }
