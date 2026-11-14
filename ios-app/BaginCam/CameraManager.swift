@@ -2450,7 +2450,7 @@ final class CameraManager: NSObject, ObservableObject {
                                         night: burstNight, multiFrame: multiFrame) {
             src = deconv
             srcRect = CGRect(x: 0, y: 0, width: deconv.width, height: deconv.height)
-            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(burstCrop), lens: burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
+            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(self.burstCrop), lens: self.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
         }
 
         let res = burstOutputMP
