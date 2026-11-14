@@ -1258,3 +1258,15 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   (mask bisa telat 1-2 frame saat gerak cepat); 1080p <= 30 fps tetap segmentasi tiap frame.
   Blur latar 4K dihitung di 1/8 resolusi. Log sekarang: ukuran, fps masuk, ms/frame, mode mask.
 - Build `data/ipa-v0.26.1/BaginCam-unsigned.ipa`. **Belum diuji di HP** (termasuk isi build 59).
+
+### Fix: suara mendahului gambar setelah ganti kamera saat rekam (v0.26.2 build 61)
+- Laporan (build 59): video bolak-balik kamera -> suara terdengar duluan, bibir telat.
+  Log rekaman itu: 4K30, pindah ke Depan di 19.0 s, kembali ke Auto di 26.0 s, 0 frame hilang;
+  tidak ada error, jadi penyebab belum terbukti dari log.
+- Dugaan: jam sinkronisasi sesi berganti saat input kamera dilepas/dipasang, sehingga cap waktu
+  gambar dan suara tidak lagi di garis waktu yang sama.
+- Fix: cap waktu gambar DAN suara dikonversi dari `session.synchronizationClock` ke jam host
+  (`hostShift`) sebelum ditulis; berlaku juga untuk sesi DUAL. `appendAudio(_, clockShift:)`.
+- Log baru untuk membuktikan: `VIDEO: jam sesi berganti, selisih ke jam host x ms, rekam true/false`.
+- Build `data/ipa-v0.26.2/BaginCam-unsigned.ipa` (memuat build 60: DUAL ganti lensa, SINEMA 4K60).
+  **Belum diuji di HP.** Bila masih tidak sinkron: lihat baris "jam sesi berganti" di log.
