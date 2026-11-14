@@ -1041,15 +1041,31 @@ final class CameraManager: NSObject, ObservableObject {
         change()
         let isVideo = shootMode == .video
         if wasVideo && !isVideo {
+            let z: CGFloat = videoKind == .dual ? 1 : totalZoom
+            totalZoom = z
             videoKind = .normal
             torch = false
-            sessionQueue.async { self.leaveVideo() }      // sebelum mesin foto dipasang lagi
+            sessionQueue.async { self.leaveVideo(); self.reapplyZoom(z) }      // sebelum mesin foto dipasang lagi
         }
         let want = liveWanted
         if !want { applyLiveSoon(want) }
         setMode(Self.internalMode(shootMode, photoProcess, proFormat))
         if want { applyLiveSoon(want) }
         if isVideo && !wasVideo { beginVideo() }
+    }
+
+    /// sessionQueue: zoom kamera dipasang ulang sesuai angka di layar. Ganti preset / format mengembalikan
+    /// videoZoomFactor ke 1, dan di kamera virtual faktor 1 = lensa Ultra Wide (layar tetap menulis 1x).
+    private func reapplyZoom(_ z: CGFloat) {
+        guard let d = device, (try? d.lockForConfiguration()) != nil else { return }
+        let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
+        let before = d.videoZoomFactor
+        let want = min(max(z * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+        d.videoZoomFactor = want
+        d.unlockForConfiguration()
+        if abs(before - want) > 0.01 {
+            Log.camera.info("Zoom dipasang ulang setelah keluar VIDEO: faktor \(Double(before), format: .fixed(precision: 2), privacy: .public) -> \(Double(want), format: .fixed(precision: 2), privacy: .public) (layar \(Double(z), format: .fixed(precision: 1), privacy: .public)x)")
+        }
     }
 
     func setShootMode(_ s: ShootMode) {
@@ -1225,9 +1241,11 @@ final class CameraManager: NSObject, ObservableObject {
             dual = nil
             Log.camera.info("DUAL: keluar")
             session.startRunning()
-            let z = videoSnap.zoom
-            DispatchQueue.main.async { self.totalZoom = z }
-            if inVideo { applyVideoFormat() }
+            if inVideo {
+                let z = videoSnap.zoom
+                DispatchQueue.main.async { self.totalZoom = z }
+                applyVideoFormat()
+            }
         }
     }
     func setPhotoProcess(_ p: PhotoProcess) { applyUI { photoProcess = p } }
@@ -2750,7 +2768,8 @@ final class CameraManager: NSObject, ObservableObject {
                    let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Portrait bokeh diterapkan")
-                } else if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
+                }
+                if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
                    let b = Self.applyFaceBeauty(cg, level: burstBeautyLevel) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Face Beauty diterapkan")
@@ -2947,34 +2966,104 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: portrait bokeh
 
-    static func applyPortraitBokeh(_ img: CGImage, intensity: Double = 50) -> CGImage? {
-        let segReq = VNGeneratePersonSegmentationRequest()
-        segReq.qualityLevel = .accurate
+    /// Matte subjek seukuran gambar (1 = subjek). Memakai "angkat subjek" Vision (iOS 17): tepi rambut jauh
+    /// lebih rapi daripada segmentasi orang. Bila ada orang, hanya objek yang menempel pada orang yang dipakai.
+    static func subjectMatte(_ img: CGImage) -> (matte: CIImage, how: String)? {
         let handler = VNImageRequestHandler(cgImage: img, options: [:])
-        guard (try? handler.perform([segReq])) != nil,
-              let mask = segReq.results?.first?.pixelBuffer else { return nil }
-        let rawMask = CIImage(cvPixelBuffer: mask)
-        let sx = CGFloat(img.width) / rawMask.extent.width
-        let sy = CGFloat(img.height) / rawMask.extent.height
-        let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-        let bounds = CGRect(x: 0, y: 0, width: img.width, height: img.height)
-        // invert: person=0 (tajam), background=1 (blur) — CIMaskedVariableBlur blur per-piksel
-        let inverted = ciMask.applyingFilter("CIColorInvert")
-        // feather tepi mask agar transisi rambut/tepian halus
-        let feather = Double(min(img.width, img.height)) / 400.0
-        let blurMask = inverted
-            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": feather])
-            .cropped(to: bounds)
+        let fg = VNGenerateForegroundInstanceMaskRequest()
+        let person = VNGeneratePersonSegmentationRequest()
+        person.qualityLevel = .balanced
+        person.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        _ = try? handler.perform([fg])
+        _ = try? handler.perform([person])
+        let personMask = person.results?.first?.pixelBuffer
+        let W = CGFloat(img.width), H = CGFloat(img.height)
+        func fit(_ pb: CVPixelBuffer) -> CIImage {
+            let m = CIImage(cvPixelBuffer: pb)
+            return m.transformed(by: CGAffineTransform(scaleX: W / m.extent.width, y: H / m.extent.height))
+        }
+        if let obs = fg.results?.first, !obs.allInstances.isEmpty {
+            var chosen = obs.allInstances
+            if let pm = personMask {
+                let sel = instances(obs.instanceMask, overlapping: pm)
+                if !sel.isEmpty { chosen = sel }
+            }
+            if let pb = try? obs.generateScaledMaskForImage(forInstances: chosen, from: handler) {
+                return (fit(pb), "subjek \(chosen.count) dari \(obs.allInstances.count)")
+            }
+        }
+        if let pm = personMask { return (fit(pm), "segmentasi orang") }
+        return nil
+    }
+
+    /// label objek (1...) yang minimal 25 % areanya tertutup mask orang
+    private static func instances(_ inst: CVPixelBuffer, overlapping person: CVPixelBuffer) -> IndexSet {
+        guard CVPixelBufferGetPixelFormatType(inst) == kCVPixelFormatType_OneComponent8,
+              CVPixelBufferGetPixelFormatType(person) == kCVPixelFormatType_OneComponent8 else { return [] }
+        CVPixelBufferLockBaseAddress(inst, .readOnly)
+        CVPixelBufferLockBaseAddress(person, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(inst, .readOnly)
+            CVPixelBufferUnlockBaseAddress(person, .readOnly)
+        }
+        guard let ib = CVPixelBufferGetBaseAddress(inst), let pbase = CVPixelBufferGetBaseAddress(person) else { return [] }
+        let iw = CVPixelBufferGetWidth(inst), ih = CVPixelBufferGetHeight(inst), ir = CVPixelBufferGetBytesPerRow(inst)
+        let pw = CVPixelBufferGetWidth(person), ph = CVPixelBufferGetHeight(person), pr = CVPixelBufferGetBytesPerRow(person)
+        let ip = ib.assumingMemoryBound(to: UInt8.self), pp = pbase.assumingMemoryBound(to: UInt8.self)
+        var total = [Int](repeating: 0, count: 256), hit = [Int](repeating: 0, count: 256)
+        for y in stride(from: 0, to: ih, by: 3) {
+            let py = min(ph - 1, y * ph / ih)
+            for x in stride(from: 0, to: iw, by: 3) {
+                let l = Int(ip[y * ir + x])
+                if l == 0 { continue }
+                total[l] += 1
+                if pp[py * pr + min(pw - 1, x * pw / iw)] > 128 { hit[l] += 1 }
+            }
+        }
+        var out = IndexSet()
+        for l in 1..<256 where total[l] > 0 && hit[l] * 4 >= total[l] { out.insert(l) }
+        return out
+    }
+
+    static func applyPortraitBokeh(_ img: CGImage, intensity: Double = 50) -> CGImage? {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let (matte, how) = subjectMatte(img) else {
+            Log.sr.info("Bokeh: tidak ada subjek / orang, foto dibiarkan tajam")
+            return nil
+        }
         let ci = CIImage(cgImage: img)
-        // radius blur skala berdasarkan intensity (0-100) dan ukuran gambar
+        let bounds = ci.extent
+        let minDim = Double(min(img.width, img.height))
+        let m = matte.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": minDim / 1500.0])
+            .cropped(to: bounds)
         let t = max(0, min(100, intensity)) / 100.0
-        let maxR = Double(min(img.width, img.height)) / 60.0
-        let bokehR = maxR * t
-        let result = ci.applyingFilter("CIMaskedVariableBlur", parameters: [
-            "inputMask": blurMask,
-            "inputRadius": bokehR
+        let radius = minDim / 40.0 * t
+        // Latar saja: subjek dibuat transparan (alpha = 1 - matte) lalu diblur cakram di 1/4 resolusi.
+        // Blur bekerja pada warna premultiplied, jadi setelah dinormalkan lagi warna subjek tidak bocor
+        // ke latar (tidak ada "halo" di sekeliling rambut / bahu).
+        let k: CGFloat = 0.25
+        let bgOnly = ci.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: CIImage.empty(),
+            kCIInputMaskImageKey: m.applyingFilter("CIColorInvert"),
+        ])
+        let small = bgOnly.transformed(by: CGAffineTransform(scaleX: k, y: k))
+        let blurred = small.clampedToExtent()
+            .applyingFilter("CIDiscBlur", parameters: ["inputRadius": max(1.0, radius * Double(k))])
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            ])
+            .cropped(to: small.extent)
+            .transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k))
+            .cropped(to: bounds)
+        let result = ci.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: blurred,
+            kCIInputMaskImageKey: m,
         ]).cropped(to: bounds)
-        return RawDeveloper.cgImage(result)
+        let out = RawDeveloper.cgImage(result)
+        Log.sr.info("Bokeh: matte \(how, privacy: .public), kekuatan \(Int(intensity), privacy: .public)%, radius \(Int(radius), privacy: .public) px, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+        return out
     }
 
     /// zoom Apple + AI: hasil Apple (sudah diperbesar Apple) diperkecil ke detail aslinya

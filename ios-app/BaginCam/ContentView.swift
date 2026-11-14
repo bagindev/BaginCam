@@ -139,6 +139,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     if cam.shootMode == .video {
                         // v0.12.4: dikelompokkan (Format · LUT · WB · Bantu · AI · Senter)
+                        if cam.videoKind == .cinematic { bokehChip }
                         videoFormatChip
                         colorGroupChip
                         assistChip
@@ -148,6 +149,7 @@ struct ContentView: View {
                     } else {
                         // v0.14: dikelompokkan (Proses · Hasil · Warna · Bantu · flash · Live)
                         processChip
+                        if cam.shootMode == .photo || cam.shootMode == .portrait { beautyChip }
                         resultChip
                         colorGroupChip
                         assistChip
@@ -325,7 +327,7 @@ struct ContentView: View {
         case .night:
             chip("MALAM", icon: "moon.stars.fill", on: true)
         case .portrait:
-            chip("POTRET", icon: "person.crop.rectangle", on: true)
+            bokehChip
         case .video:
             switch cam.videoKind {
             case .normal: chip("VIDEO", icon: "video.fill", on: true)
@@ -621,6 +623,30 @@ struct ContentView: View {
             Text("AI terlalu berat untuk real-time; diproses setelah rekam (~1-2 s/frame)")
         } label: { chip(cam.aiAfterRecord ? "AI ON" : "AI", icon: "sparkles", on: cam.aiAfterRecord) }
         .disabled(cam.isRecording)
+    }
+
+    /// kekuatan blur latar (POTRET & SINEMA)
+    private var bokehChip: some View {
+        Menu {
+            ForEach([(25.0, "Tipis"), (50.0, "Natural"), (75.0, "Kuat"), (100.0, "Maksimal")], id: \.0) { v, name in
+                Button { cam.bokehIntensity = v } label: { check("\(name) \(Int(v))%", abs(cam.bokehIntensity - v) < 2.5) }
+            }
+            Text("Atur lebih halus: Bantu > Wajah & Bokeh")
+        } label: {
+            chip("Bokeh \(Int(cam.bokehIntensity))%", icon: "camera.aperture", on: true)
+        }
+    }
+
+    /// percantik wajah (foto)
+    private var beautyChip: some View {
+        Menu {
+            ForEach(CameraManager.BeautyLevel.allCases) { l in
+                Button { cam.beautyLevel = l } label: { check(l.rawValue, cam.beautyLevel == l) }
+            }
+            Text("Menghaluskan kulit di foto HDR+ tanpa zoom")
+        } label: {
+            chip(cam.beautyLevel.active ? cam.beautyLevel.rawValue : "", icon: "face.smiling", on: cam.beautyLevel.active)
+        }
     }
 
     /// lampu layar untuk video kamera depan
@@ -1513,7 +1539,32 @@ private struct AssistPanel: View {
     var body: some View {
         NavigationStack {
             Form {
-                if cam.shootMode != .video {
+                // urutan: yang paling sering diatur untuk mode ini di atas, tampilan layar, lalu gimbal
+                let photo = cam.shootMode != .video
+                let bokeh = cam.shootMode == .portrait || (cam.shootMode == .video && cam.videoKind == .cinematic)
+                if photo || bokeh {
+                    Section {
+                        if photo {
+                            Picker("Percantik wajah", selection: $cam.beautyLevel) {
+                                ForEach(CameraManager.BeautyLevel.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                        }
+                        if bokeh {
+                            VStack(alignment: .leading) {
+                                HStack {
+                                    Text("Kedalaman bokeh")
+                                    Spacer()
+                                    Text("\(Int(cam.bokehIntensity))%").foregroundStyle(.secondary)
+                                }
+                                Slider(value: $cam.bokehIntensity, in: 10...100, step: 5)
+                            }
+                        }
+                    } header: { Text("Wajah & Bokeh") } footer: {
+                        Text(bokeh ? "Bokeh: 10% tipis, 50% natural, 100% kuat. Percantik menghaluskan kulit di foto HDR+ tanpa zoom."
+                                   : "Percantik menghaluskan kulit di foto HDR+ tanpa zoom. Standard = natural, Strong = lebih mulus.")
+                    }
+                }
+                if photo {
                     Section {
                         Toggle("Susun ulang (saran framing)", isOn: $cam.compAI)
                         Toggle("Simpan versi crop setelah jepret", isOn: $cam.compCrop)
@@ -1521,6 +1572,36 @@ private struct AssistPanel: View {
                             Button { close(); comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
                         }
                     } header: { Text("AI Komposisi") }
+                } else {
+                    Section {
+                        Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
+                        Picker("Garis bingkai", selection: $cam.frameGuide) {
+                            ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                    } header: { Text("Video") } footer: {
+                        Text("Face Tracking: frame di-crop dan digeser halus mengikuti wajah (sumber 4K, hasil 1080p).")
+                    }
+                }
+                Section {
+                    Toggle("Grid 3x3", isOn: $showGrid)
+                    Toggle("Waterpass", isOn: $showLevel)
+                    Toggle("Histogram", isOn: $showHistogram)
+                    Toggle("Focus peaking", isOn: $peaking)
+                    if peaking {
+                        Picker("Warna peaking", selection: $peakColor) {
+                            ForEach(ContentView.peakColors, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    Toggle("Zebra", isOn: $zebra)
+                    if zebra {
+                        Picker("Level zebra", selection: $zebraLevel) {
+                            ForEach([0.70, 0.80, 0.90, 0.95, 1.0], id: \.self) { Text("\(Int(($0 * 100).rounded()))%").tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } header: { Text("Tampilan layar") } footer: {
+                    Text("Peaking mewarnai tepi yang tajam, zebra menandai area hampir putih. Hanya di layar.")
                 }
                 Section {
                     Toggle("Mode Gimbal", isOn: $cam.gimbalMode)
@@ -1529,63 +1610,8 @@ private struct AssistPanel: View {
                     }
                     Toggle("Auto-deteksi gimbal", isOn: $cam.gimbalAuto)
                 } header: { Text("Gimbal (DJI Osmo Mobile)") } footer: {
-                    Text("Stabilisasi Action/Cinematic diganti Standard (gimbal yang meredam goyang). Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Tracking pakai modul DJI; kotak hijau = subjek di tengah. Tombol lain (roda zoom, Switch) dicatat di log - bilang \"cek\" setelah mencoba semua tombol.\n\nAuto-deteksi: saat gimbal / controller Bluetooth tersambung, mode gimbal langsung aktif. Saat terputus, mode gimbal otomatis mati.")
+                    Text("Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Stabilisasi Action/Cinematic diganti Standard. Auto-deteksi menyalakan mode gimbal saat gimbal tersambung lewat Bluetooth.")
                 }
-                Section {
-                    Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
-                } header: { Text("Face Tracking") } footer: {
-                    Text("Mirip Center Stage: frame video di-crop dan digeser halus mengikuti wajah. Sumber 4K, hasil 1080p tajam. Bisa dipakai dengan atau tanpa gimbal (mis. HP di tripod). Gimbal = gerakan besar, Face Track = merapikan supaya wajah selalu pas di tengah.")
-                }
-                Section {
-                    Picker("Level", selection: $cam.beautyLevel) {
-                        ForEach(CameraManager.BeautyLevel.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                } header: { Text("Percantik Wajah") } footer: {
-                    Text("Haluskan kulit wajah secara otomatis pakai segmentasi AI (Vision). Standard = halus natural, Strong = lebih mulus. Berlaku untuk foto HDR+ non-zoom. Area selain orang tetap tajam.")
-                }
-                Section {
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Kedalaman Bokeh")
-                            Spacer()
-                            Text("\(Int(cam.bokehIntensity))%").foregroundStyle(.secondary)
-                        }
-                        Slider(value: $cam.bokehIntensity, in: 10...100, step: 5)
-                    }
-                } header: { Text("Potret & Sinema") } footer: {
-                    Text("Kekuatan blur latar belakang di mode POTRET (foto) dan SINEMA (video, terlihat langsung di layar). 10% = tipis, 50% = natural, 100% = kuat. SINEMA merekam Rec.709 sampai 4K 60 fps (4K / 60 fps lebih berat & panas). DUAL merekam kamera belakang + depan jadi satu video 1080p; tombol putar menukar gambar utama, juga saat merekam.")
-                }
-                Section {
-                    Toggle("Focus peaking", isOn: $peaking)
-                    if peaking {
-                        Picker("Warna", selection: $peakColor) {
-                            ForEach(ContentView.peakColors, id: \.self) { Text($0).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                } header: { Text("Fokus") } footer: { Text("Tepi yang tajam diberi warna - hanya di layar.") }
-                Section {
-                    Toggle("Zebra", isOn: $zebra)
-                    if zebra {
-                        Picker("Level", selection: $zebraLevel) {
-                            ForEach([0.70, 0.80, 0.90, 0.95, 1.0], id: \.self) { Text("\(Int(($0 * 100).rounded()))%").tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                } header: { Text("Eksposur") } footer: { Text("Garis-garis di area yang hampir putih (terbakar).") }
-                if cam.shootMode == .video {
-                    Section {
-                        Picker("Garis bingkai", selection: $cam.frameGuide) {
-                            ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
-                        }
-                    } header: { Text("Bingkai") }
-                }
-                Section {
-                    Toggle("Grid 3x3", isOn: $showGrid)
-                    Toggle("Waterpass", isOn: $showLevel)
-                    Toggle("Histogram", isOn: $showHistogram)
-                } header: { Text("Layar") }
             }
             .navigationTitle("Bantu")
             .navigationBarTitleDisplayMode(.inline)
