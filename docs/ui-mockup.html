@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BaginCam - rancangan UI</title>
+<style>
+  :root { --y: #ffd60a; --bg: #101114; --ink: #f2f2f4; --mute: #9a9ca6; --glass: rgba(28,28,32,.72); --line: rgba(255,255,255,.16); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 28px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--mute); margin: 0 0 28px; max-width: 70ch; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 36px 28px; justify-content: center; }
+  figure { margin: 0; width: 300px; }
+  figcaption { margin-top: 14px; }
+  figcaption b { display: block; font-size: 16px; }
+  figcaption span { color: var(--mute); font-size: 13.5px; }
+  ul { margin: 8px 0 0; padding-left: 18px; color: var(--mute); font-size: 13.5px; }
+  .phone { position: relative; width: 300px; height: 650px; border-radius: 44px; background: #000; border: 3px solid #2a2b31; overflow: hidden; }
+  .island { position: absolute; top: 10px; left: 50%; width: 92px; height: 26px; margin-left: -46px; border-radius: 14px; background: #000; z-index: 9; }
+  .view { position: absolute; inset: 0; background:
+      radial-gradient(120px 150px at 50% 44%, #d9a98a 0 55%, transparent 56%),
+      radial-gradient(170px 120px at 50% 78%, #39506b 0 60%, transparent 61%),
+      linear-gradient(160deg, #6f8a6a, #2c3d36 55%, #1b2420); filter: saturate(.9); }
+  .view.small { inset: 96px 10px auto 10px; height: 373px; border-radius: 14px; }
+  .scrim-t { position: absolute; inset: 0 0 auto 0; height: 110px; background: linear-gradient(#000a, transparent); }
+  .scrim-b { position: absolute; inset: auto 0 0 0; height: 250px; background: linear-gradient(transparent, #000c); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--glass); border: 1px solid var(--line); font-size: 11.5px; font-weight: 600; white-space: nowrap; backdrop-filter: blur(8px); }
+  .pill.on { color: var(--y); border-color: var(--y); }
+  .round { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--glass); border: 1px solid var(--line); font-size: 14px; }
+  .row { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .modes { bottom: 22px; gap: 16px; font-size: 11.5px; font-weight: 700; letter-spacing: .3px; color: #d8d8dc; }
+  .modes .cur { color: #000; background: var(--y); padding: 4px 11px; border-radius: 12px; }
+  .shutter { bottom: 62px; justify-content: space-between; padding: 0 26px; }
+  .thumb { width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid #fff; background: linear-gradient(135deg, #7a8f74, #33423a); }
+  .btn { width: 66px; height: 66px; border-radius: 50%; border: 3.5px solid #fff; padding: 4px; }
+  .btn i { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--y); }
+  .note { position: absolute; font-size: 10.5px; color: #000; background: #7fe3ff; padding: 2px 6px; border-radius: 6px; font-weight: 700; z-index: 8; }
+  /* laci */
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; height: 365px; background: #17181c; border-radius: 26px 26px 0 0; border-top: 1px solid var(--line); padding: 10px 14px; }
+  .grab { width: 38px; height: 5px; border-radius: 3px; background: #5a5b63; margin: 0 auto 12px; }
+  .sheet h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .6px; color: var(--mute); text-transform: uppercase; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .tile { height: 58px; border-radius: 14px; background: #24252b; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px; color: #cfd0d6; }
+  .tile b { font-size: 15px; color: #fff; }
+  .tile.on { background: #3a3414; color: var(--y); } .tile.on b { color: var(--y); }
+  .slider { height: 30px; border-radius: 10px; background: #24252b; position: relative; margin-bottom: 14px; font-size: 10.5px; color: #cfd0d6; display: flex; align-items: center; padding: 0 10px; justify-content: space-between; }
+  .slider::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 52%; border-radius: 10px; background: rgba(255,214,10,.22); }
+  /* pro */
+  .vals { top: 46px; gap: 5px; padding: 0 8px; }
+  .val { flex: 1; text-align: center; padding: 5px 0; border-radius: 9px; background: var(--glass); border: 1px solid var(--line); font-size: 9.5px; color: var(--mute); line-height: 1.25; }
+  .val b { display: block; font-size: 12.5px; color: #fff; font-variant-numeric: tabular-nums; }
+  .val.on { border-color: var(--y); } .val.on b { color: var(--y); }
+  .side { position: absolute; top: 150px; display: flex; flex-direction: column; gap: 8px; }
+  .hist { position: absolute; right: 18px; top: 104px; width: 74px; height: 34px; border-radius: 7px; background: #000a; border: 1px solid var(--line); overflow: hidden; }
+  .hist::after { content: ""; position: absolute; inset: 6px 4px 0; background: linear-gradient(90deg, #fff0 0, #fff8 20%, #fffb 34%, #fff5 55%, #fff9 72%, #fff2 100%); clip-path: polygon(0 100%, 8% 70%, 20% 30%, 34% 8%, 48% 55%, 60% 62%, 72% 22%, 86% 60%, 100% 100%); }
+  .dial { position: absolute; left: 10px; right: 10px; bottom: 150px; height: 46px; border-radius: 14px; background: var(--glass); border: 1px solid var(--y); display: flex; align-items: center; justify-content: space-around; font-size: 10.5px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  .dial b { color: var(--y); font-size: 13px; }
+  .zoomv { position: absolute; right: 10px; top: 190px; width: 30px; height: 190px; border-radius: 15px; background: var(--glass); border: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 8px 0; font-size: 9.5px; font-weight: 700; }
+  .zoomv i { width: 22px; height: 22px; border-radius: 50%; background: var(--y); color: #000; display: grid; place-items: center; font-style: normal; font-size: 9px; }
+</style>
+</head>
+<body>
+<h1>BaginCam - dua arah rancangan UI</h1>
+<p class="lead">Gambar skema, bukan tampilan final: warna, ikon, dan jarak masih bisa berubah. Tujuannya membandingkan cara pakai. Label biru muda menjelaskan bagian yang berbeda dari tampilan sekarang.</p>
+
+<div class="wrap">
+
+  <figure>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="view"></div><div class="scrim-t"></div><div class="scrim-b"></div>
+      <div class="row" style="top:48px; justify-content:space-between; padding:0 14px">
+        <span class="round">⚡</span>
+        <span class="pill">HDR+ · 15f</span>
+        <span class="round">☀</span>
+      </div>
+      <span class="note" style="top:90px; left:64px">hanya 3 hal di atas</span>
+      <div class="row" style="bottom:176px; gap:6px">
+        <span class="pill">.5</span><span class="pill on">1x</span><span class="pill">2</span><span class="pill">5</span>
+      </div>
+      <div class="row" style="bottom:140px"><span class="pill" style="height:20px; font-size:10px; padding:0 14px">⌃ pengaturan</span></div>
+      <span class="note" style="bottom:144px; right:14px">tarik ke atas</span>
+      <div class="row shutter"><span class="thumb"></span><span class="btn"><i></i></span><span class="round" style="width:44px;height:44px">⟲</span></div>
+      <div class="row modes"><span>FOTO</span><span class="cur">POTRET</span><span>VIDEO</span><span>SINEMA</span></div>
+    </div>
+    <figcaption>
+      <b>1A. Gaya iPhone - layar bidik</b>
+      <span>Layar bersih. Yang selalu terlihat hanya zoom, shutter, dan mode.</span>
+      <ul>
+        <li>Atas: flash, ringkasan proses, lampu layar</li>
+        <li>Zoom 4 tombol; tahan dan geser untuk zoom halus</li>
+        <li>Geser kiri/kanan di layar untuk ganti mode</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="view"></div><div class="scrim-t"></div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <h4>Potret</h4>
+        <div class="slider"><span style="z-index:1">Bokeh</span><span style="z-index:1">50%</span></div>
+        <div class="tiles">
+          <div class="tile on"><b>☺</b>Percantik</div>
+          <div class="tile"><b>⚡</b>Flash</div>
+          <div class="tile"><b>⏱</b>Timer</div>
+          <div class="tile"><b>4:3</b>Rasio</div>
+        </div>
+        <h4>Hasil &amp; warna</h4>
+        <div class="tiles">
+          <div class="tile"><b>24MP</b>Resolusi</div>
+          <div class="tile"><b>HEIF</b>Format</div>
+          <div class="tile on"><b>LUT</b>Standard</div>
+          <div class="tile"><b>AWB</b>White bal.</div>
+        </div>
+        <h4>Tampilan</h4>
+        <div class="tiles" style="margin-bottom:0">
+          <div class="tile"><b>#</b>Grid</div>
+          <div class="tile on"><b>▂▅▃</b>Histogram</div>
+          <div class="tile"><b>◎</b>Peaking</div>
+          <div class="tile"><b>⚙</b>Lainnya</div>
+        </div>
+      </div>
+      <span class="note" style="top:250px; left:14px">isi laci ikut mode</span>
+    </div>
+    <figcaption>
+      <b>1B. Gaya iPhone - laci terbuka</b>
+      <span>Semua pengaturan di satu tempat, ubin besar yang mudah diketuk jempol.</span>
+      <ul>
+        <li>Bagian teratas khusus mode aktif (Potret: bokeh, percantik)</li>
+        <li>Ketuk ubin = nyala/mati atau pilih nilai</li>
+        <li>Menggantikan baris chip atas dan panel Bantu</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="view"></div><div class="scrim-t"></div><div class="scrim-b"></div>
+      <div class="row vals">
+        <span class="val on">ISO<b>400</b></span>
+        <span class="val">SHUTTER<b>1/60</b></span>
+        <span class="val">WB<b>5600K</b></span>
+        <span class="val">EV<b>0.0</b></span>
+        <span class="val">FORMAT<b>4K30</b></span>
+      </div>
+      <span class="note" style="top:94px; left:10px">ketuk angka untuk ubah</span>
+      <div class="hist"></div>
+      <div class="side" style="left:10px">
+        <span class="round">#</span><span class="round">◎</span><span class="round">▨</span><span class="round">⚡</span>
+      </div>
+      <div class="zoomv"><span>T</span><i>1x</i><span>W</span></div>
+      <div class="dial"><span>200</span><span>320</span><b>ISO 400</b><span>500</span><span>640</span></div>
+      <span class="note" style="bottom:200px; left:74px">roda nilai muncul di sini</span>
+      <div class="row shutter"><span class="thumb"></span><span class="btn"><i style="background:#ff453a"></i></span><span class="round" style="width:44px;height:44px">⟲</span></div>
+      <div class="row modes"><span>FOTO</span><span>POTRET</span><span class="cur">VIDEO</span><span>SINEMA</span></div>
+    </div>
+    <figcaption>
+      <b>2. Gaya kamera pro</b>
+      <span>Angka penting selalu terlihat dan langsung bisa diubah.</span>
+      <ul>
+        <li>Atas: ISO, shutter, WB, EV, format - ketuk lalu putar roda</li>
+        <li>Kiri: alat bantu (grid, peaking, zebra, flash)</li>
+        <li>Kanan: zoom tegak; histogram selalu tampil</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+</div>
+</body>
+</html>

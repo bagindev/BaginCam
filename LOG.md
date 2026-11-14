@@ -1324,3 +1324,9 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   di layar penuh angka eksposur + lencana bantu dipindah ke atas kontrol.
 - Build `data/ipa-v0.27.1/BaginCam-unsigned.ipa`. **Belum dilihat di HP.**
 - Permintaan berikutnya: UI kustom modern yang mudah dioperasikan -> arah desain ditanyakan ke user dulu.
+
+### Rancangan UI (belum ada perubahan kode)
+- `docs/ui-mockup.html`: gambar skema dua arah UI untuk dipilih user - (1A/1B) gaya iPhone: layar bersih +
+  satu laci pengaturan yang isinya ikut mode; (2) gaya kamera pro: ISO/shutter/WB/EV/format selalu tampil
+  dan diketuk untuk diubah, alat bantu di kiri, zoom tegak di kanan. Menunggu pilihan user.
+- User menyebut Project Indigo (Adobe) sebagai acuan mode MALAM - baru dibahas, belum dikerjakan.
