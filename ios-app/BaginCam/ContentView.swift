@@ -13,6 +13,8 @@ struct ContentView: View {
     @State private var showViewer = false
     @State private var showPro = false
     @State private var pipDragStart: CGPoint?
+    @AppStorage("videoFullScreen") private var videoFull = true
+    private var videoFullActive: Bool { videoFull && cam.shootMode == .video }
     @State private var lightSavedBrightness: CGFloat = 0.5
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
@@ -53,11 +55,25 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
+            if videoFullActive {
+                // VIDEO / SINEMA / DUAL: jendela bidik selebar layar, kontrol melayang di atasnya
+                preview
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom).frame(height: 130)
+                    Spacer()
+                    LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .top, endPoint: .bottom).frame(height: 340)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
             VStack(spacing: 6) {
                 topBar
-                preview
+                if !videoFullActive { preview }
+                if videoFullActive { Spacer(minLength: 0) }
                 if showsZoom { zoomRow }
-                Spacer(minLength: 0)
+                if !videoFullActive { Spacer(minLength: 0) }
                 if showPro { proDrawer }
                 if !CameraManager.usesVirtual(cam.mode) { lensRow }
                 statusLine
@@ -820,7 +836,7 @@ struct ContentView: View {
                 UIScreen.main.brightness = new == .off ? lightSavedBrightness : max(lightSavedBrightness, new.brightness)
             }
             .overlay(alignment: .top) {
-                if cam.shootMode == .video { videoInfoRow } else { infoRow }
+                if cam.shootMode == .video { videoInfoRow.padding(.top, videoFullActive ? 30 : 0) } else { infoRow }
             }
     }
 
@@ -1535,6 +1551,7 @@ private struct AssistPanel: View {
     @Binding var showLevel: Bool
     @Binding var showHistogram: Bool
     let close: () -> Void
+    @AppStorage("videoFullScreen") private var videoFull = true
 
     var body: some View {
         NavigationStack {
@@ -1574,6 +1591,7 @@ private struct AssistPanel: View {
                     } header: { Text("AI Komposisi") }
                 } else {
                     Section {
+                        Toggle("Jendela bidik layar penuh", isOn: $videoFull)
                         Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
                         Picker("Garis bingkai", selection: $cam.frameGuide) {
                             ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
