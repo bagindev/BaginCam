@@ -1077,4 +1077,19 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Saat terputus dan tidak ada controller lain, gimbalMode otomatis = false.
 - AssistPanel: toggle "Auto-deteksi gimbal" di bagian Gimbal + penjelasan di footer.
 - Versi 0.22.1 (build 50). Commit `36e36c1`.
-  Berikutnya: tunggu CI build, uji auto-deteksi dengan DJI OM 7P, uji face tracking.
+
+### Cek log gimbal (v0.22.1 build 50)
+- Hasil log: DJI OM 7P **TIDAK terdeteksi sebagai GCController** — hanya tombol record yang mengirim
+  event volume UP ("tombol sekunder"). Roda zoom dan Switch **tidak mengirim event apapun** ke app pihak
+  ketiga — pakai protokol Bluetooth proprietary DJI (hanya DJI Mimo yang bisa baca).
+- Auto-detect gimbal tidak jalan karena OM 7P bukan GCController.
+- Solusi: tiru kontrol DJI Mimo di layar (on-screen controls).
+
+### Kontrol layar ala DJI Mimo
+- GimbalVerticalSlider (Gimbal.swift): slider zoom vertikal (T tele atas, W wide bawah), binding
+  logaritmik sama dengan zoomRow horizontal. Muncul di sisi kanan preview saat gimbalMode aktif.
+- Tombol flip kamera di bawah slider (selalu terlihat saat gimbal mode, tidak hanya saat tidak merekam).
+- ContentView: gimbalZoomStrip overlay di trailing preview.
+- Tetap bisa pinch-zoom dan zoomRow horizontal biasa.
+- Commit `df24408`. Build `data/builds/BaginCam-v0.22.1-b50-mimo-unsigned.ipa`.
+  Berikutnya: uji kontrol layar di gimbal, uji face tracking.
