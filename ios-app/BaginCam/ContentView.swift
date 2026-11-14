@@ -1392,9 +1392,12 @@ private struct AssistPanel: View {
                     Text("Mirip Center Stage: frame video di-crop dan digeser halus mengikuti wajah. Sumber 4K, hasil 1080p tajam. Bisa dipakai dengan atau tanpa gimbal (mis. HP di tripod). Gimbal = gerakan besar, Face Track = merapikan supaya wajah selalu pas di tengah.")
                 }
                 Section {
-                    Toggle("Face Beautification", isOn: $cam.faceBeauty)
+                    Picker("Level", selection: $cam.beautyLevel) {
+                        ForEach(CameraManager.BeautyLevel.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                 } header: { Text("Percantik Wajah") } footer: {
-                    Text("Haluskan kulit wajah secara otomatis pakai segmentasi AI (Vision). Berlaku untuk foto (HDR+ dan Zoom). Area selain orang tetap tajam.")
+                    Text("Haluskan kulit wajah secara otomatis pakai segmentasi AI (Vision). Standard = halus natural, Strong = lebih mulus. Berlaku untuk foto HDR+ non-zoom. Area selain orang tetap tajam.")
                 }
                 Section {
                     VStack(alignment: .leading) {

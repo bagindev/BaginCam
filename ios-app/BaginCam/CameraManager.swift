@@ -60,6 +60,28 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    enum BeautyLevel: String, CaseIterable, Identifiable {
+        case off = "Mati"
+        case standard = "Standard"
+        case strong = "Strong"
+        var id: String { rawValue }
+        var active: Bool { self != .off }
+        var maskOpacity: Double {
+            switch self {
+            case .off: return 0
+            case .standard: return 0.35
+            case .strong: return 0.65
+            }
+        }
+        var blurScale: Double {
+            switch self {
+            case .off: return 0
+            case .standard: return 1.0
+            case .strong: return 1.8
+            }
+        }
+    }
+
     /// mode di layar (niat memotret, seperti GCam). Mesin proses = `Mode` internal.
     enum ShootMode: String, CaseIterable, Identifiable {
         case night = "MALAM"
@@ -331,7 +353,8 @@ final class CameraManager: NSObject, ObservableObject {
     private var pauseStart: Date?
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
-    @Published var faceBeauty: Bool = Prefs.get("faceBeauty", false) { didSet { Prefs.set("faceBeauty", faceBeauty) } }
+    @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
+    var faceBeauty: Bool { beautyLevel.active }
     @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) { didSet { Prefs.set("bokehIntensity", bokehIntensity) } }
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
@@ -446,6 +469,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
     private var burstNight = false
     private var burstFaceBeauty = false
+    private var burstBeautyLevel: BeautyLevel = .off
     private var burstPortrait = false
     private var burstBokehIntensity: Double = 50
     private var burstAspect: AspectRatio = .r43
@@ -622,27 +646,12 @@ final class CameraManager: NSObject, ObservableObject {
         }
         session.commitConfiguration()
         applyLive()
-        applyFaceAF(d)
         let flashOK = photoOutput.supportedFlashModes.contains(.on)
         let liveOK = photoOutput.isLivePhotoCaptureSupported
         DispatchQueue.main.async {
             self.flashAvailable = flashOK
             self.liveAvailable = liveOK
         }
-    }
-
-    private func applyFaceAF(_ d: AVCaptureDevice) {
-        guard (try? d.lockForConfiguration()) != nil else { return }
-        let want = shootMode == .portrait
-        if d.isAutoFocusFaceDrivenEnabled != want {
-            d.automaticallyAdjustsFaceDrivenAutoFocusEnabled = false
-            d.isAutoFocusFaceDrivenEnabled = want
-        }
-        if d.isAutoExposureFaceDrivenEnabled != want {
-            d.automaticallyAdjustsFaceDrivenAutoExposureEnabled = false
-            d.isAutoExposureFaceDrivenEnabled = want
-        }
-        d.unlockForConfiguration()
     }
 
     // MARK: kamera virtual (AI Zoom)
@@ -969,7 +978,6 @@ final class CameraManager: NSObject, ObservableObject {
         if !want { applyLiveSoon(want) }
         setMode(Self.internalMode(shootMode, photoProcess, proFormat))
         if want { applyLiveSoon(want) }
-        sessionQueue.async { if let d = self.device { self.applyFaceAF(d) } }
         if isVideo && !wasVideo { beginVideo() }
     }
 
@@ -1825,6 +1833,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstAppleZoomAI = false
             self.burstNight = night
             self.burstFaceBeauty = self.faceBeauty
+            self.burstBeautyLevel = self.beautyLevel
             self.burstPortrait = self.shootMode == .portrait
             self.burstBokehIntensity = self.bokehIntensity
             self.burstAspect = asp
@@ -1985,9 +1994,11 @@ final class CameraManager: NSObject, ObservableObject {
                     // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x.
                     // Ganti zoom membuat AF mencari ulang -> fokus tengah lagi & beri waktu (v0.10.0: Crop penuh buram)
                     d.videoZoomFactor = 1
-                    if !self.manualS.focus, d.isFocusPointOfInterestSupported, d.isFocusModeSupported(.autoFocus) {
-                        d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
-                        d.focusMode = .autoFocus
+                    if !self.manualS.focus, d.isFocusModeSupported(.autoFocus) {
+                        if self.shootMode != .portrait, d.isFocusPointOfInterestSupported {
+                            d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                        }
+                        d.focusMode = self.shootMode == .portrait ? .continuousAutoFocus : .autoFocus
                     }
                     d.unlockForConfiguration()
                     self.restoreZoomAfterBurst = true
@@ -2412,7 +2423,7 @@ final class CameraManager: NSObject, ObservableObject {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Portrait bokeh diterapkan")
                 } else if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
-                   let b = Self.applyFaceBeauty(cg) {
+                   let b = Self.applyFaceBeauty(cg, level: burstBeautyLevel) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Face Beauty diterapkan")
                 }
@@ -2575,8 +2586,8 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: face beautification
 
-    static func applyFaceBeauty(_ img: CGImage) -> CGImage? {
-        guard min(img.width, img.height) >= 400 else { return nil }
+    static func applyFaceBeauty(_ img: CGImage, level: BeautyLevel = .standard) -> CGImage? {
+        guard level.active, min(img.width, img.height) >= 400 else { return nil }
         let faceReq = VNDetectFaceRectanglesRequest()
         let faceHandler = VNImageRequestHandler(cgImage: img, options: [:])
         guard (try? faceHandler.perform([faceReq])) != nil,
@@ -2590,11 +2601,13 @@ final class CameraManager: NSObject, ObservableObject {
         let sx = CGFloat(img.width) / rawMask.extent.width
         let sy = CGFloat(img.height) / rawMask.extent.height
         let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        let opacity = level.maskOpacity
         let softMask = ciMask.applyingFilter("CIColorMatrix", parameters: [
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.4)
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: opacity)
         ])
         let ci = CIImage(cgImage: img)
-        let r = max(1.0, min(3.0, Double(min(img.width, img.height)) / 1200.0 * 2.0))
+        let baseR = max(1.0, min(3.0, Double(min(img.width, img.height)) / 1200.0 * 2.0))
+        let r = baseR * level.blurScale
         let blurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": r])
             .cropped(to: ci.extent)
         let result = blurred.applyingFilter("CIBlendWithMask", parameters: [
