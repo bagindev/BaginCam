@@ -1270,3 +1270,21 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
 - Log baru untuk membuktikan: `VIDEO: jam sesi berganti, selisih ke jam host x ms, rekam true/false`.
 - Build `data/ipa-v0.26.2/BaginCam-unsigned.ipa` (memuat build 60: DUAL ganti lensa, SINEMA 4K60).
   **Belum diuji di HP.** Bila masih tidak sinkron: lihat baris "jam sesi berganti" di log.
+
+### Cek build 61 + fix suara mendahului gambar (penyebab terbukti) + lampu layar di foto (v0.26.3 build 62)
+- **Log build 61**: DUAL ganti lensa jalan (UW / Utama / Tele, juga saat merekam, biaya 0.52, 0 frame hilang).
+  SINEMA 4K30: 3.1-6.5 ms/frame (mask async). Jam sesi TIDAK berganti saat ganti kamera (selisih ke jam
+  host ~0 ms, tidak ada baris "rekam true") -> dugaan build 61 salah.
+- **Penyebab asli** (dibaca dari tabel waktu IMG_7100.MOV lewat AFC, hanya atom moov, file tidak ditarik):
+  trek gambar 38.0 s, trek suara 31.9 s (stts suara 1 entri = rapat). Sesi berhenti mengirim suara
+  ~1.2 s tiap input kamera diganti (5x ganti = 6.1 s hilang) dan encoder AAC menulis sisanya tanpa jeda,
+  jadi setelah tiap ganti kamera suara maju ~1.2 s mendahului gambar.
+- **Fix**: `VideoRecorder.appendAudio` melacak akhir buffer suara terakhir; jeda > 30 ms diisi PCM hening
+  (`silence()`), jadi panjang trek suara = waktu nyata. Log baru: `VIDEO: jeda suara diisi hening x s`.
+  Konversi ke jam host (build 61) dibiarkan, tidak berbahaya.
+- Catatan: saat ganti kamera gambar berhenti 0.7-1.3 s (bukan 0.5 s seperti perkiraan) dan suara hening
+  selama itu. Rekaman 4K juga kehilangan beberapa frame saat HP panas (suhu 2).
+- **Lampu layar kamera depan** (Soft / Medium / Terang) sekarang juga di FOTO, POTRET, dan mode foto lain:
+  chip matahari muncul saat kamera depan aktif.
+- Alat cek: `%TEMP%\claude\vidchk\dcim.py` + `parse.py` (baca moov dari DCIM tanpa menarik video).
+- Build `data/ipa-v0.26.3/BaginCam-unsigned.ipa`. **Belum diuji di HP.** D: tinggal 2.7 GB.
