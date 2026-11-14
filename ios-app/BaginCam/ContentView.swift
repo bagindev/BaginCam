@@ -1034,7 +1034,26 @@ struct ContentView: View {
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
             }
             Slider(value: zoomBinding, in: 0...1).tint(.yellow)
-            if cam.autoLensAvailable { lockRow }
+            if cam.videoKind == .dual { dualLensRow } else if cam.autoLensAvailable { lockRow }
+        }
+    }
+
+    /// DUAL: pilih lensa belakang (boleh saat merekam)
+    private var dualLensRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "camera.metering.center.weighted").font(.caption2).foregroundStyle(.white.opacity(0.7))
+            ForEach([CameraManager.Lens.ultraWide, .wide, .tele].filter { cam.availableLenses.contains($0) }, id: \.self) { l in
+                let on = cam.dualLens == l
+                Button(l.displayName) {
+                    setDisplayZoom(l == .ultraWide ? 0.5 : (l == .tele ? Double(CameraManager.teleNative) : 1))
+                }
+                .font(.caption2.bold())
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(on ? Color.yellow : Color.white.opacity(0.15), in: Capsule())
+                .foregroundStyle(on ? .black : .white)
+            }
+            Spacer(minLength: 0)
+            Text("lensa belakang").font(.caption2).foregroundStyle(.white.opacity(0.6))
         }
     }
 
@@ -1534,7 +1553,7 @@ private struct AssistPanel: View {
                         Slider(value: $cam.bokehIntensity, in: 10...100, step: 5)
                     }
                 } header: { Text("Potret & Sinema") } footer: {
-                    Text("Kekuatan blur latar belakang di mode POTRET (foto) dan SINEMA (video, terlihat langsung di layar). 10% = tipis, 50% = natural, 100% = kuat. SINEMA merekam 1080p Rec.709 maks 30 fps. DUAL merekam kamera belakang + depan jadi satu video 1080p; tombol putar menukar gambar utama, juga saat merekam.")
+                    Text("Kekuatan blur latar belakang di mode POTRET (foto) dan SINEMA (video, terlihat langsung di layar). 10% = tipis, 50% = natural, 100% = kuat. SINEMA merekam Rec.709 sampai 4K 60 fps (4K / 60 fps lebih berat & panas). DUAL merekam kamera belakang + depan jadi satu video 1080p; tombol putar menukar gambar utama, juga saat merekam.")
                 }
                 Section {
                     Toggle("Focus peaking", isOn: $peaking)

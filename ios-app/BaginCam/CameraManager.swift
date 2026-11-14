@@ -382,6 +382,8 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { let c = videoKind == .cinematic; videoQueue.async { self.cineOn = c } }
     }
     @Published private(set) var dualSwapped = false
+    /// lensa belakang yang sedang dipakai DUAL
+    @Published private(set) var dualLens: Lens = .wide
     /// pusat kotak kecil DUAL, 0..1 dari kiri-atas preview
     @Published private(set) var dualPip = CGPoint(x: 0.817, y: 0.228)
     private var dualSwapS = false                           // sessionQueue
@@ -1114,7 +1116,6 @@ final class CameraManager: NSObject, ObservableObject {
         }
         var tries: [(Lens?, Bool)] = []
         for uhd in (videoSnap.res == .uhd ? [true, false] : [false]) {
-            if lens == nil { tries.append((nil, uhd)) }
             tries.append((lens ?? .wide, uhd))
         }
         for (l, uhd) in tries {
@@ -1147,18 +1148,25 @@ final class CameraManager: NSObject, ObservableObject {
         dc.session.startRunning()
         let res = dc.outW >= 2160 ? "4K" : (dc.outW >= 1080 ? "1080p" : "720p")
         Log.camera.info("DUAL: aktif \(res, privacy: .public) lensa \(dc.backName, privacy: .public), biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
-        let lensName = dc.backName
+        publishDual(dc)
+    }
+
+    /// sessionQueue
+    private func publishDual(_ dc: DualCam) {
+        let res = dc.outW >= 2160 ? "4K" : (dc.outW >= 1080 ? "1080p" : "720p")
+        let lensName = dc.backName, lens = dc.backLens ?? .wide
         DispatchQueue.main.async {
+            self.dualLens = lens
             self.videoInfo = "Dual \(res) · 30 · \(self.videoCodec.short) · \(lensName)"
             self.nativeZoomPoints = []
         }
     }
 
-    /// sessionQueue: zoom DUAL. Kamera virtual: iOS pindah lensa sendiri. Lensa fisik: sesi dibangun ulang
-    /// dengan lensa lain saat zoom melewati 0.5x / 1x / tele (hanya bila tidak sedang merekam).
+    /// sessionQueue: zoom DUAL. Lensa belakang diganti di sesi yang sedang jalan saat zoom melewati
+    /// 0.5x / 1x / tele - juga saat merekam (kamera depan & suara tidak terputus).
     private func dualZoom(_ zz: CGFloat, canSwitch: Bool) {
         guard let dc = dual else { return }
-        if let cur = dc.backLens, canSwitch {
+        if let cur = dc.backLens {
             let t = Self.teleNative
             let want: Lens
             switch cur {
@@ -1167,10 +1175,13 @@ final class CameraManager: NSObject, ObservableObject {
             default: want = zz < 0.95 ? .ultraWide : (zz >= t ? .tele : .wide)
             }
             if want != cur, !dualBadLens.contains(want) {
-                dc.session.stopRunning()
-                if let n = makeDual(lens: want, zoom: zz) { installDual(n); return }
+                if dc.switchBack(to: want, zoom: zz) {
+                    Log.camera.info("DUAL: lensa belakang -> \(want.displayName, privacy: .public) (zoom \(Double(zz), format: .fixed(precision: 1), privacy: .public)x), biaya hardware \(dc.session.hardwareCost, privacy: .public)")
+                    publishDual(dc)
+                    return
+                }
                 dualBadLens.insert(want)
-                dc.session.startRunning()
+                Log.camera.error("DUAL: lensa \(want.displayName, privacy: .public) tidak bisa dipasang, tetap \(cur.displayName, privacy: .public)")
             }
         }
         let applied = dc.setZoom(zz)
@@ -1441,9 +1452,8 @@ final class CameraManager: NSObject, ObservableObject {
                   stab: gimbalMode && [.action, .cinematic, .cinematicExtended].contains(videoStab) ? .standard : videoStab,
                   timelapse: timelapse, zoom: totalZoom)
         if videoKind == .cinematic {
-            // segmentasi + blur per frame: 1080p Rec.709 maks 30 fps supaya tetap real-time
-            if s.res == .uhd { s.res = .fhd }
-            if s.fps == .auto || s.fps.rawValue > 30 { s.fps = .f30 }
+            // segmentasi + blur per frame di Rec.709; sampai 4K 60 fps (slow-mo tidak)
+            if s.fps.rawValue > 60 { s.fps = .f60 }
             s.color = .sdr
             s.timelapse = 1
         }

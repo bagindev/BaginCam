@@ -19,14 +19,57 @@ final class CinematicProcessor {
     private var poolW = 0, poolH = 0
     private var frames = 0, withPerson = 0
     private var totalMs = 0.0
+    private var lastFrameAt: CFTimeInterval = 0
+    private var interval = 0.033
+    private var asyncMode = false
+    private var lastW = 0, lastH = 0
+    // mode async (4K / di atas 30 fps): segmentasi jalan di antrean sendiri, frame memakai mask terbaru
+    private let maskQueue = DispatchQueue(label: "bagincam.cinemask", qos: .userInitiated)
+    private let lock = NSLock()
+    private var maskBusy = false
+    private var latestMask: CVPixelBuffer?
+
+    /// antrean mask (atau antrean video di mode sinkron)
+    private func segment(_ pb: CVPixelBuffer) -> CVPixelBuffer? {
+        guard (try? seq.perform([req], on: pb)) != nil, let mask = req.results?.first?.pixelBuffer,
+              Self.hasPerson(mask) else { return nil }
+        return mask
+    }
+
+    private func currentMask(_ pb: CVPixelBuffer) -> CVPixelBuffer? {
+        guard asyncMode else { return segment(pb) }
+        lock.lock()
+        let m = latestMask
+        let start = !maskBusy
+        if start { maskBusy = true }
+        lock.unlock()
+        if start {
+            maskQueue.async {
+                let r = self.segment(pb)
+                self.lock.lock()
+                self.latestMask = r
+                self.maskBusy = false
+                self.lock.unlock()
+            }
+        }
+        return m
+    }
 
     /// frame dengan latar diblur, atau nil (tidak ada orang / gagal) -> pakai frame asli
     func process(_ pb: CVPixelBuffer, intensity: Double) -> CVPixelBuffer? {
         let t0 = CACurrentMediaTime()
-        defer { stats(t0) }
-        guard (try? seq.perform([req], on: pb)) != nil, let mask = req.results?.first?.pixelBuffer,
-              Self.hasPerson(mask) else { return nil }
+        if lastFrameAt > 0 { interval = interval * 0.9 + min(t0 - lastFrameAt, 0.1) * 0.1 }
+        lastFrameAt = t0
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+        lastW = w; lastH = h
+        // 1080p sampai 30 fps: segmentasi tiap frame (mask pas). Lebih berat dari itu: mask boleh telat 1-2 frame.
+        let wantAsync = w * h > 2_500_000 || interval < 0.025
+        if wantAsync != asyncMode {
+            asyncMode = wantAsync
+            lock.lock(); latestMask = nil; lock.unlock()
+        }
+        defer { stats(t0) }
+        guard let mask = currentMask(pb) else { return nil }
         guard let dst = makeBuffer(w, h) else { return nil }
         let src = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])
         let ext = src.extent
@@ -35,13 +78,14 @@ final class CinematicProcessor {
             .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 1.5])
             .cropped(to: rawMask.extent)
             .transformed(by: CGAffineTransform(scaleX: ext.width / rawMask.extent.width, y: ext.height / rawMask.extent.height))
-        // blur di 1/4 resolusi: jauh lebih ringan, hasil sama untuk latar yang memang buram
+        // blur di resolusi kecil (1/4, 4K: 1/8): jauh lebih ringan, hasil sama untuk latar yang memang buram
         let t = max(0.1, min(1, intensity / 100))
         let radius = Double(min(w, h)) / 45.0 * t
-        let bg = src.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+        let k: CGFloat = min(w, h) > 1500 ? 8 : 4
+        let bg = src.transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k))
             .clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": radius / 4])
-            .transformed(by: CGAffineTransform(scaleX: 4, y: 4))
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": radius / Double(k)])
+            .transformed(by: CGAffineTransform(scaleX: k, y: k))
             .cropped(to: ext)
         let out = src.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: bg, kCIInputMaskImageKey: m,
@@ -56,7 +100,7 @@ final class CinematicProcessor {
         totalMs += (CACurrentMediaTime() - t0) * 1000
         frames += 1
         guard frames >= 300 else { return }
-        Log.camera.info("SINEMA: \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, orang terdeteksi \(self.withPerson * 100 / self.frames, privacy: .public)%")
+        Log.camera.info("SINEMA: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public) \(1 / max(self.interval, 0.001), format: .fixed(precision: 0), privacy: .public) fps masuk, \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, mask \(self.asyncMode ? "async" : "tiap frame", privacy: .public), orang terdeteksi \(self.withPerson * 100 / self.frames, privacy: .public)%")
         frames = 0; withPerson = 0; totalMs = 0
     }
 
@@ -105,6 +149,7 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
     private let frontOut = AVCaptureVideoDataOutput()
     private let audioOut = AVCaptureAudioDataOutput()
     private var backDevice: AVCaptureDevice?
+    private var backInput: AVCaptureDeviceInput?
     private(set) var hasAudio = false
     private(set) var outW = 1080, outH = 1920
     /// lensa belakang fisik; nil = kamera virtual (iOS pindah lensa sendiri mengikuti zoom, juga saat merekam)
@@ -168,22 +213,18 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         }.joined(separator: "; ")
     }
 
-    private func addCamera(_ d: AVCaptureDevice, out: AVCaptureVideoDataOutput, mirrored: Bool, uhd: Bool, queue: DispatchQueue) -> Bool {
-        guard let fmt = Self.pickFormat(d, uhd: uhd), let input = try? AVCaptureDeviceInput(device: d),
-              session.canAddInput(input) else { return false }
-        session.addInputWithNoConnections(input)
-        if (try? d.lockForConfiguration()) != nil {
-            d.activeFormat = fmt
-            let dur = CMTime(value: 1, timescale: 30)
-            d.activeVideoMinFrameDuration = dur
-            d.activeVideoMaxFrameDuration = dur
-            d.unlockForConfiguration()
-        }
-        out.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        out.alwaysDiscardsLateVideoFrames = true
-        out.setSampleBufferDelegate(self, queue: queue)
-        guard session.canAddOutput(out) else { return false }
-        session.addOutputWithNoConnections(out)
+    private func setFormat(_ d: AVCaptureDevice, uhd: Bool) -> Bool {
+        guard let fmt = Self.pickFormat(d, uhd: uhd), (try? d.lockForConfiguration()) != nil else { return false }
+        d.activeFormat = fmt
+        let dur = CMTime(value: 1, timescale: 30)
+        d.activeVideoMinFrameDuration = dur
+        d.activeVideoMaxFrameDuration = dur
+        d.unlockForConfiguration()
+        return true
+    }
+
+    private func connect(_ input: AVCaptureDeviceInput, out: AVCaptureVideoDataOutput, mirrored: Bool) -> Bool {
+        let d = input.device
         guard let port = input.ports(for: .video, sourceDeviceType: d.deviceType, sourceDevicePosition: d.position).first else { return false }
         let conn = AVCaptureConnection(inputPorts: [port], output: out)
         guard session.canAddConnection(conn) else { return false }
@@ -196,6 +237,52 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         return true
     }
 
+    private func addCamera(_ d: AVCaptureDevice, out: AVCaptureVideoDataOutput, mirrored: Bool, uhd: Bool, queue: DispatchQueue) -> AVCaptureDeviceInput? {
+        guard Self.pickFormat(d, uhd: uhd) != nil, let input = try? AVCaptureDeviceInput(device: d),
+              session.canAddInput(input) else { return nil }
+        session.addInputWithNoConnections(input)
+        guard setFormat(d, uhd: uhd) else { return nil }
+        out.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        out.alwaysDiscardsLateVideoFrames = true
+        out.setSampleBufferDelegate(self, queue: queue)
+        guard session.canAddOutput(out) else { return nil }
+        session.addOutputWithNoConnections(out)
+        return connect(input, out: out, mirrored: mirrored) ? input : nil
+    }
+
+    private static func base(of lens: CameraManager.Lens) -> CGFloat {
+        lens == .ultraWide ? 0.5 : (lens == .tele ? CameraManager.teleNative : 1)
+    }
+
+    /// antrean sesi: ganti lensa belakang TANPA menghentikan sesi - kamera depan & mikrofon tetap jalan,
+    /// jadi boleh di tengah rekaman (hanya gambar belakang yang berhenti sebentar).
+    func switchBack(to lens: CameraManager.Lens, zoom: CGFloat) -> Bool {
+        let uhd = outW >= 2160
+        guard let old = backInput, let d = AVCaptureDevice.default(lens.deviceType, for: .video, position: .back),
+              Self.pickFormat(d, uhd: uhd) != nil, let input = try? AVCaptureDeviceInput(device: d) else { return false }
+        session.beginConfiguration()
+        session.removeInput(old)
+        var ok = false
+        if session.canAddInput(input) {
+            session.addInputWithNoConnections(input)
+            ok = setFormat(d, uhd: uhd) && connect(input, out: backOut, mirrored: false)
+            if !ok { session.removeInput(input) }
+        }
+        if !ok, session.canAddInput(old) {
+            session.addInputWithNoConnections(old)
+            _ = connect(old, out: backOut, mirrored: false)
+        }
+        session.commitConfiguration()
+        guard ok else { return false }
+        backInput = input
+        backDevice = d
+        backLens = lens
+        backBase = Self.base(of: lens)
+        backName = lens.displayName
+        _ = setZoom(zoom)
+        return true
+    }
+
     /// lens nil = kamera virtual belakang. uhd = coba 4K untuk kamera belakang (depan tetap 1080p).
     func configure(queue: DispatchQueue, lens: CameraManager.Lens?, uhd: Bool, zoom: CGFloat) -> Bool {
         guard Self.supported, let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else { return false }
@@ -203,7 +290,7 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         if let lens {
             guard let d = AVCaptureDevice.default(lens.deviceType, for: .video, position: .back) else { return false }
             back = d
-            backBase = lens == .ultraWide ? 0.5 : (lens == .tele ? CameraManager.teleNative : 1)
+            backBase = Self.base(of: lens)
         } else {
             guard let d = AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back)
                     ?? AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) else { return false }
@@ -215,8 +302,9 @@ final class DualCam: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         backName = lens?.displayName ?? "Auto"
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        guard addCamera(back, out: backOut, mirrored: false, uhd: uhd, queue: queue),
-              addCamera(front, out: frontOut, mirrored: true, uhd: false, queue: queue) else { return false }
+        guard let bi = addCamera(back, out: backOut, mirrored: false, uhd: uhd, queue: queue),
+              addCamera(front, out: frontOut, mirrored: true, uhd: false, queue: queue) != nil else { return false }
+        backInput = bi
         backDevice = back
         let dim = CMVideoFormatDescriptionGetDimensions(back.activeFormat.formatDescription)
         outW = Int(dim.height)
