@@ -322,7 +322,11 @@ struct ContentView: View {
         case .portrait:
             chip("POTRET", icon: "person.crop.rectangle", on: true)
         case .video:
-            chip("VIDEO", icon: "video.fill", on: true)
+            switch cam.videoKind {
+            case .normal: chip("VIDEO", icon: "video.fill", on: true)
+            case .cinematic: chip("SINEMA", icon: "camera.aperture", on: true)
+            case .dual: chip("DUAL", icon: "pip.fill", on: true)
+            }
         case .pro:
             Menu {
                 ForEach(CameraManager.ProFormat.allCases) { f in
@@ -734,6 +738,19 @@ struct ContentView: View {
             .overlay { focusLayer }
             .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
             .overlay(alignment: .trailing) { if cam.gimbalMode && showsZoom { gimbalZoomStrip } }
+            .overlay(alignment: .leading) {
+                // DUAL: tukar kamera utama <-> kotak kecil, juga saat merekam (tombol flip jadi jeda)
+                if cam.videoKind == .dual && cam.isRecording {
+                    Button(action: flipCamera) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.title3)
+                            .frame(width: 46, height: 46)
+                            .background(.black.opacity(0.45), in: Circle())
+                            .foregroundStyle(isFront ? .yellow : .white)
+                    }
+                    .padding(.leading, 10)
+                }
+            }
             .overlay(alignment: .top) {
                 if cam.shootMode == .video { videoInfoRow } else { infoRow }
             }
@@ -1310,41 +1327,78 @@ struct ContentView: View {
     }
 
     private var isFront: Bool {
-        CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock == .front : cam.lens == .front
+        if cam.videoKind == .dual { return cam.dualSwapped }
+        return CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock == .front : cam.lens == .front
     }
 
     private func flipCamera() {
-        if CameraManager.usesVirtual(cam.mode) {
+        if cam.videoKind == .dual {
+            cam.swapDual()
+        } else if CameraManager.usesVirtual(cam.mode) {
             cam.setAILensLock(cam.aiLensLock == .front ? nil : .front)
         } else {
             cam.setLens(cam.lens == .front ? .wide : .front)
         }
     }
 
+    private struct ModeItem: Identifiable {
+        let id: String
+        let mode: CameraManager.ShootMode
+        var kind: CameraManager.VideoKind = .normal
+    }
+
+    private var modeItems: [ModeItem] {
+        var items = [ModeItem(id: "MALAM", mode: .night), ModeItem(id: "FOTO", mode: .photo),
+                     ModeItem(id: "POTRET", mode: .portrait), ModeItem(id: "VIDEO", mode: .video),
+                     ModeItem(id: "SINEMA", mode: .video, kind: .cinematic)]
+        if cam.dualSupported { items.append(ModeItem(id: "DUAL", mode: .video, kind: .dual)) }
+        items.append(ModeItem(id: "PRO", mode: .pro))
+        return items
+    }
+
+    private var currentModeID: String {
+        modeItems.first { $0.mode == cam.shootMode && ($0.mode != .video || $0.kind == cam.videoKind) }?.id ?? "FOTO"
+    }
+
+    /// baris mode bisa digeser (seperti kamera bawaan): mode aktif selalu ditarik ke tengah
     private var modeRow: some View {
-        ZStack {
-            HStack(spacing: 26) {
-                ForEach(CameraManager.ShootMode.allCases) { s in
-                    let on = cam.shootMode == s
-                    Button { withAnimation(.easeOut(duration: 0.2)) { cam.setShootMode(s) } } label: {
-                        Text(s.rawValue)
-                            .font(.footnote.weight(on ? .bold : .semibold))
-                            .padding(.horizontal, on ? 12 : 4).padding(.vertical, 5)
-                            .background(on ? Color.yellow.opacity(0.9) : Color.clear, in: Capsule())
-                            .foregroundStyle(on ? .black : .white)
+        HStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(modeItems) { item in
+                            let on = item.id == currentModeID
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    if item.mode == .video { cam.setVideoKind(item.kind) } else { cam.setShootMode(item.mode) }
+                                }
+                            } label: {
+                                Text(item.id)
+                                    .font(.footnote.weight(on ? .bold : .semibold))
+                                    .padding(.horizontal, on ? 12 : 6).padding(.vertical, 5)
+                                    .background(on ? Color.yellow.opacity(0.9) : Color.clear, in: Capsule())
+                                    .foregroundStyle(on ? .black : .white)
+                            }
+                            .disabled(cam.isCapturing || cam.isRecording)
+                            .id(item.id)
+                        }
                     }
-                    .disabled(cam.isCapturing || cam.isRecording)
+                    .padding(.horizontal, 120)
+                }
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12),
+                                             .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+                                     startPoint: .leading, endPoint: .trailing))
+                .onAppear { proxy.scrollTo(currentModeID, anchor: .center) }
+                .onChange(of: currentModeID) { _, id in
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
                 }
             }
-            HStack {
-                Spacer()
-                Button { withAnimation { showPro.toggle() } } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
-                        .font(.title3)
-                        .frame(width: 40, height: 34)
-                        .foregroundStyle(showPro || !cam.isAuto ? .yellow : .white)
-                }
+            Button { withAnimation { showPro.toggle() } } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                    .font(.title3)
+                    .frame(width: 40, height: 34)
+                    .foregroundStyle(showPro || !cam.isAuto ? .yellow : .white)
             }
         }
         .frame(height: 36)
@@ -1408,8 +1462,8 @@ private struct AssistPanel: View {
                         }
                         Slider(value: $cam.bokehIntensity, in: 10...100, step: 5)
                     }
-                } header: { Text("Potret") } footer: {
-                    Text("Atur kekuatan blur latar belakang saat mode POTRET. 10% = subtle (f/5.6), 50% = natural (f/2.8), 100% = kuat (f/1.4). Autofokus wajah aktif otomatis di mode POTRET.")
+                } header: { Text("Potret & Sinema") } footer: {
+                    Text("Kekuatan blur latar belakang di mode POTRET (foto) dan SINEMA (video, terlihat langsung di layar). 10% = tipis, 50% = natural, 100% = kuat. SINEMA merekam 1080p Rec.709 maks 30 fps. DUAL merekam kamera belakang + depan jadi satu video 1080p; tombol putar menukar gambar utama, juga saat merekam.")
                 }
                 Section {
                     Toggle("Focus peaking", isOn: $peaking)

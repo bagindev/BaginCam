@@ -82,6 +82,9 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// jenis rekaman di mode VIDEO: biasa, SINEMA (bokeh latar real-time), DUAL (belakang + depan)
+    enum VideoKind: String { case normal, cinematic, dual }
+
     /// mode di layar (niat memotret, seperti GCam). Mesin proses = `Mode` internal.
     enum ShootMode: String, CaseIterable, Identifiable {
         case night = "MALAM"
@@ -355,7 +358,19 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
     var faceBeauty: Bool { beautyLevel.active }
-    @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) { didSet { Prefs.set("bokehIntensity", bokehIntensity) } }
+    @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) {
+        didSet { Prefs.set("bokehIntensity", bokehIntensity); let v = bokehIntensity; videoQueue.async { self.cineIntensity = v } }
+    }
+    @Published private(set) var videoKind: VideoKind = .normal {
+        didSet { let c = videoKind == .cinematic; videoQueue.async { self.cineOn = c } }
+    }
+    @Published private(set) var dualSwapped = false
+    let dualSupported = DualCam.supported
+    private var cineOn = false                              // videoQueue
+    private var cineIntensity: Double = Prefs.get("bokehIntensity", 50.0)   // videoQueue
+    private lazy var cine = CinematicProcessor()            // videoQueue
+    private var dual: DualCam?                              // sessionQueue
+    private var dualWanted = false                          // sessionQueue
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
     @Published var pendingUpscale: URL?
@@ -505,7 +520,9 @@ final class CameraManager: NSObject, ObservableObject {
             self.sessionQueue.async {
                 if !self.configured { self.configure(mode: mode, lens: lens) }
                 if video { self.enterVideo() }
-                if !self.session.isRunning { self.session.startRunning() }
+                if let dc = self.dual {
+                    if !dc.session.isRunning { dc.session.startRunning() }
+                } else if !self.session.isRunning { self.session.startRunning() }
                 self.setStatus("Siap")
             }
         }
@@ -530,7 +547,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     func stop() {
-        sessionQueue.async { self.session.stopRunning() }
+        sessionQueue.async { self.session.stopRunning(); self.dual?.session.stopRunning() }
         readoutTimer?.invalidate()
     }
 
@@ -592,7 +609,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: lensa fisik
     func setLens(_ l: Lens) {
-        guard !isCapturing, l != lens || mode == .aiZoom else { return }
+        guard !isCapturing, videoKind != .dual, l != lens || mode == .aiZoom else { return }
         lens = l
         isAuto = true
         let m = mode
@@ -702,7 +719,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
     func setAILensLock(_ l: Lens?) {
-        guard Self.usesVirtual(mode), !isCapturing, !isRecording, l != aiLensLock else { return }
+        guard Self.usesVirtual(mode), !isCapturing, !isRecording, videoKind != .dual, l != aiLensLock else { return }
         aiLensLock = l
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
@@ -784,6 +801,12 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Zoom total (1x = lensa utama). Panggil dari main thread.
     func setTotalZoom(_ z: CGFloat) {
+        if videoKind == .dual {
+            let zz = min(max(1, z), 6)
+            totalZoom = zz
+            sessionQueue.async { self.dual?.setZoom(zz) }
+            return
+        }
         var minZ: CGFloat = 1
         if Self.usesVirtual(mode) {
             switch aiLensLock {
@@ -971,6 +994,7 @@ final class CameraManager: NSObject, ObservableObject {
         change()
         let isVideo = shootMode == .video
         if wasVideo && !isVideo {
+            videoKind = .normal
             torch = false
             sessionQueue.async { self.leaveVideo() }      // sebelum mesin foto dipasang lagi
         }
@@ -981,7 +1005,74 @@ final class CameraManager: NSObject, ObservableObject {
         if isVideo && !wasVideo { beginVideo() }
     }
 
-    func setShootMode(_ s: ShootMode) { applyUI { shootMode = s } }
+    func setShootMode(_ s: ShootMode) {
+        if s == .video { setVideoKind(.normal) } else { applyUI { shootMode = s } }
+    }
+
+    /// main: VIDEO biasa / SINEMA / DUAL (pindah ke mode VIDEO bila perlu)
+    func setVideoKind(_ k: VideoKind) {
+        guard !isCapturing, !isRecording, k != .dual || dualSupported else { return }
+        let wasVideo = shootMode == .video, wasDual = videoKind == .dual
+        guard !wasVideo || k != videoKind else { return }
+        videoKind = k
+        dualSwapped = false
+        if k == .dual { torch = false; totalZoom = 1 }
+        if !wasVideo {
+            // beginVideo memotret pengaturan (sudah dengan jenis ini) lalu enterVideo -> syncDual
+            sessionQueue.async { self.dualWanted = k == .dual }
+            applyUI { shootMode = .video }
+            return
+        }
+        let snap = makeVideoSnap()
+        sessionQueue.async {
+            self.videoSnap = snap
+            self.dualWanted = k == .dual
+            self.syncDual()
+            if !wasDual && k != .dual { self.applyVideoFormat() }
+        }
+    }
+
+    /// main: tukar gambar utama <-> kotak kecil (boleh saat merekam)
+    func swapDual() {
+        guard videoKind == .dual else { return }
+        dualSwapped.toggle()
+        let v = dualSwapped
+        sessionQueue.async { let dc = self.dual; self.videoQueue.async { dc?.swapped = v } }
+    }
+
+    /// sessionQueue: samakan sesi multi-kamera dengan `dualWanted`
+    private func syncDual() {
+        if dualWanted && inVideo && dual == nil {
+            let dc = DualCam()
+            session.stopRunning()
+            guard dc.configure(queue: videoQueue) else {
+                Log.camera.error("DUAL: sesi multi-kamera gagal disiapkan")
+                dualWanted = false
+                session.startRunning()
+                DispatchQueue.main.async { self.videoKind = .normal; self.status = "Dual video tidak didukung di HP ini" }
+                return
+            }
+            dc.onVideo = { [weak self] pb, pts in
+                guard let self else { return }
+                self.recorder?.appendVideo(pb, pts: pts)
+                self.onFrame?(CIImage(cvPixelBuffer: pb))
+            }
+            dc.onAudio = { [weak self] sb in self?.recorder?.appendAudio(sb) }
+            dual = dc
+            dc.session.startRunning()
+            videoQueue.async { self.previewLog = false }
+            Log.camera.info("DUAL: masuk, biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
+            DispatchQueue.main.async { self.videoInfo = "Dual 1080p · 30 · \(self.videoCodec.short) · 709"; self.nativeZoomPoints = [] }
+        } else if let dc = dual, !(dualWanted && inVideo) {
+            dc.session.stopRunning()
+            dual = nil
+            Log.camera.info("DUAL: keluar")
+            session.startRunning()
+            let z = videoSnap.zoom
+            DispatchQueue.main.async { self.totalZoom = z }
+            if inVideo { applyVideoFormat() }
+        }
+    }
     func setPhotoProcess(_ p: PhotoProcess) { applyUI { photoProcess = p } }
     func setProFormat(_ f: ProFormat) { applyUI { proFormat = f } }
     func setLivePhoto(_ on: Bool) {
@@ -1216,9 +1307,17 @@ final class CameraManager: NSObject, ObservableObject {
     private func makeVideoSnap() -> VideoSnap {
         // v0.21: di gimbal, stabilisasi berat (crop besar, melawan gerak gimbal) diganti Standard
         // v0.22: face track butuh 4K sumber supaya crop ke 1080p tetap tajam
-        VideoSnap(res: faceTrack ? .uhd : videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
+        var s = VideoSnap(res: faceTrack ? .uhd : videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
                   stab: gimbalMode && [.action, .cinematic, .cinematicExtended].contains(videoStab) ? .standard : videoStab,
                   timelapse: timelapse, zoom: totalZoom)
+        if videoKind == .cinematic {
+            // segmentasi + blur per frame: 1080p Rec.709 maks 30 fps supaya tetap real-time
+            if s.res == .uhd { s.res = .fhd }
+            if s.fps == .auto || s.fps.rawValue > 30 { s.fps = .f30 }
+            s.color = .sdr
+            s.timelapse = 1
+        }
+        return s
     }
 
     /// pengaturan video berubah -> format kamera diatur ulang (tidak saat merekam)
@@ -1244,7 +1343,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// sessionQueue: photo output dilepas (format video bebas), mikrofon dipasang
     private func enterVideo() {
-        guard !inVideo else { applyVideoFormat(); return }
+        guard !inVideo else { applyVideoFormat(); syncDual(); return }
         inVideo = true
         shutter180Warned = false
         session.beginConfiguration()
@@ -1263,12 +1362,15 @@ final class CameraManager: NSObject, ObservableObject {
         session.commitConfiguration()
         Log.camera.info("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
         applyVideoFormat()
+        syncDual()
     }
 
     /// sessionQueue: kembali ke sesi foto
     private func leaveVideo() {
         guard inVideo else { return }
         inVideo = false
+        dualWanted = false
+        syncDual()
         session.beginConfiguration()
         if let a = audioInput { session.removeInput(a); audioInput = nil }
         if session.outputs.contains(audioOutput) { session.removeOutput(audioOutput) }
@@ -1378,7 +1480,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// sessionQueue: pasang format video sesuai pengaturan (dengan cadangan bila tidak tersedia)
     private func applyVideoFormat() {
-        guard inVideo, let d = device else { return }
+        guard inVideo, dual == nil, let d = device else { return }
         let s = videoSnap
         var fps = s.timelapse > 1 ? 30 : (s.fps == .auto ? 30 : s.fps.rawValue)
         let needFps = s.fps == .auto && s.timelapse <= 1 ? 60 : fps
@@ -1479,7 +1581,7 @@ final class CameraManager: NSObject, ObservableObject {
         let slow = slowPlayback
         // v0.12: lensa Auto = kamera virtual (tanpa eksposur custom). Kunci ke lensa aktif selama rekam
         // supaya shutter 180 derajat jalan dan lensa tidak melompat di tengah rekaman.
-        if lockLensOnRecord, shutter180, aiLensLock == nil, autoLensAvailable, let l = activeLens() {
+        if videoKind != .dual, lockLensOnRecord, shutter180, aiLensLock == nil, autoLensAvailable, let l = activeLens() {
             setAILensLock(l)
             autoLockedForRec = true
         }
@@ -1493,6 +1595,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// sessionQueue
     private func startRecording(_ s: VideoSnap, gain: Double, lut: CubeLUT?, slowPlayback: Int) {
+        if let dc = dual { startDualRecording(dc, codec: s.codec, lut: lut); return }
         guard inVideo, let d = device else {
             DispatchQueue.main.async { self.isRecording = false; self.status = "VIDEO belum siap" }
             return
@@ -1529,7 +1632,7 @@ final class CameraManager: NSObject, ObservableObject {
             .appendingPathComponent("Videos", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tag = s.timelapse > 1 ? "TL\(s.timelapse)x" : (playback != fps ? "\(fps)to\(playback)" : "\(fps)")
-        let resLabel = ftActive ? "FT1080p" : (dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p"))
+        let resLabel = (videoKind == .cinematic ? "SINEMA" : "") + (ftActive ? "FT1080p" : (dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p")))
         let name = "BaginCam_\(f.string(from: Date()))_\(resLabel)\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
         let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: outW, height: outH,
                               sensorFps: fps, playbackFps: playback, timelapse: max(1, s.timelapse), codec: codec,
@@ -1556,6 +1659,38 @@ final class CameraManager: NSObject, ObservableObject {
             }
         } catch {
             Log.camera.error("VIDEO: perekam gagal \(String(describing: error), privacy: .public)")
+            DispatchQueue.main.async { self.isRecording = false; self.status = "Rekam gagal: \(error.localizedDescription)" }
+        }
+    }
+
+    /// sessionQueue: rekam gabungan DUAL (1080x1920, 30 fps, Rec.709)
+    private func startDualRecording(_ dc: DualCam, codec: VideoCodec, lut: CubeLUT?) {
+        let angle = captureAngle()
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd_HHmmss"
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Videos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let name = "BaginCam_\(f.string(from: Date()))_DUAL1080p30_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : "709").mov"
+        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: DualCam.outW, height: DualCam.outH,
+                              sensorFps: 30, playbackFps: 30, timelapse: 1, codec: codec, color: .sdr, audio: dc.hasAudio,
+                              transform: CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180), bake: lut, bakeLog: false)
+        do {
+            let r = try VideoRecorder(cfg)
+            videoQueue.async { self.recorder = r }
+            Log.camera.info("VIDEO: rekam \(name, privacy: .public) dual, sudut \(Double(angle), privacy: .public), audio \(dc.hasAudio, privacy: .public)")
+            DispatchQueue.main.async {
+                self.recordStart = Date()
+                self.status = "Merekam \(name)"
+                self.recordTimer?.invalidate()
+                self.recordTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    self.recordSeconds = Date().timeIntervalSince(self.recordStart) - self.pausedTotal
+                        - (self.pauseStart.map { Date().timeIntervalSince($0) } ?? 0)
+                }
+            }
+        } catch {
+            Log.camera.error("VIDEO: perekam dual gagal \(String(describing: error), privacy: .public)")
             DispatchQueue.main.async { self.isRecording = false; self.status = "Rekam gagal: \(error.localizedDescription)" }
         }
     }
@@ -2833,7 +2968,8 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             recorder?.appendAudio(sampleBuffer)
             return
         }
-        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard var pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        if cineOn, let out = cine.process(pb, intensity: cineIntensity) { pb = out }
         if faceTrack, let ft = faceTrackerCrop {
             recorder?.faceTrackCrop = ft
         }
