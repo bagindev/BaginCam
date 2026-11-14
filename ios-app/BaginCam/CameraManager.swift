@@ -317,6 +317,8 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { Prefs.set("gimbalMode", gimbalMode); Log.camera.info("Mode Gimbal: \(self.gimbalMode, privacy: .public)"); videoChanged() }
     }
     @Published var gimbalGuideOn: Bool = Prefs.get("gimbalGuide", true) { didSet { Prefs.set("gimbalGuide", gimbalGuideOn) } }
+    /// v0.22.1: auto-aktifkan mode gimbal saat controller tersambung via Bluetooth
+    @Published var gimbalAuto: Bool = Prefs.get("gimbalAuto", true) { didSet { Prefs.set("gimbalAuto", gimbalAuto) } }
     /// v0.22: Face Tracking Digital (crop-follow wajah, mirip Center Stage). Bisa aktif tanpa gimbal (tripod).
     @Published var faceTrack: Bool = Prefs.get("faceTrack", false) {
         didSet { Prefs.set("faceTrack", faceTrack); Log.camera.info("Face Track: \(self.faceTrack, privacy: .public)"); videoChanged() }

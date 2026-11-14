@@ -81,6 +81,15 @@ struct ContentView: View {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
             HardwareInput.shared.handler = { a, src in handleHardware(a, src) }   // v0.21: gimbal / remote
+            HardwareInput.shared.onControllerConnect = { vendor, cat in
+                Log.camera.info("Auto-gimbal: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public)), gimbalAuto=\(cam.gimbalAuto, privacy: .public)")
+                if cam.gimbalAuto && !cam.gimbalMode { cam.gimbalMode = true }
+            }
+            HardwareInput.shared.onControllerDisconnect = {
+                let still = HardwareInput.shared.hasController
+                Log.camera.info("Auto-gimbal: controller terputus, sisa controller=\(still, privacy: .public)")
+                if cam.gimbalAuto && cam.gimbalMode && !still { cam.gimbalMode = false }
+            }
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }
@@ -1337,8 +1346,9 @@ private struct AssistPanel: View {
                     if cam.gimbalMode {
                         Toggle("Panduan tracking (kotak tengah)", isOn: $cam.gimbalGuideOn)
                     }
+                    Toggle("Auto-deteksi gimbal", isOn: $cam.gimbalAuto)
                 } header: { Text("Gimbal (DJI Osmo Mobile)") } footer: {
-                    Text("Stabilisasi Action/Cinematic diganti Standard (gimbal yang meredam goyang). Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Tracking pakai modul DJI; kotak hijau = subjek di tengah. Tombol lain (roda zoom, Switch) dicatat di log - bilang \"cek\" setelah mencoba semua tombol.")
+                    Text("Stabilisasi Action/Cinematic diganti Standard (gimbal yang meredam goyang). Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Tracking pakai modul DJI; kotak hijau = subjek di tengah. Tombol lain (roda zoom, Switch) dicatat di log - bilang \"cek\" setelah mencoba semua tombol.\n\nAuto-deteksi: saat gimbal / controller Bluetooth tersambung, mode gimbal langsung aktif. Saat terputus, mode gimbal otomatis mati.")
                 }
                 Section {
                     Toggle("Face Tracking Digital", isOn: $cam.faceTrack)

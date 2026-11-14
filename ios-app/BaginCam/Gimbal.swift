@@ -18,6 +18,10 @@ enum GimbalAction: String {
 final class HardwareInput {
     static let shared = HardwareInput()
     var handler: ((GimbalAction, String) -> Void)?
+    /// v0.22.1: dipanggil saat controller (gimbal/remote) tersambung — (vendorName, productCategory)
+    var onControllerConnect: ((String, String) -> Void)?
+    /// v0.22.1: dipanggil saat controller terputus
+    var onControllerDisconnect: (() -> Void)?
     private var started = false
 
     func start() {
@@ -31,18 +35,25 @@ final class HardwareInput {
         }
         nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
             guard let c = n.object as? GCController else { return }
-            Log.camera.info("Tombol: controller tersambung (\(c.vendorName ?? "?", privacy: .public), \(c.productCategory, privacy: .public))")
+            let vendor = c.vendorName ?? "?"
+            let cat = c.productCategory
+            Log.camera.info("Tombol: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public))")
             self?.attach(c)
+            self?.onControllerConnect?(vendor, cat)
         }
         nc.addObserver(forName: .GCKeyboardDidDisconnect, object: nil, queue: .main) { _ in
             Log.camera.info("Tombol: keyboard Bluetooth terputus")
         }
-        nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { _ in
+        nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
             Log.camera.info("Tombol: controller terputus")
+            self?.onControllerDisconnect?()
         }
         if let kb = GCKeyboard.coalesced { attach(kb) }
         GCController.controllers().forEach { attach($0) }
     }
+
+    /// true kalau ada controller tersambung sekarang
+    var hasController: Bool { !GCController.controllers().isEmpty }
 
     private func attach(_ kb: GCKeyboard) {
         kb.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
