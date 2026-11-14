@@ -1128,4 +1128,14 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Hanya menajamkan channel luminance → mempertahankan transisi warna halus tanpa artefak chroma.
   Kekuatan dikurangi saat malam (0.25 vs 0.45).
 - Commit `60b5e2c`.
-  Berikutnya: uji drizzle + deconv di HP, uji face tracking, uji kontrol gimbal layar.
+
+### Fitur: Zoom max 100x + Face Beautification (v0.23.1 build 53)
+- **Zoom max dinaikkan 50x → 100x**: software cap dihilangkan di kedua path (virtual camera
+  dan locked lens). Tombol preset 75x ditambahkan di baris zoom.
+  80x pada tele 5x = crop 16x → sumber ~250px, dengan drizzle 2x → ~500px nyata → AI upscale layak.
+- **Face Beautification**: toggle di panel Bantu > "Percantik Wajah".
+  Pakai VNGeneratePersonSegmentationRequest (Vision, iOS 15+) untuk mask orang/kulit.
+  Gaussian blur (radius 3.5) di-blend via CIBlendWithMask: area orang dihaluskan, background tajam.
+  Diterapkan di akhir pipeline (setelah tuning/style/LUT) untuk HDR+ dan AI Zoom.
+- Commit `2486eeb`. Build `data/ipa-v0.23.1/BaginCam-ipa/BaginCam-unsigned.ipa`.
+  Berikutnya: uji drizzle + deconv + beauty di HP, uji face tracking, uji kontrol gimbal layar.
