@@ -317,6 +317,10 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { Prefs.set("gimbalMode", gimbalMode); Log.camera.info("Mode Gimbal: \(self.gimbalMode, privacy: .public)"); videoChanged() }
     }
     @Published var gimbalGuideOn: Bool = Prefs.get("gimbalGuide", true) { didSet { Prefs.set("gimbalGuide", gimbalGuideOn) } }
+    /// v0.22: Face Tracking Digital (crop-follow wajah, mirip Center Stage). Bisa aktif tanpa gimbal (tripod).
+    @Published var faceTrack: Bool = Prefs.get("faceTrack", false) {
+        didSet { Prefs.set("faceTrack", faceTrack); Log.camera.info("Face Track: \(self.faceTrack, privacy: .public)"); videoChanged() }
+    }
     /// v0.21: rekaman dijeda
     @Published private(set) var recPaused = false
     private var pausedTotal: TimeInterval = 0
@@ -385,6 +389,8 @@ final class CameraManager: NSObject, ObservableObject {
     private var ndWarned = false                // sessionQueue
     private var videoSnap = VideoSnap()         // sessionQueue: pengaturan video terakhir
     private var recorder: VideoRecorder?        // videoQueue
+    /// v0.22: crop rect dari FaceTracker (main -> videoQueue, atomic-safe CGRect)
+    var faceTrackerCrop: CGRect?
     private var previewLog = false              // videoQueue: preview Apple Log -> Rec.709
     private lazy var logPreviewFilter = AppleLogLUT.makeFilter()   // videoQueue
     private var device: AVCaptureDevice?
@@ -1175,7 +1181,8 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func makeVideoSnap() -> VideoSnap {
         // v0.21: di gimbal, stabilisasi berat (crop besar, melawan gerak gimbal) diganti Standard
-        VideoSnap(res: videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
+        // v0.22: face track butuh 4K sumber supaya crop ke 1080p tetap tajam
+        VideoSnap(res: faceTrack ? .uhd : videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
                   stab: gimbalMode && [.action, .cinematic, .cinematicExtended].contains(videoStab) ? .standard : videoStab,
                   timelapse: timelapse, zoom: totalZoom)
     }
@@ -1470,6 +1477,10 @@ final class CameraManager: NSObject, ObservableObject {
             fps = fpsApplied
         }
         let dims = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+        // v0.22: face track: sumber 4K, output 1080p (crop window mengikuti wajah)
+        let ftActive = faceTrack && dims.width >= 3840
+        let outW = ftActive ? 1080 : Int(dims.height)
+        let outH = ftActive ? 1920 : Int(dims.width)
         let tenBit = CMFormatDescriptionGetMediaSubType(d.activeFormat.formatDescription) == Self.tenBitFmt
         let color: VideoColor = tenBit ? (d.activeColorSpace == .appleLog ? .log : .hlg) : .sdr
         var codec = s.codec
@@ -1484,19 +1495,21 @@ final class CameraManager: NSObject, ObservableObject {
             .appendingPathComponent("Videos", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tag = s.timelapse > 1 ? "TL\(s.timelapse)x" : (playback != fps ? "\(fps)to\(playback)" : "\(fps)")
-        let name = "BaginCam_\(f.string(from: Date()))_\(dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p"))\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
-        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: Int(dims.height), height: Int(dims.width),
+        let resLabel = ftActive ? "FT1080p" : (dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p"))
+        let name = "BaginCam_\(f.string(from: Date()))_\(resLabel)\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
+        let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: outW, height: outH,
                               sensorFps: fps, playbackFps: playback, timelapse: max(1, s.timelapse), codec: codec,
                               color: color, audio: audio, transform: transform, bake: lut, bakeLog: lut != nil && color == .log)
         do {
             let r = try VideoRecorder(cfg)
-            videoQueue.async { r.sharpen = self.recSharpen; self.recorder = r }
+            let ftCrop = ftActive ? faceTrackerCrop : nil
+            videoQueue.async { r.sharpen = self.recSharpen; r.faceTrackCrop = ftCrop; self.recorder = r }
             // lensa Auto tanpa kunci: pindah lensa hanya saat zoom diubah (tidak karena cahaya / jarak fokus)
             if d.isVirtualDevice, !d.constituentDevices.isEmpty, (try? d.lockForConfiguration()) != nil {
                 d.setPrimaryConstituentDeviceSwitchingBehavior(.restricted, restrictedSwitchingBehaviorConditions: [.videoZoomChanged])
                 d.unlockForConfiguration()
             }
-            Log.camera.info("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public)")
+            Log.camera.info("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public), faceTrack \(ftActive, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()
                 self.status = "Merekam \(name)"
@@ -2621,6 +2634,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             return
         }
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        if faceTrack, let ft = faceTrackerCrop {
+            recorder?.faceTrackCrop = ft
+        }
         recorder?.appendVideo(pb, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         if previewLog {
             // Apple Log: nilai mentah (tanpa manajemen warna) -> LUT Log -> Rec.709 untuk dilihat

@@ -27,6 +27,7 @@ struct ContentView: View {
     @StateObject private var level = LevelMonitor()
     @StateObject private var comp = CompositionAI()
     @StateObject private var gimbalGuide = GimbalGuide()
+    @StateObject private var faceTracker = FaceTracker()
     @State private var touch = TouchClock()
     @State private var pinchBase: Double?
     @State private var showAssist = false
@@ -105,6 +106,7 @@ struct ContentView: View {
         .onChange(of: zebraLevel) { _, v in renderer.zebraLevel = Float(v) }
         .onChange(of: peakColor) { _, v in renderer.peakColor = Self.peakCI(v) }
         .onChange(of: cam.previewSharpen) { _, v in renderer.sharpen = v }
+        .onChange(of: faceTracker.cropRect) { _, r in cam.faceTrackerCrop = cam.faceTrack ? r : nil }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
         .fileImporter(isPresented: $showImporter,
@@ -212,6 +214,7 @@ struct ContentView: View {
                 .onChange(of: cam.compAI) { _, _ in update() }
                 .onChange(of: cam.gimbalMode) { _, _ in update() }
                 .onChange(of: cam.gimbalGuideOn) { _, _ in update() }
+                .onChange(of: cam.faceTrack) { _, _ in update() }
                 .onChange(of: cam.shootMode) { _, _ in update() }
                 .onChange(of: cam.aiLensLock) { _, _ in update() }
                 .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = maxZoom() }
@@ -230,19 +233,21 @@ struct ContentView: View {
 
     private func updateComp() {
         comp.maxZoom = compMaxZoom
-        // v0.21: analisis preview dibagi AI Komposisi + panduan gimbal
-        let useComp = compActive, useG = cam.gimbalMode && cam.gimbalGuideOn
-        if useComp || useG {
-            let c = comp, gg = gimbalGuide
-            renderer.onAnalysis = { [weak c, weak gg] img in
+        // v0.21: analisis preview dibagi AI Komposisi + panduan gimbal + face tracker
+        let useComp = compActive, useG = cam.gimbalMode && cam.gimbalGuideOn, useFT = cam.faceTrack
+        if useComp || useG || useFT {
+            let c = comp, gg = gimbalGuide, ft = faceTracker
+            renderer.onAnalysis = { [weak c, weak gg, weak ft] img in
                 if useComp { c?.push(img) }
                 if useG { gg?.push(img) }
+                if useFT { ft?.push(img) }
             }
         } else {
             renderer.onAnalysis = nil
         }
         if !useComp { comp.close() }
         if !useG { gimbalGuide.reset() }
+        if !useFT { faceTracker.reset(); cam.faceTrackerCrop = nil }
     }
 
     /// v0.21: tombol gimbal / remote / keyboard Bluetooth
@@ -674,6 +679,7 @@ struct ContentView: View {
                 }
                 if cam.needND { infoPill("ND", icon: "sun.max.fill", color: .orange) }
                 if cam.gimbalMode { infoPill("Gimbal", icon: "gyroscope", color: .green) }
+                if cam.faceTrack { infoPill("Face Track", icon: "person.crop.rectangle", color: .cyan) }
                 if cam.thermal >= 2 { infoPill(cam.thermal >= 3 ? "Kritis" : "Panas", icon: "thermometer.high", color: .red) }
                 if cam.timerSeconds > 0 && !cam.isRecording { infoPill("\(cam.timerSeconds)s", icon: "clock") }
                 Spacer(minLength: 0)
@@ -692,6 +698,7 @@ struct ContentView: View {
             .overlay { ratioMask }
             .overlay { frameGuideOverlay }
             .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
+            .overlay { if cam.faceTrack { FaceTrackOverlay(tracker: faceTracker) } }
             .overlay(alignment: .bottomLeading) { readout }
             .overlay(alignment: .topTrailing) {
                 if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, cam.shootMode == .video ? 72 : 40).padding(8) }
@@ -1332,6 +1339,11 @@ private struct AssistPanel: View {
                     }
                 } header: { Text("Gimbal (DJI Osmo Mobile)") } footer: {
                     Text("Stabilisasi Action/Cinematic diganti Standard (gimbal yang meredam goyang). Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Tracking pakai modul DJI; kotak hijau = subjek di tengah. Tombol lain (roda zoom, Switch) dicatat di log - bilang \"cek\" setelah mencoba semua tombol.")
+                }
+                Section {
+                    Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
+                } header: { Text("Face Tracking") } footer: {
+                    Text("Mirip Center Stage: frame video di-crop dan digeser halus mengikuti wajah. Sumber 4K, hasil 1080p tajam. Bisa dipakai dengan atau tanpa gimbal (mis. HP di tripod). Gimbal = gerakan besar, Face Track = merapikan supaya wajah selalu pas di tengah.")
                 }
                 Section {
                     Toggle("Focus peaking", isOn: $peaking)

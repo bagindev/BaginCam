@@ -246,6 +246,8 @@ final class VideoRecorder {
     private lazy var lutFilter: CIFilter? = config.bake?.makeFilter()
     private lazy var logFilter = AppleLogLUT.makeFilter()
     private(set) var droppedFrames = 0
+    /// v0.22: face tracking crop rect (normalized 0..1, origin kiri-atas). nil = tanpa crop.
+    var faceTrackCrop: CGRect?
     /// penajaman zoom digital (0 = mati), diubah dari antrean video
     var sharpen: Float = 0
     private lazy var sharpenFilter = CIFilter.sharpenLuminance()
@@ -313,6 +315,7 @@ final class VideoRecorder {
     }
 
     func appendVideo(_ pb: CVPixelBuffer, pts rawPTS: CMTime) {
+        var pb = pb
         guard !stopping, !paused else { return }
         if resumePending {
             resumePending = false
@@ -324,6 +327,29 @@ final class VideoRecorder {
         }
         lastPTS = rawPTS
         let pts = CMTimeSubtract(rawPTS, offset)
+        // v0.22: face tracking digital — crop sumber (4K) ke area wajah, output tetap ukuran rekaman (1080p)
+        if let cr = faceTrackCrop {
+            let bw = CVPixelBufferGetWidth(pb), bh = CVPixelBufferGetHeight(pb)
+            let cw = Int(cr.width * CGFloat(bw)), ch = Int(cr.height * CGFloat(bh))
+            if cw >= config.width && ch >= config.height {
+                let cx = Int(cr.minX * CGFloat(bw)), cy = Int(cr.minY * CGFloat(bh))
+                let src = CIImage(cvPixelBuffer: pb)
+                let cropped = src.cropped(to: CGRect(x: cx, y: bh - cy - ch, width: cw, height: ch))
+                let sx = CGFloat(config.width) / CGFloat(cw)
+                let sy = CGFloat(config.height) / CGFloat(ch)
+                let scaled = cropped
+                    .transformed(by: CGAffineTransform(translationX: -cropped.extent.minX, y: -cropped.extent.minY))
+                    .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+                if let pool = adaptor.pixelBufferPool {
+                    var dst: CVPixelBuffer?
+                    CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst)
+                    if let dst {
+                        ciContext.render(scaled, to: dst, bounds: CGRect(x: 0, y: 0, width: config.width, height: config.height), colorSpace: nil)
+                        pb = dst
+                    }
+                }
+            }
+        }
         if !started {
             guard writer.startWriting() else {
                 Log.camera.error("Video: startWriting gagal \(String(describing: self.writer.error), privacy: .public)")

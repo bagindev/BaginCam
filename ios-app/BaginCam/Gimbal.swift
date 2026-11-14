@@ -136,6 +136,117 @@ final class GimbalGuide: ObservableObject {
     }
 }
 
+// MARK: - v0.22: Face Tracking Digital (crop-follow mirip Center Stage)
+// Sumber 4K / 48MP, keluaran 1080p: crop window mengikuti wajah, gerakan halus.
+// Bisa dipakai saat rekam video maupun preview. Crop diterapkan di VideoRecorder.
+
+final class FaceTracker: ObservableObject {
+    /// crop rect ternormalisasi (0..1, origin = kiri-atas) yang dikirim ke perekam
+    @Published private(set) var cropRect = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+    @Published private(set) var faceDetected = false
+
+    private let queue = DispatchQueue(label: "bagincam.facetrack", qos: .userInteractive)
+    private let ctx = CIContext(options: [.cacheIntermediates: false])
+    private var busy = false
+    private var count = 0
+    private var smoothX: CGFloat = 0.5
+    private var smoothY: CGFloat = 0.4
+    private var missingCount = 0
+
+    /// rasio output/sumber (mis. 1080/2160 = 0.5 untuk 4K->1080p), diset sebelum mulai
+    var outputRatio: CGFloat = 0.5
+
+    /// smoothing factor (0 = instant, 1 = tidak bergerak). 0.85 = halus tapi responsif
+    private let alpha: CGFloat = 0.85
+
+    func push(_ image: CIImage) {
+        count += 1
+        guard count % 2 == 0, !busy else { return }
+        busy = true
+        let ratio = outputRatio
+        queue.async {
+            let face = self.detectFace(image)
+            DispatchQueue.main.async {
+                self.busy = false
+                if let face {
+                    self.missingCount = 0
+                    self.faceDetected = true
+                    // target: tengah wajah -> tengah crop window
+                    let tx = face.midX
+                    let ty = face.midY
+                    self.smoothX = self.smoothX * self.alpha + tx * (1 - self.alpha)
+                    self.smoothY = self.smoothY * self.alpha + ty * (1 - self.alpha)
+                } else {
+                    self.missingCount += 1
+                    if self.missingCount > 8 {
+                        self.faceDetected = false
+                        // drift kembali ke tengah saat wajah hilang
+                        self.smoothX = self.smoothX * 0.97 + 0.5 * 0.03
+                        self.smoothY = self.smoothY * 0.97 + 0.4 * 0.03
+                    }
+                }
+                // hitung crop window (ratio x ratio ukuran sumber)
+                let cw = ratio, ch = ratio
+                let cx = min(max(self.smoothX - cw / 2, 0), 1 - cw)
+                let cy = min(max(self.smoothY - ch / 2, 0), 1 - ch)
+                let r = CGRect(x: cx, y: cy, width: cw, height: ch)
+                if r != self.cropRect { self.cropRect = r }
+            }
+        }
+    }
+
+    func reset() {
+        smoothX = 0.5; smoothY = 0.4; missingCount = 0; faceDetected = false
+        cropRect = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+    }
+
+    private func detectFace(_ image: CIImage) -> CGRect? {
+        let e = image.extent
+        let k = min(1, 480 / max(e.width, e.height))
+        let small = image.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .transformed(by: CGAffineTransform(scaleX: k, y: k))
+        guard let cg = ctx.createCGImage(small, from: small.extent) else { return nil }
+        let req = VNDetectFaceRectanglesRequest()
+        try? VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req])
+        guard let best = (req.results ?? []).filter({ $0.confidence > 0.5 })
+            .max(by: { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height })
+        else { return nil }
+        let b = best.boundingBox
+        return CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+    }
+}
+
+/// overlay face tracking: kotak wajah + label
+struct FaceTrackOverlay: View {
+    @ObservedObject var tracker: FaceTracker
+
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width, h = g.size.height
+            let r = tracker.cropRect
+            let box = CGRect(x: r.minX * w, y: r.minY * h, width: r.width * w, height: r.height * h)
+            ZStack {
+                // crop window
+                RoundedRectangle(cornerRadius: 8).stroke(
+                    tracker.faceDetected ? Color.cyan : Color.white.opacity(0.4),
+                    style: StrokeStyle(lineWidth: 2, dash: tracker.faceDetected ? [] : [6, 4])
+                )
+                .frame(width: box.width, height: box.height)
+                .position(x: box.midX, y: box.midY)
+                // label
+                Text(tracker.faceDetected ? "Face Track" : "Face Track: cari wajah")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.black.opacity(0.5), in: Capsule())
+                    .foregroundStyle(tracker.faceDetected ? .cyan : .white.opacity(0.6))
+                    .position(x: box.midX, y: box.minY - 14)
+            }
+            .animation(.easeOut(duration: 0.15), value: tracker.cropRect)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// kotak tengah + penanda subjek. Hijau = subjek di tengah (tracking modul DJI bekerja)
 struct GimbalOverlay: View {
     @ObservedObject var guide: GimbalGuide
