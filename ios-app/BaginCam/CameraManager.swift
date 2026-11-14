@@ -1856,8 +1856,12 @@ final class CameraManager: NSObject, ObservableObject {
                 Log.camera.info("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
             }
 
-            let bayerBurst = (m == .hdrplus && !zoomed) || (zoomed && zm == .superRes)
-            let singleFull = zoomed && zm == .fullCrop
+            let darkCrop = m == .hdrplus && zoomed && zm == .fullCrop
+            let bayerBurst = (m == .hdrplus && !zoomed) || (zoomed && zm == .superRes) || darkCrop
+            let singleFull = zoomed && zm == .fullCrop && !darkCrop
+            if darkCrop {
+                Log.camera.info("Crop penuh gelap: paksa multi-frame merge (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 1), privacy: .public))")
+            }
             if zoomed && zm == .apple {
                 // zoom Apple apa adanya (kamera virtual, seperti kamera bawaan); + AI: perkecil ke detail asli lalu AI
                 self.burstMode = .heif
