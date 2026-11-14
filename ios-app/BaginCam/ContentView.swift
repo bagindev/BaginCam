@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var showImporter = false
     @State private var showViewer = false
     @State private var showPro = false
+    @State private var pipDragStart: CGPoint?
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
     @State private var showHistogram = true
@@ -64,6 +65,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             if cam.idlePaused { idlePauseLayer }
+            if cam.screenFlash { Color(red: 1, green: 0.97, blue: 0.92).ignoresSafeArea().allowsHitTesting(false) }
         }
         .background(TouchSpyView { touch.mark() })
         .sheet(isPresented: $showSettings) {
@@ -147,7 +149,7 @@ struct ContentView: View {
                         resultChip
                         colorGroupChip
                         assistChip
-                        if appleCapable && cam.flashAvailable { flashChip }
+                        if cam.flashAvailable || isFront { flashChip }
                         if appleCapable && cam.liveAvailable { liveChip }
                     }
                 }
@@ -508,7 +510,7 @@ struct ContentView: View {
             ForEach(CameraManager.FlashSetting.allCases) { f in
                 Button { cam.flash = f } label: { check(f.rawValue, cam.flash == f) }
             }
-            Text("Flash nyala = jepretan memakai proses Apple")
+            Text("Belakang di FOTO: flash kamera (proses Apple). HDR+ / POTRET / PRO: senter menyala selama jepretan. Kamera depan: layar jadi lampu putih. Auto = hanya saat gelap.")
         } label: {
             chip("", icon: cam.flash.icon, on: cam.flash != .off)
         }
@@ -891,10 +893,38 @@ struct ContentView: View {
     // MARK: - zoom
     /// zoom tersedia di mode kamera virtual (lensa belakang)
     private var showsZoom: Bool {
-        CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock != .front : false
+        if cam.videoKind == .dual { return true }
+        return CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock != .front : false
+    }
+
+    /// DUAL: area kotak kecil di preview - ketuk = tukar besar/kecil, seret = pindahkan
+    private var dualPipLayer: some View {
+        GeometryReader { g in
+            ZStack(alignment: .bottomTrailing) {
+                Color.clear.contentShape(Rectangle())
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption.bold())
+                    .padding(6)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .foregroundStyle(cam.dualSwapped ? .yellow : .white)
+                    .padding(5)
+            }
+            .frame(width: g.size.width * DualCam.pipScale, height: g.size.height * DualCam.pipScale)
+            .position(x: cam.dualPip.x * g.size.width, y: cam.dualPip.y * g.size.height)
+            .onTapGesture { cam.swapDual() }
+            .gesture(DragGesture(minimumDistance: 6)
+                .onChanged { v in
+                    let s = pipDragStart ?? cam.dualPip
+                    if pipDragStart == nil { pipDragStart = s }
+                    cam.setDualPip(CGPoint(x: s.x + v.translation.width / g.size.width,
+                                           y: s.y + v.translation.height / g.size.height))
+                }
+                .onEnded { _ in pipDragStart = nil })
+        }
     }
 
     private var minZoom: Double {
+        if cam.videoKind == .dual { return cam.availableLenses.contains(.ultraWide) ? 0.5 : 1 }
         switch cam.aiLensLock {
         case .tele?: return 5
         case .ultraWide?: return 0.5

@@ -391,6 +391,20 @@ final class CameraManager: NSObject, ObservableObject {
     private var recordTimer: Timer?
     private var readoutTick = 0
     @Published private(set) var flashAvailable = false
+    /// kamera depan: layar jadi lampu (putih, kecerahan penuh) selama jepretan
+    @Published private(set) var screenFlash = false {
+        didSet {
+            guard screenFlash != oldValue else { return }
+            if screenFlash {
+                savedBrightness = UIScreen.main.brightness
+                UIScreen.main.brightness = 1
+            } else {
+                UIScreen.main.brightness = savedBrightness
+            }
+        }
+    }
+    private var savedBrightness: CGFloat = 0.5
+    private var burstTorch = false                          // sessionQueue: senter dinyalakan sebagai lampu isi
     @Published private(set) var liveAvailable = false
     /// iOS memakai ultra wide untuk objek dekat (makro) padahal zoom >= 1x
     @Published private(set) var macroActive = false
@@ -1993,9 +2007,12 @@ final class CameraManager: NSObject, ObservableObject {
     func startBurst() {
         guard !isCapturing else { return }
         // FOTO: Auto memilih mesin saat shutter ditekan; Live / flash nyala = proses Apple (semua proses)
-        if shootMode == .photo && (photoProcess == .auto || livePhoto || flash == .on) {
+        let front = Self.usesVirtual(mode) ? aiLensLock == .front : lens == .front
+        // flash kamera sungguhan hanya ada di proses Apple lensa belakang
+        let realFlash = flash == .on && !front
+        if shootMode == .photo && (photoProcess == .auto || livePhoto || realFlash) {
             let gain = Double(liveISO) * liveShutter
-            let apple = livePhoto || flash == .on || photoProcess == .apple || gain < 2
+            let apple = livePhoto || realFlash || photoProcess == .apple || gain < 2
             let want: Mode = apple ? .heif : .hdrplus
             if mode != want { mode = want }
             Log.camera.info("Proses \(self.photoProcess.rawValue, privacy: .public): ISO x t \(gain, privacy: .public), live \(self.livePhoto, privacy: .public), flash \(self.flash.rawValue, privacy: .public) -> \(want.rawValue, privacy: .public)")
@@ -2025,7 +2042,15 @@ final class CameraManager: NSObject, ObservableObject {
         let dbg = debugFusion
         let motion = motionLevel?() ?? -1
         let liveReq = m == .heif && livePhoto && liveAvailable
-        let flashSet = flash, asp = aspect
+        // lampu isi untuk burst (HDR+/POTRET/PRO) & kamera depan: depan = layar putih, belakang = senter.
+        // MALAM tidak: eksposurnya sudah direncanakan dari cahaya asli.
+        let dark = Double(liveISO) * liveShutter >= 8
+        let wantLight = shootMode != .night && (flash == .on || (flash == .auto && dark))
+        let screenFill = wantLight && front
+        let torchFill = wantLight && !front && m != .heif
+        if screenFill { screenFlash = true }
+        let flashSet: FlashSetting = (screenFill || torchFill) ? .off : flash
+        let asp = aspect
         sessionQueue.async {
             self.burstAuto = true          // AE/AWB/AF dikunci selama burst; bagian manual tetap manual
             self.burstMode = m
@@ -2278,6 +2303,17 @@ final class CameraManager: NSObject, ObservableObject {
                     Log.camera.info("Fusi 48MP: pengaturan disiapkan \(ok, privacy: .public) \(dt, format: .fixed(precision: 2), privacy: .public) s \(err?.localizedDescription ?? "", privacy: .public)")
                 }
             }
+            if screenFill || torchFill, let d = self.device, (try? d.lockForConfiguration()) != nil {
+                if torchFill, d.hasTorch, d.isTorchModeSupported(.on) {
+                    d.torchMode = .on
+                    self.burstTorch = true
+                }
+                // eksposur harus menyesuaikan cahaya tambahan sebelum dikunci
+                if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
+                d.unlockForConfiguration()
+                delay = max(delay, 0.9)
+                Log.camera.info("Lampu isi: \(screenFill ? "layar (kamera depan)" : "senter", privacy: .public), senter nyala \(self.burstTorch, privacy: .public)")
+            }
             // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
             self.sessionQueue.asyncAfter(deadline: .now() + delay) {
                 if isMulti { self.lockCurrent() }
@@ -2315,6 +2351,14 @@ final class CameraManager: NSObject, ObservableObject {
     private var collectsBayer: Bool { burstMode == .hdrplus || (burstMode == .aiZoom && burstAIMultiFrame) }
 
     private func finishBurst() {
+        if burstTorch {
+            burstTorch = false
+            if let d = device, d.hasTorch, (try? d.lockForConfiguration()) != nil {
+                d.torchMode = .off
+                d.unlockForConfiguration()
+            }
+        }
+        DispatchQueue.main.async { self.screenFlash = false }
         if burstAuto && (burstMode.isBurst || burstAIMultiFrame) { applyAuto() }
         if switchedToPhysicalForMF {
             switchedToPhysicalForMF = false
