@@ -1313,3 +1313,14 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   di atasnya dengan gradasi gelap. Saklar: Bantu > Video > "Jendela bidik layar penuh" (default nyala).
   Hanya tata letak, tidak menambah beban proses.
 - Build 63 & 64 sukses. Build `data/ipa-v0.27.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
+
+### UI dirapikan dari screenshot (v0.27.1 build 65)
+- Screenshot IMG_7103 (POTRET, build 62) & IMG_7106 (VIDEO layar penuh, build 64) diambil dari DCIM lewat AFC.
+  Masalah terlihat: 8 tombol preset zoom berdesakan ("2x" jadi "…", angka zoom terpotong 2 baris), info
+  format video dobel (chip atas + pil di preview), angka ISO/shutter tertutup tombol di layar penuh,
+  chip LUT kepanjangan ("v0.1_STANDARD · AWB").
+- Perubahan: chip & preset zoom gaya kaca gelap bergaris (aktif = teks + garis kuning, bukan blok kuning);
+  preset zoom bisa digeser dan tidak terpotong; pil format video hanya untuk DUAL; nama LUT dipendekkan;
+  di layar penuh angka eksposur + lencana bantu dipindah ke atas kontrol.
+- Build `data/ipa-v0.27.1/BaginCam-unsigned.ipa`. **Belum dilihat di HP.**
+- Permintaan berikutnya: UI kustom modern yang mudah dioperasikan -> arah desain ditanyakan ke user dulu.
