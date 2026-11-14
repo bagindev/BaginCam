@@ -1020,3 +1020,23 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   dikompensasi (f/a / f/asal)^2 (shutter dulu s/d 1/30 s, sisanya ISO). Belum bisa diuji (butuh iPhone 18 Pro).
 - Versi 0.20.0 (build 47). Build run 43554285877 (logo + Xcode 27) & 43554604850 (aperture) sukses ->
   `data/builds/BaginCam-v0.20.0-unsigned.ipa` (36.6 MB; Info.plist DTXcode 2710, SDK 27.1, MinimumOS 17.0).
+
+## Sesi 48 — 2026-11-14 · v0.21.0 Mode Gimbal (DJI Osmo Mobile 7P)
+- Riset: OM 7/7P TIDAK mendukung Apple DockKit (baru OM 8/8P); SDK DJI tertutup (integrasi pihak ketiga s/d OM 6,
+  hanya pan/tilt) -> motor/mode gimbal & ActiveTrack via kamera tidak bisa dari app. Tracking Multifunctional
+  Module jalan di app apa pun (termasuk BaginCam). Tombol shutter gimbal = remote Bluetooth -> sudah ditangani
+  AVCaptureEventInteraction. Roda zoom / tombol Switch hanya terdokumentasi untuk DJI Mimo -> perlu uji log.
+- Permintaan user: stabilisasi disesuaikan, panduan tracking, tombol rekam pause, scroll untuk zoom, tombol
+  bolak-balik kamera, fitur utama lain.
+- Gimbal.swift (baru): HardwareInput (GCKeyboard keyChangedHandler + GCController physicalInputProfile, semua
+  dicatat "Tombol: ..."; peta: panah/+/-/PageUp/Down = zoom, Enter/Spasi = shutter, Tab/F/C = ganti kamera,
+  P = jeda); GimbalGuide (Vision wajah -> badan atas, ~2x/detik) + GimbalOverlay (kotak tengah, hijau = di tengah).
+- AVCaptureEventInteraction(primary:secondary:) -> log "tombol primer/sekunder". CameraManager.hardwareShutter:
+  Mode Gimbal saat rekam 1x = stop (tunggu 0.5 s), 2x cepat = jeda/lanjut.
+- Jeda rekam (semua mode video): VideoRecorder.setPaused - frame/audio dibuang, offset waktu ditambah celah saat
+  lanjut (audio di-retime CMSampleBufferCreateCopyWithNewTiming) -> satu file tanpa celah. Tombol ganti kamera
+  berubah jadi ⏸/⏺ saat merekam; timer rekam oranye saat jeda, waktu jeda tidak dihitung.
+- Mode Gimbal: stabilisasi Action/Cinematic/Cinematic Extended -> Standard; pill "Gimbal" di info video.
+  Pengaturan di Bantu > Gimbal (pref gimbalMode, gimbalGuide). setTotalZoom tele terkunci min = teleNative.
+- Versi 0.21.0 (build 48). Build run 43566593755 sukses (Xcode 27.1) -> `data/builds/BaginCam-v0.21.0-unsigned.ipa`.
+  Belum diuji. Berikutnya: user coba semua tombol OM 7P di BaginCam -> "cek" -> petakan roda zoom & Switch.
