@@ -26,6 +26,12 @@ final class HardwareInput {
     var onControllerDisconnect: (() -> Void)?
     private var started = false
 
+    // MARK: - deteksi zoom dari event volume (roda gimbal OM 7P)
+    private var lastVolumeTime: CFTimeInterval = 0
+    private var volumeCount = 0
+    private var volumeIsPrimary = true
+    private var pendingShutter: DispatchWorkItem?
+
     func start() {
         guard !started else { return }
         started = true
@@ -52,10 +58,73 @@ final class HardwareInput {
         }
         if let kb = GCKeyboard.coalesced { attach(kb) }
         GCController.controllers().forEach { attach($0) }
+        startVolumeMonitor()
     }
 
     /// true kalau ada controller tersambung sekarang
     var hasController: Bool { !GCController.controllers().isEmpty }
+
+    private var volumeObserver: NSKeyValueObservation?
+    private var lastVolume: Float = -1
+    /// set true dari luar saat gimbalMode aktif — baru pakai volume monitor untuk zoom
+    var gimbalActive = false
+
+    private func startVolumeMonitor() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(true)
+        lastVolume = session.outputVolume
+        volumeObserver = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
+            guard let self, self.gimbalActive, let vol = change.newValue else { return }
+            let diff = vol - self.lastVolume
+            self.lastVolume = vol
+            guard abs(diff) > 0.001 else { return }
+            let factor: CGFloat = diff > 0 ? 1.06 : (1.0 / 1.06)
+            Log.camera.info("Tombol: volume KVO \(diff > 0 ? "up" : "down", privacy: .public) (\(vol, privacy: .public))")
+            DispatchQueue.main.async { self.onZoom?(factor) }
+        }
+    }
+
+    /// Dipanggil dari AVCaptureEventInteraction saat event volume masuk (.ended).
+    /// Logika: event tunggal = shutter, 2x cepat arah sama = zoom, 2x cepat beda arah = flip kamera.
+    /// isPrimary: true = volume down, false = volume up.
+    func volumeEvent(isPrimary: Bool) {
+        let now = CACurrentMediaTime()
+        let gap = now - lastVolumeTime
+        lastVolumeTime = now
+
+        pendingShutter?.cancel()
+        pendingShutter = nil
+
+        if gap < 0.4 {
+            volumeCount += 1
+        } else {
+            volumeCount = 1
+            volumeIsPrimary = isPrimary
+        }
+
+        if volumeCount >= 2 {
+            if volumeIsPrimary != isPrimary {
+                // arah berubah (down lalu up, atau sebaliknya) → flip kamera
+                volumeCount = 0
+                Log.camera.info("Tombol: volume double-tap beda arah -> flip kamera")
+                handler?(.flip, "volume double-tap flip")
+            } else {
+                // arah sama berturut → zoom
+                let factor: CGFloat = volumeIsPrimary ? (1.0 / 1.08) : 1.08
+                onZoom?(factor)
+                Log.camera.info("Tombol: volume zoom \(volumeIsPrimary ? "out" : "in", privacy: .public) (x\(volumeCount, privacy: .public))")
+            }
+            return
+        }
+
+        let w = DispatchWorkItem { [weak self] in
+            self?.pendingShutter = nil
+            Log.camera.info("Tombol: volume -> shutter (primary=\(isPrimary, privacy: .public))")
+            self?.handler?(.shutter, isPrimary ? "tombol primer" : "tombol sekunder")
+        }
+        pendingShutter = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+    }
 
     private func attach(_ kb: GCKeyboard) {
         kb.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in

@@ -91,6 +91,7 @@ struct ContentView: View {
                 if cam.gimbalAuto && cam.gimbalMode && !still { cam.gimbalMode = false }
             }
             HardwareInput.shared.onZoom = { factor in cam.zoomStep(factor) }
+            HardwareInput.shared.gimbalActive = cam.gimbalMode
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }
@@ -222,7 +223,7 @@ struct ContentView: View {
         func body(content: Content) -> some View {
             content
                 .onChange(of: cam.compAI) { _, _ in update() }
-                .onChange(of: cam.gimbalMode) { _, _ in update() }
+                .onChange(of: cam.gimbalMode) { _, on in HardwareInput.shared.gimbalActive = on; update() }
                 .onChange(of: cam.gimbalGuideOn) { _, _ in update() }
                 .onChange(of: cam.faceTrack) { _, _ in update() }
                 .onChange(of: cam.shootMode) { _, _ in update() }
@@ -701,8 +702,19 @@ struct ContentView: View {
 
     // MARK: - preview + baris 2 (info)
     private var preview: some View {
-        MetalPreview(renderer: renderer, onHardwareShutter: { src in touch.mark(); if cam.idlePaused { cam.resumeIdle() } else { cam.hardwareShutter(source: src) } },
-                     fps: cam.thermal >= 2 && !cam.isRecording ? 20 : 30)
+        MetalPreview(renderer: renderer, onHardwareShutter: { src in
+            touch.mark()
+            if cam.idlePaused { cam.resumeIdle(); return }
+            // gimbal mode: jangan langsung shutter, lewatkan ke volumeEvent untuk deteksi zoom vs shutter
+            if cam.gimbalMode {
+                let isPrimary = src.contains("primer")
+                HardwareInput.shared.volumeEvent(isPrimary: isPrimary)
+            } else {
+                cam.hardwareShutter(source: src)
+            }
+        }, onVolumeEvent: { isPrimary, phase in
+            Log.camera.info("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
+        }, fps: cam.thermal >= 2 && !cam.isRecording ? 20 : 30)
             .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
             .overlay { ratioMask }

@@ -181,6 +181,8 @@ struct MetalPreview: UIViewRepresentable {
     let renderer: PreviewRenderer
     /// tombol volume / Camera Control ditekan (iOS 17.2+)
     var onHardwareShutter: ((String) -> Void)? = nil
+    /// v0.22.1: event volume mentah — (isPrimary, phase "began"/"ended")
+    var onVolumeEvent: ((Bool, String) -> Void)? = nil
     var fps = 30
 
     func makeUIView(context: Context) -> MTKView {
@@ -191,10 +193,14 @@ struct MetalPreview: UIViewRepresentable {
         v.delegate = renderer
         v.backgroundColor = .black
         if #available(iOS 17.2, *), let action = onHardwareShutter {
-            // v0.21: primer (volume bawah / Camera Control) & sekunder (volume atas) dibedakan di log (gimbal / remote)
+            let volEvent = onVolumeEvent
             let interaction = AVCaptureEventInteraction(primary: { event in
+                let ph = event.phase == .began ? "began" : event.phase == .ended ? "ended" : "other"
+                volEvent?(true, ph)
                 if event.phase == .ended { action("tombol primer") }
             }, secondary: { event in
+                let ph = event.phase == .began ? "began" : event.phase == .ended ? "ended" : "other"
+                volEvent?(false, ph)
                 if event.phase == .ended { action("tombol sekunder") }
             })
             v.addInteraction(interaction)
