@@ -112,7 +112,7 @@ final class HardwareInput {
                 // arah sama berturut → zoom
                 let factor: CGFloat = volumeIsPrimary ? (1.0 / 1.08) : 1.08
                 onZoom?(factor)
-                Log.camera.info("Tombol: volume zoom \(volumeIsPrimary ? "out" : "in", privacy: .public) (x\(volumeCount, privacy: .public))")
+                Log.camera.info("Tombol: volume zoom \(self.volumeIsPrimary ? "out" : "in", privacy: .public) (x\(self.volumeCount, privacy: .public))")
             }
             return
         }
