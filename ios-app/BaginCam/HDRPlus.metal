@@ -351,3 +351,111 @@ kernel void freq_inverse(device const float2* acc    [[buffer(0)]],
     }
     if (active && px >= 0 && py >= 0 && px < pw && py < ph) planes[uint(py) * uint(pw) + uint(px)] += outv;
 }
+
+
+// =====================================================================================
+// Drizzle sub-pixel super-resolution: alignment sub-piksel + akumulasi grid 2x crop.
+// Teknik astrofotografi "drizzle" (Fruchter & Hook 2002): N frame dengan geseran
+// sub-piksel alami (tremor tangan) diletakkan di grid 2x -> resolusi efektif 2x.
+// =====================================================================================
+
+// ---------- sub-pixel refinement: parabolic fit di sekitar offset integer terbaik ----------
+kernel void refine_subpx(device const float*  ref       [[buffer(0)]],
+                         device const float*  comp      [[buffer(1)]],
+                         device const int2*   intAlign  [[buffer(2)]],
+                         device float2*       outAlign  [[buffer(3)]],
+                         constant AlignParams& p        [[buffer(4)]],
+                         uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= p.ntx || gid.y >= p.nty) return;
+    const int2 best = intAlign[gid.y * p.ntx + gid.x];
+    const int W = int(p.w), H = int(p.h);
+    const int x0 = p.ntx > 1 ? int(gid.x * (p.w - uint(p.tile)) / (p.ntx - 1)) : 0;
+    const int y0 = p.nty > 1 ? int(gid.y * (p.h - uint(p.tile)) / (p.nty - 1)) : 0;
+
+    float sads[5];
+    const int2 offsets[5] = { best, best + int2(-1,0), best + int2(1,0), best + int2(0,-1), best + int2(0,1) };
+    bool valid[5];
+    for (int k = 0; k < 5; k++) {
+        const int cx0 = x0 + offsets[k].x, cy0 = y0 + offsets[k].y;
+        valid[k] = cx0 >= 0 && cy0 >= 0 && cx0 + p.tile <= W && cy0 + p.tile <= H;
+        if (!valid[k]) { sads[k] = INFINITY; continue; }
+        float s = 0;
+        for (int ty = 0; ty < p.tile; ty++) {
+            const int ro = (y0 + ty) * W + x0;
+            const int co = (cy0 + ty) * W + cx0;
+            for (int tx = 0; tx < p.tile; tx++) s += fabs(ref[ro + tx] - comp[co + tx]);
+        }
+        sads[k] = s;
+    }
+    float dx = 0, dy = 0;
+    if (valid[1] && valid[2]) {
+        float d = sads[1] - 2*sads[0] + sads[2];
+        if (d > 1e-3f) dx = clamp(0.5f * (sads[1] - sads[2]) / d, -0.5f, 0.5f);
+    }
+    if (valid[3] && valid[4]) {
+        float d = sads[3] - 2*sads[0] + sads[4];
+        if (d > 1e-3f) dy = clamp(0.5f * (sads[3] - sads[4]) / d, -0.5f, 0.5f);
+    }
+    outAlign[gid.y * p.ntx + gid.x] = float2(float(best.x) + dx, float(best.y) + dy);
+}
+
+// ---------- drizzle: warp 1 frame ke grid 2x crop + akumulasi ----------
+struct DrizzleParams {
+    uint rawW, rawH;       // ukuran raw frame
+    uint outW, outH;       // ukuran output plane (2x crop superpixel)
+    float cropX, cropY;    // posisi crop di koordinat superpixel (plane)
+    uint antx, anty;       // ukuran grid alignment tile
+};
+
+kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
+                             device const float2*   align [[buffer(1)]],
+                             device float4*         acc   [[buffer(2)]],
+                             constant DrizzleParams& p    [[buffer(3)]],
+                             uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= p.outW || gid.y >= p.outH) return;
+    const float refPX = p.cropX + float(gid.x) * 0.5f;
+    const float refPY = p.cropY + float(gid.y) * 0.5f;
+
+    // alignment tile terdekat
+    const uint tx = min(uint(max(0.0f, refPX) * 2.0f * float(p.antx) / float(p.rawW)), p.antx - 1);
+    const uint ty = min(uint(max(0.0f, refPY) * 2.0f * float(p.anty) / float(p.rawH)), p.anty - 1);
+    const float2 a = align[ty * p.antx + tx];
+
+    const float srcPX = refPX + a.x;
+    const float srcPY = refPY + a.y;
+    const int pw = int(p.rawW / 2), ph = int(p.rawH / 2);
+    if (srcPX < 0.0f || srcPY < 0.0f || srcPX >= float(pw - 1) || srcPY >= float(ph - 1)) return;
+
+    const int ix = clamp(int(floor(srcPX)), 0, pw - 2);
+    const int iy = clamp(int(floor(srcPY)), 0, ph - 2);
+    const float fx = srcPX - float(ix), fy = srcPY - float(iy);
+    const uint W = p.rawW;
+    const uint x0 = uint(ix)*2, y0 = uint(iy)*2, x1 = x0+2, y1 = y0+2;
+    float4 v00 = float4(float(raw[y0*W+x0]),   float(raw[y0*W+x0+1]),
+                         float(raw[(y0+1)*W+x0]), float(raw[(y0+1)*W+x0+1]));
+    float4 v10 = float4(float(raw[y0*W+x1]),   float(raw[y0*W+x1+1]),
+                         float(raw[(y0+1)*W+x1]), float(raw[(y0+1)*W+x1+1]));
+    float4 v01 = float4(float(raw[y1*W+x0]),   float(raw[y1*W+x0+1]),
+                         float(raw[(y1+1)*W+x0]), float(raw[(y1+1)*W+x0+1]));
+    float4 v11 = float4(float(raw[y1*W+x1]),   float(raw[y1*W+x1+1]),
+                         float(raw[(y1+1)*W+x1]), float(raw[(y1+1)*W+x1+1]));
+    acc[gid.y * p.outW + gid.x] += mix(mix(v00, v10, fx), mix(v01, v11, fx), fy);
+}
+
+// ---------- normalisasi akumulator -> Bayer uint16 ----------
+kernel void drizzle_to_bayer(device const float4* acc     [[buffer(0)]],
+                             device ushort*       raw     [[buffer(1)]],
+                             constant uint2&      outSize [[buffer(2)]],
+                             constant float&      invN    [[buffer(3)]],
+                             uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= outSize.x || gid.y >= outSize.y) return;
+    const float4 v = clamp(round(acc[gid.y * outSize.x + gid.x] * invN), 0.0f, 65535.0f);
+    const uint W = outSize.x * 2, x = gid.x * 2, y = gid.y * 2;
+    raw[y*W+x]         = ushort(v.x);
+    raw[y*W+x+1]       = ushort(v.y);
+    raw[(y+1)*W+x]     = ushort(v.z);
+    raw[(y+1)*W+x+1]   = ushort(v.w);
+}

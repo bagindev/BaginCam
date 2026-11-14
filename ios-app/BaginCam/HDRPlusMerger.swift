@@ -62,6 +62,10 @@ final class HDRPlusMerger {
             }
             pso[name] = p
         }
+        for name in ["refine_subpx", "drizzle_warp_acc", "drizzle_to_bayer"] {
+            if let f = lib.makeFunction(name: name),
+               let p = try? d.makeComputePipelineState(function: f) { pso[name] = p }
+        }
     }
 
     /// Salin CVPixelBuffer Bayer 16-bit ke MTLBuffer (buang padding baris).
@@ -332,6 +336,146 @@ final class HDRPlusMerger {
         let wtxt = weights.map { String(format: "%.2f", $0) }.joined(separator: " ")
         Log.hdr.info("HDR+ \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s, noiseSD \(noiseSD, privacy: .public), maxDiff \(maxDiff, privacy: .public), bobot [\(wtxt, privacy: .public)]")
         return Result(buffer: out, width: W, height: H, meanWeights: weights, noiseSD: noiseSD, seconds: dt)
+    }
+
+    // MARK: drizzle sub-pixel super-resolution
+
+    private struct DrizzleParams {
+        var rawW: UInt32, rawH: UInt32, outW: UInt32, outH: UInt32
+        var cropX: Float, cropY: Float, antx: UInt32, anty: UInt32
+    }
+
+    var canDrizzle: Bool { pso["refine_subpx"] != nil && pso["drizzle_warp_acc"] != nil && pso["drizzle_to_bayer"] != nil }
+
+    func mergeDrizzle(_ frames: [BayerFrame], crop: CGRect, tile: Int = 16, search: Int = 2,
+                      progress: ((Int, Int) -> Void)? = nil) -> Result? {
+        guard canDrizzle, let ref = frames.first, frames.count >= 2 else { return nil }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let W = ref.width, H = ref.height, pw = W / 2, ph = H / 2
+        let N = frames.count
+        let outW = Int(crop.width) * 2, outH = Int(crop.height) * 2
+        guard outW >= 4, outH >= 4 else { return nil }
+
+        let nLayers = max(1, Int(ceil(log2(Double(min(W, H)) / 64.0))))
+        var dims: [(Int, Int)] = []
+        var lw = pw, lh = ph
+        for _ in 0..<nLayers where min(lw, lh) >= tile * 2 { dims.append((lw, lh)); lw /= 2; lh /= 2 }
+        let tiles = dims.map { (max(1, $0.0 / (tile / 2) - 1), max(1, $0.1 / (tile / 2) - 1)) }
+        guard !dims.isEmpty else { return nil }
+
+        func buf(_ len: Int) -> MTLBuffer? { device.makeBuffer(length: max(len, 16), options: .storageModeShared) }
+        let refPyr = dims.compactMap { buf($0.0 * $0.1 * 4) }
+        let compPyr = dims.compactMap { buf($0.0 * $0.1 * 4) }
+        let aligns = tiles.compactMap { buf($0.0 * $0.1 * 8) }
+        guard refPyr.count == dims.count, compPyr.count == dims.count, aligns.count == dims.count,
+              let zeroAlign = buf(tiles[0].0 * tiles[0].1 * 8),
+              let subpxBuf = buf(tiles[0].0 * tiles[0].1 * 8),
+              let zeroSubpx = buf(tiles[0].0 * tiles[0].1 * 8),
+              let acc = buf(outW * outH * MemoryLayout<SIMD4<Float>>.stride),
+              let out = buf(outW * 2 * outH * 2 * 2) else {
+            Log.hdr.error("Drizzle: alokasi buffer gagal")
+            return nil
+        }
+        memset(zeroAlign.contents(), 0, zeroAlign.length)
+        memset(zeroSubpx.contents(), 0, zeroSubpx.length)
+        memset(acc.contents(), 0, acc.length)
+
+        var rawSize = SIMD2<UInt32>(UInt32(W), UInt32(H))
+        func dispatch(_ enc: MTLComputeCommandEncoder, _ name: String, _ w: Int, _ h: Int) {
+            guard let p = pso[name] else { return }
+            enc.setComputePipelineState(p)
+            let tw = p.threadExecutionWidth
+            let th = h == 1 ? 1 : max(1, p.maxTotalThreadsPerThreadgroup / tw)
+            enc.dispatchThreads(MTLSize(width: w, height: h, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1))
+        }
+        func encodePyramid(_ enc: MTLComputeCommandEncoder, _ raw: MTLBuffer, _ pyr: [MTLBuffer]) {
+            enc.setBuffer(raw, offset: 0, index: 0)
+            enc.setBuffer(pyr[0], offset: 0, index: 1)
+            enc.setBytes(&rawSize, length: MemoryLayout<SIMD2<UInt32>>.size, index: 2)
+            dispatch(enc, "bayer_grey", pw, ph)
+            for l in 1..<dims.count {
+                var s = SIMD2<UInt32>(UInt32(dims[l - 1].0), UInt32(dims[l - 1].1))
+                enc.setBuffer(pyr[l - 1], offset: 0, index: 0)
+                enc.setBuffer(pyr[l], offset: 0, index: 1)
+                enc.setBytes(&s, length: MemoryLayout<SIMD2<UInt32>>.size, index: 2)
+                dispatch(enc, "downsample2", dims[l].0, dims[l].1)
+            }
+        }
+        func run(_ body: (MTLComputeCommandEncoder) -> Void) -> Bool {
+            guard let cb = queue.makeCommandBuffer(), let enc = cb.makeComputeCommandEncoder() else { return false }
+            body(enc)
+            enc.endEncoding()
+            cb.commit()
+            cb.waitUntilCompleted()
+            if let e = cb.error { Log.hdr.error("GPU error: \(String(describing: e), privacy: .public)"); return false }
+            return true
+        }
+
+        guard run({ enc in encodePyramid(enc, ref.buffer, refPyr) }) else { return nil }
+
+        var dp = DrizzleParams(rawW: UInt32(W), rawH: UInt32(H), outW: UInt32(outW), outH: UInt32(outH),
+                               cropX: Float(crop.minX), cropY: Float(crop.minY),
+                               antx: UInt32(tiles[0].0), anty: UInt32(tiles[0].1))
+        guard run({ enc in
+            enc.setBuffer(ref.buffer, offset: 0, index: 0)
+            enc.setBuffer(zeroSubpx, offset: 0, index: 1)
+            enc.setBuffer(acc, offset: 0, index: 2)
+            enc.setBytes(&dp, length: MemoryLayout<DrizzleParams>.stride, index: 3)
+            dispatch(enc, "drizzle_warp_acc", outW, outH)
+        }) else { return nil }
+
+        for (i, comp) in frames.enumerated() where i > 0 {
+            progress?(i, N - 1)
+            guard comp.width == W, comp.height == H else { continue }
+            guard run({ enc in
+                encodePyramid(enc, comp.buffer, compPyr)
+                for l in stride(from: dims.count - 1, through: 0, by: -1) {
+                    let hasPrev = l + 1 < dims.count
+                    var ap = AlignParams(
+                        w: UInt32(dims[l].0), h: UInt32(dims[l].1),
+                        ntx: UInt32(tiles[l].0), nty: UInt32(tiles[l].1),
+                        pntx: hasPrev ? UInt32(tiles[l + 1].0) : 0, pnty: hasPrev ? UInt32(tiles[l + 1].1) : 0,
+                        tile: Int32(tile), search: Int32(search), prevScale: 2)
+                    enc.setBuffer(refPyr[l], offset: 0, index: 0)
+                    enc.setBuffer(compPyr[l], offset: 0, index: 1)
+                    enc.setBuffer(hasPrev ? aligns[l + 1] : zeroAlign, offset: 0, index: 2)
+                    enc.setBuffer(aligns[l], offset: 0, index: 3)
+                    enc.setBytes(&ap, length: MemoryLayout<AlignParams>.stride, index: 4)
+                    dispatch(enc, "align_level", tiles[l].0, tiles[l].1)
+                }
+                var rp = AlignParams(
+                    w: UInt32(dims[0].0), h: UInt32(dims[0].1),
+                    ntx: UInt32(tiles[0].0), nty: UInt32(tiles[0].1),
+                    pntx: 0, pnty: 0, tile: Int32(tile), search: 0, prevScale: 0)
+                enc.setBuffer(refPyr[0], offset: 0, index: 0)
+                enc.setBuffer(compPyr[0], offset: 0, index: 1)
+                enc.setBuffer(aligns[0], offset: 0, index: 2)
+                enc.setBuffer(subpxBuf, offset: 0, index: 3)
+                enc.setBytes(&rp, length: MemoryLayout<AlignParams>.stride, index: 4)
+                dispatch(enc, "refine_subpx", tiles[0].0, tiles[0].1)
+                enc.setBuffer(comp.buffer, offset: 0, index: 0)
+                enc.setBuffer(subpxBuf, offset: 0, index: 1)
+                enc.setBuffer(acc, offset: 0, index: 2)
+                enc.setBytes(&dp, length: MemoryLayout<DrizzleParams>.stride, index: 3)
+                dispatch(enc, "drizzle_warp_acc", outW, outH)
+            }) else { return nil }
+        }
+
+        var invN: Float = 1.0 / Float(N)
+        var outSz = SIMD2<UInt32>(UInt32(outW), UInt32(outH))
+        guard run({ enc in
+            enc.setBuffer(acc, offset: 0, index: 0)
+            enc.setBuffer(out, offset: 0, index: 1)
+            enc.setBytes(&outSz, length: MemoryLayout<SIMD2<UInt32>>.size, index: 2)
+            enc.setBytes(&invN, length: MemoryLayout<Float>.size, index: 3)
+            dispatch(enc, "drizzle_to_bayer", outW, outH)
+        }) else { return nil }
+
+        let dt = CFAbsoluteTimeGetCurrent() - t0
+        let bw = outW * 2, bh = outH * 2
+        Log.hdr.info("Drizzle \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public) crop \(Int(crop.minX), privacy: .public),\(Int(crop.minY), privacy: .public) \(Int(crop.width), privacy: .public)x\(Int(crop.height), privacy: .public) -> \(bw, privacy: .public)x\(bh, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        return Result(buffer: out, width: bw, height: bh, meanWeights: [], noiseSD: 0, seconds: dt)
     }
 
     // MARK: info format RAW

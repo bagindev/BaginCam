@@ -2299,7 +2299,35 @@ final class CameraManager: NSObject, ObservableObject {
 
         if forAIZoom || burstZoomed {
             if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
-            // AI Zoom multi-frame / HDR+ zoom: kembangkan hasil merge -> crop -> upscale
+
+            // Drizzle 2x: sub-pixel super-resolution untuk zoom (>= 3 frame)
+            if burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle {
+                let bW = r.width, bH = r.height
+                let cropW = max(16, (bW / 2) / Int(max(1, burstCrop))) & ~1
+                let cropH = max(16, (bH / 2) / Int(max(1, burstCrop))) & ~1
+                let cropX = ((bW / 2) - cropW) / 2, cropY = ((bH / 2) - cropH) / 2
+                setStatus("Drizzle 2x super-resolusi...")
+                let td = CFAbsoluteTimeGetCurrent()
+                if let dr = merger.mergeDrizzle(frames, crop: CGRect(x: CGFloat(cropX), y: CGFloat(cropY),
+                                                                      width: CGFloat(cropW), height: CGFloat(cropH)),
+                                                progress: { i, n in self.report("Drizzle 2x", i, n, since: td) }) {
+                    let dpx = dr.buffer.contents().bindMemory(to: UInt16.self, capacity: dr.width * dr.height)
+                    if let dw = try? DNGWriter.rewrite(original: refDNG, pixels: dpx, width: dr.width, height: dr.height,
+                                                       software: "BaginCam Drizzle \(frames.count)f 2x", sourceFullScale: fs.full) {
+                        let dhl = Self.highlightLevel(dpx, count: dr.width * dr.height, scale: dw.scale, black: dw.black, white: dw.white)
+                        if let img = RawDeveloper.develop(dng: dw.data, highlight: dhl, metering: 1,
+                                                          night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev),
+                           let cg = RawDeveloper.cgImage(img) {
+                            Log.sr.info("Drizzle 2x: sumber \(cg.width, privacy: .public)x\(cg.height, privacy: .public) (crop \(cropW, privacy: .public)x\(cropH, privacy: .public) superpx -> 2x)")
+                            processAIZoomImage(cg, properties: img.properties, dir: dir, multiFrame: frames.count, cropOverride: 1)
+                            return
+                        }
+                    }
+                    Log.sr.error("Drizzle 2x: DNG/render gagal, fallback ke merge biasa")
+                }
+            }
+
+            // Fallback / AI Zoom: kembangkan hasil merge -> crop -> upscale
             guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(burstCrop)),
                                                  night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev),
                   let cg = RawDeveloper.cgImage(img) else {
