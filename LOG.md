@@ -1242,3 +1242,19 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Log: `Lampu video depan: <level>`.
 - Commit kode: lihat `git log`. Build `data/ipa-v0.26.0/BaginCam-unsigned.ipa`. **Belum diuji di HP.**
   Perlu diuji: build 58 (DUAL lensa/4K/kotak geser, lampu isi foto) + build 59 (dua fitur di atas).
+
+### Cek build 58 + DUAL ganti lensa di sesi jalan + SINEMA 4K60 (v0.26.1 build 60)
+- **Log build 58**: DUAL 4K BERHASIL (2160x3840, biaya hardware 0.52, 35.6 s tanpa frame hilang).
+  iOS menyediakan format multi-kamera sampai 3840x2160 untuk semua kamera (utama, UW, tele, depan).
+  Kamera virtual belakang ditolak di sesi multi-kamera (`lensa Auto tidak bisa disiapkan`) -> dibuang.
+  Tidak ada percobaan pindah lensa yang tercatat: tombol kunci lensa (Auto/0.5x/1x/5x) diblokir di DUAL
+  dan pindah lewat zoom hanya jalan saat tidak merekam.
+- **DUAL ganti lensa**: `DualCam.switchBack()` mengganti input kamera belakang di sesi yang sedang jalan
+  (removeInput + addInputWithNoConnections + koneksi baru). Kamera depan & mikrofon tidak disentuh,
+  jadi boleh di tengah rekaman. Baris lensa baru di bawah slider zoom (Ultra Wide / Utama / Tele);
+  zoom melewati 0.5x / 1x / tele juga memindah lensa. Log: `DUAL: lensa belakang -> <lensa>`.
+- **SINEMA 4K 60 fps**: batas 1080p30 dicabut; resolusi & fps ikut pengaturan video (maks 60, Rec.709).
+  Untuk 4K atau di atas 30 fps segmentasi jalan di antrean sendiri dan frame memakai mask terbaru
+  (mask bisa telat 1-2 frame saat gerak cepat); 1080p <= 30 fps tetap segmentasi tiap frame.
+  Blur latar 4K dihitung di 1/8 resolusi. Log sekarang: ukuran, fps masuk, ms/frame, mode mask.
+- Build `data/ipa-v0.26.1/BaginCam-unsigned.ipa`. **Belum diuji di HP** (termasuk isi build 59).
