@@ -1040,3 +1040,19 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   Pengaturan di Bantu > Gimbal (pref gimbalMode, gimbalGuide). setTotalZoom tele terkunci min = teleNative.
 - Versi 0.21.0 (build 48). Build run 43566593755 sukses (Xcode 27.1) -> `data/builds/BaginCam-v0.21.0-unsigned.ipa`.
   Belum diuji. Berikutnya: user coba semua tombol OM 7P di BaginCam -> "cek" -> petakan roda zoom & Switch.
+
+## Sesi 49 — 2026-11-14 · v0.22.0 Face Tracking Digital
+- Permintaan user: tambahkan model tracking wajah agar gimbal mengikuti wajah.
+- FaceTracker (Gimbal.swift): Vision VNDetectFaceRectanglesRequest ~15x/detik (tiap frame ke-2 dari
+  onAnalysis yang sudah dipanggil tiap 8 frame preview). Smoothing EMA α=0.85 -> crop window mengikuti wajah
+  halus. Saat wajah hilang > 8 frame, drift kembali ke tengah. outputRatio = 0.5 (4K→1080p).
+- FaceTrackOverlay: kotak crop window (cyan jika wajah terdeteksi, putih putus-putus jika tidak) + label.
+- VideoRecorder: crop pixel buffer (CIImage crop+scale) sebelum encode. Sumber 4K (2160x3840 potret),
+  config output 1080x1920. faceTrackCrop diset tiap frame dari CameraManager.faceTrackerCrop.
+- CameraManager: faceTrack toggle (Prefs). makeVideoSnap force 4K saat faceTrack on. startRecording:
+  output 1080p (outW/outH), file diberi label "FT1080p". captureOutput forward crop rect ke recorder.
+- ContentView: FaceTracker @StateObject, overlay, onChange(faceTrack) -> updateComp, forward cropRect
+  ke cam.faceTrackerCrop, info pill "Face Track" (cyan), toggle di Bantu > Face Tracking.
+- Bisa aktif bersamaan gimbal (modul gerakan besar, crop digital merapikan), atau tanpa gimbal (tripod).
+- Versi 0.22.0 (build 49). Build run 43569416778 sukses -> `data/builds/BaginCam-v0.22.0-unsigned.ipa`.
+  Berikutnya: uji face tracking (preview + rekam video), cek halus gerakan & performa (suhu).
