@@ -4,6 +4,7 @@ import ImageIO
 import Photos
 import UIKit
 import UniformTypeIdentifiers
+import Vision
 
 /// Semua akses AVCaptureSession / device dilakukan di `sessionQueue`.
 /// Properti @Published hanya diubah di main thread.
@@ -329,6 +330,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var pauseStart: Date?
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
+    @Published var faceBeauty: Bool = Prefs.get("faceBeauty", false) { didSet { Prefs.set("faceBeauty", faceBeauty) } }
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
     @Published var pendingUpscale: URL?
@@ -441,6 +443,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
     private var burstNight = false
+    private var burstFaceBeauty = false
     private var burstAspect: AspectRatio = .r43
     private var burstAngle: CGFloat = 90           // v0.18.3: sudut foto jepretan ini (dipasang ulang tiap capture)
     private var burstFlash: FlashSetting = .off
@@ -647,7 +650,7 @@ final class CameraManager: NSObject, ObservableObject {
         for (i, c) in cons.enumerated() { bases[c.deviceType] = i == 0 ? 1 : (i - 1 < sw.count ? sw[i - 1] : 1) }
         lensBase = bases
         wideBase = bases[.builtInWideAngleCamera] ?? 1
-        let maxZ: CGFloat = 50   // di atas batas hardware: preview di-crop tambahan, capture tetap crop sendiri
+        let maxZ: CGFloat = 100  // di atas batas hardware: preview di-crop tambahan, capture tetap crop sendiri
         if (try? vd.lockForConfiguration()) != nil {
             vd.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
             vd.videoZoomFactor = min(max(startZoom * wideBase, vd.minAvailableVideoZoomFactor), vd.maxAvailableVideoZoomFactor)
@@ -697,7 +700,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             Log.camera.info("AI Zoom: lensa dikunci ke \(l.displayName, privacy: .public)")
             DispatchQueue.main.async {
-                self.maxTotalZoom = 50
+                self.maxTotalZoom = 100
                 self.totalZoom = tz
                 self.previewExtraZoom = max(1, (tz / native) / max(d.maxAvailableVideoZoomFactor, 1))
             }
@@ -1800,6 +1803,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstAIFull = false
             self.burstAppleZoomAI = false
             self.burstNight = night
+            self.burstFaceBeauty = faceBeauty
             self.burstAspect = asp
             self.burstFlash = flashSet
             self.burstLive = liveReq
@@ -2379,7 +2383,12 @@ final class CameraManager: NSObject, ObservableObject {
                 if fused { postT.finalSharpen *= 0.3 }
                 if postT.hasPost { img = postT.post(img).settingProperties(img.properties) }
                 if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
-                let final = RawDeveloper.applyLUT(img, lut)
+                var final = RawDeveloper.applyLUT(img, lut)
+                if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
+                   let b = Self.applyFaceBeauty(cg) {
+                    final = CIImage(cgImage: b).settingProperties(final.properties)
+                    Log.sr.info("Face Beauty diterapkan")
+                }
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
                     save(data, fileName: "\(burstNight ? "MALAM" : "HDRPLUS")_\(frames.count)f_\(res.label)\(lut != nil ? "_LUT" : "").\(ext)", dir: dir)
@@ -2476,6 +2485,11 @@ final class CameraManager: NSObject, ObservableObject {
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
+        if burstFaceBeauty, let b = Self.applyFaceBeauty(result) {
+            result = b
+            Log.sr.info("Face Beauty diterapkan (zoom)")
+        }
+
         var props = properties
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
         props.removeValue(forKey: kCGImagePropertyPixelWidth as String)
@@ -2529,6 +2543,28 @@ final class CameraManager: NSObject, ObservableObject {
             "inputIntensity": alpha
         ])
         return RawDeveloper.cgImage(sharp)
+    }
+
+    // MARK: face beautification
+
+    static func applyFaceBeauty(_ img: CGImage) -> CGImage? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .balanced
+        let handler = VNImageRequestHandler(cgImage: img, options: [:])
+        guard (try? handler.perform([request])) != nil,
+              let mask = request.results?.first?.pixelBuffer else { return nil }
+        let rawMask = CIImage(cvPixelBuffer: mask)
+        let sx = CGFloat(img.width) / rawMask.extent.width
+        let sy = CGFloat(img.height) / rawMask.extent.height
+        let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        let ci = CIImage(cgImage: img)
+        let blurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 3.5])
+            .cropped(to: ci.extent)
+        let result = blurred.applyingFilter("CIBlendWithMask", parameters: [
+            "inputBackgroundImage": ci,
+            "inputMaskImage": ciMask
+        ])
+        return RawDeveloper.cgImage(result)
     }
 
     /// zoom Apple + AI: hasil Apple (sudah diperbesar Apple) diperkecil ke detail aslinya

@@ -916,7 +916,7 @@ struct ContentView: View {
         }
         // v0.20: titik tele mengikuti HP (16 Pro Max 5x/10x, 17/18 Pro Max 4x/8x)
         let t = Double(CameraManager.teleNative)
-        return [0.5, 1, 2, t, 2 * t, 25, 50].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
+        return [0.5, 1, 2, t, 2 * t, 25, 50, 75].filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
     }
 
     private func isNative(_ z: Double) -> Bool {
@@ -1387,6 +1387,11 @@ private struct AssistPanel: View {
                     Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
                 } header: { Text("Face Tracking") } footer: {
                     Text("Mirip Center Stage: frame video di-crop dan digeser halus mengikuti wajah. Sumber 4K, hasil 1080p tajam. Bisa dipakai dengan atau tanpa gimbal (mis. HP di tripod). Gimbal = gerakan besar, Face Track = merapikan supaya wajah selalu pas di tengah.")
+                }
+                Section {
+                    Toggle("Face Beautification", isOn: $cam.faceBeauty)
+                } header: { Text("Percantik Wajah") } footer: {
+                    Text("Haluskan kulit wajah secara otomatis pakai segmentasi AI (Vision). Berlaku untuk foto (HDR+ dan Zoom). Area selain orang tetap tajam.")
                 }
                 Section {
                     Toggle("Focus peaking", isOn: $peaking)
