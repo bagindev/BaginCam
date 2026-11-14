@@ -2434,7 +2434,7 @@ final class CameraManager: NSObject, ObservableObject {
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0)
     }
 
-    /// crop tengah sesuai burstCrop -> upscale ke resolusi output -> HEIC.
+    /// crop tengah sesuai burstCrop -> deconv -> upscale ke resolusi output -> sharpen -> HEIC.
     private func processAIZoomImage(_ cg: CGImage, properties: [String: Any], dir: URL?, multiFrame: Int,
                                     cropOverride: Double? = nil, method: String = "") {
         let W = cg.width, H = cg.height
@@ -2442,13 +2442,35 @@ final class CameraManager: NSObject, ObservableObject {
         let cw = max(16, Int(Double(W) / c)) & ~1, ch = max(16, Int(Double(H) / c)) & ~1
         var rect = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch)
         if burstAspect != .r43 { rect = burstAspect.rect(in: rect).integral }
+
+        // Deconvolution: koreksi blur difraksi lensa sebelum AI upscale
+        var src = cg, srcRect = rect
+        if burstZoomed, let cropped = cg.cropping(to: rect),
+           let deconv = Self.zoomDeconv(cropped, crop: Double(burstCrop), lens: burstLensName,
+                                        night: burstNight, multiFrame: multiFrame) {
+            src = deconv
+            srcRect = CGRect(x: 0, y: 0, width: deconv.width, height: deconv.height)
+            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(burstCrop), lens: burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
+        }
+
         let res = burstOutputMP
-        let (img0, note) = upscale(cg, crop: rect, target: res.longSide, model: burstSRModel,
+        let (img0, note) = upscale(src, crop: srcRect, target: res.longSide, model: burstSRModel,
                                    strength: burstStrength, minAIFactor: 1.4, label: "AI Zoom")
         guard var result = img0 else {
             finish("AI Zoom gagal: \(note)")
             return
         }
+
+        // Adaptive luminance sharpening: penajaman akhir hanya di channel luminance (edge-aware)
+        if burstZoomed {
+            let ci = CIImage(cgImage: result)
+            let sharp = ci.applyingFilter("CISharpenLuminance", parameters: [
+                "inputSharpness": burstNight ? 0.25 : 0.45,
+                "inputRadius": 1.5
+            ])
+            if let t = RawDeveloper.cgImage(sharp) { result = t }
+        }
+
         // v0.14: tuning akhir (penajaman akhir di resolusi output, bayangan, kontras, saturasi)
         if burstTuning.hasPost, let t = RawDeveloper.cgImage(burstTuning.post(CIImage(cgImage: result))) { result = t }
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
@@ -2481,6 +2503,32 @@ final class CameraManager: NSObject, ObservableObject {
             : (burstMode == .hdrplus ? "Super Res" : "Crop penuh"))
         finish(String(format: "%@ %.1fx · %@ crop %.1fx%@ · %@ -> %dx%d", label, tz, burstLensName,
                       Double(burstCrop), mfText, note, result.width, result.height))
+    }
+
+    // MARK: deconvolution
+
+    private static func deconvSigma(crop: Double, lens: String) -> Double {
+        if lens == "Tele" { return min(1.5, 0.6 + crop * 0.06) }
+        return min(1.5, 0.4 + crop * 0.04)
+    }
+
+    private static func deconvAlpha(night: Bool, multiFrame: Int) -> Double {
+        let base = night ? 0.25 : 0.6
+        let mfBoost = multiFrame >= 6 ? 1.3 : (multiFrame >= 3 ? 1.15 : 1.0)
+        return min(0.9, base * mfBoost)
+    }
+
+    private static func zoomDeconv(_ img: CGImage, crop: Double, lens: String,
+                                    night: Bool, multiFrame: Int) -> CGImage? {
+        let sigma = deconvSigma(crop: crop, lens: lens)
+        let alpha = deconvAlpha(night: night, multiFrame: multiFrame)
+        guard sigma > 0.3, alpha > 0.05 else { return nil }
+        let ci = CIImage(cgImage: img)
+        let sharp = ci.applyingFilter("CIUnsharpMask", parameters: [
+            "inputRadius": sigma * 2.0,
+            "inputIntensity": alpha
+        ])
+        return RawDeveloper.cgImage(sharp)
     }
 
     /// zoom Apple + AI: hasil Apple (sudah diperbesar Apple) diperkecil ke detail aslinya
