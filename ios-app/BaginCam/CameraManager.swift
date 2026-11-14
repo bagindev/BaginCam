@@ -312,6 +312,16 @@ final class CameraManager: NSObject, ObservableObject {
     /// AI Upscale otomatis ditawarkan setelah rekam
     // v0.13: AI Komposisi (Susun ulang) + versi crop setelah jepret
     @Published var compAI: Bool = Prefs.get("compAI", true) { didSet { Prefs.set("compAI", compAI) } }
+    /// v0.21: Mode Gimbal (DJI Osmo Mobile): stabilisasi ringan, tekan 2x tombol rekam = jeda, panduan tracking
+    @Published var gimbalMode: Bool = Prefs.get("gimbalMode", false) {
+        didSet { Prefs.set("gimbalMode", gimbalMode); Log.camera.info("Mode Gimbal: \(self.gimbalMode, privacy: .public)"); videoChanged() }
+    }
+    @Published var gimbalGuideOn: Bool = Prefs.get("gimbalGuide", true) { didSet { Prefs.set("gimbalGuide", gimbalGuideOn) } }
+    /// v0.21: rekaman dijeda
+    @Published private(set) var recPaused = false
+    private var pausedTotal: TimeInterval = 0
+    private var pauseStart: Date?
+    private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var aiAfterRecord: Bool = Prefs.get("aiAfterRecord", false) { didSet { Prefs.set("aiAfterRecord", aiAfterRecord) } }
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
@@ -738,7 +748,7 @@ final class CameraManager: NSObject, ObservableObject {
         var minZ: CGFloat = 1
         if Self.usesVirtual(mode) {
             switch aiLensLock {
-            case .tele?: minZ = 5
+            case .tele?: minZ = Self.teleNative       // v0.21: 17/18 Pro Max tele 4x
             case .ultraWide?: minZ = 0.5
             case nil: minZ = minAutoZoom
             default: minZ = 1
@@ -1164,7 +1174,9 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func makeVideoSnap() -> VideoSnap {
-        VideoSnap(res: videoRes, fps: videoFps, codec: videoCodec, color: videoColor, stab: videoStab,
+        // v0.21: di gimbal, stabilisasi berat (crop besar, melawan gerak gimbal) diganti Standard
+        VideoSnap(res: videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
+                  stab: gimbalMode && [.action, .cinematic, .cinematicExtended].contains(videoStab) ? .standard : videoStab,
                   timelapse: timelapse, zoom: totalZoom)
     }
 
@@ -1432,6 +1444,9 @@ final class CameraManager: NSObject, ObservableObject {
         }
         isRecording = true
         recordSeconds = 0
+        recPaused = false
+        pausedTotal = 0
+        pauseStart = nil
         sessionQueue.async { self.startRecording(snap, gain: gain, lut: lut, slowPlayback: slow) }
     }
 
@@ -1488,7 +1503,8 @@ final class CameraManager: NSObject, ObservableObject {
                 self.recordTimer?.invalidate()
                 self.recordTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                     guard let self else { return }
-                    self.recordSeconds = Date().timeIntervalSince(self.recordStart)
+                    self.recordSeconds = Date().timeIntervalSince(self.recordStart) - self.pausedTotal
+                        - (self.pauseStart.map { Date().timeIntervalSince($0) } ?? 0)
                 }
             }
         } catch {
@@ -1498,9 +1514,52 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// main
+    /// v0.21: jeda / lanjut rekam (main)
+    func togglePause() {
+        guard isRecording else { return }
+        recPaused.toggle()
+        if recPaused {
+            pauseStart = Date()
+        } else if let p = pauseStart {
+            pausedTotal += Date().timeIntervalSince(p)
+            pauseStart = nil
+        }
+        let v = recPaused
+        videoQueue.async { self.recorder?.setPaused(v) }
+        Log.camera.info("VIDEO: \(v ? "dijeda" : "dilanjutkan", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
+        status = v ? "Rekaman dijeda - tekan lagi untuk lanjut" : "Merekam"
+    }
+
+    /// v0.21: tombol fisik (volume / Camera Control / gimbal / remote). Main.
+    /// Mode Gimbal saat merekam: 1x = stop (ditunggu 0.5 s), 2x cepat = jeda / lanjut.
+    func hardwareShutter(source: String) {
+        Log.camera.info("Tombol: \(source, privacy: .public) (mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public), gimbal \(self.gimbalMode, privacy: .public))")
+        guard gimbalMode, shootMode == .video, isRecording else { shutterPressed(); return }
+        if let w = pendingStop {
+            w.cancel()
+            pendingStop = nil
+            togglePause()
+            return
+        }
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingStop = nil
+            if self.isRecording { self.shutterPressed() }
+        }
+        pendingStop = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
+    }
+
+    /// v0.21: zoom bertahap dari tombol / roda gimbal (main)
+    func zoomStep(_ k: CGFloat) {
+        setTotalZoom(totalZoom * k)
+    }
+
     private func stopRecording() {
         recordTimer?.invalidate()
         recordTimer = nil
+        recPaused = false
+        pauseStart = nil
         let saveTo = videoSaveTo
         status = "Menyimpan video..."
         videoQueue.async {

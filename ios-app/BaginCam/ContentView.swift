@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var showLevel = true
     @StateObject private var level = LevelMonitor()
     @StateObject private var comp = CompositionAI()
+    @StateObject private var gimbalGuide = GimbalGuide()
     @State private var touch = TouchClock()
     @State private var pinchBase: Double?
     @State private var showAssist = false
@@ -78,6 +79,7 @@ struct ContentView: View {
         .onAppear {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
+            HardwareInput.shared.handler = { a, src in handleHardware(a, src) }   // v0.21: gimbal / remote
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
             r.onHistogram = { bins in histogram = bins }
@@ -208,6 +210,8 @@ struct ContentView: View {
         func body(content: Content) -> some View {
             content
                 .onChange(of: cam.compAI) { _, _ in update() }
+                .onChange(of: cam.gimbalMode) { _, _ in update() }
+                .onChange(of: cam.gimbalGuideOn) { _, _ in update() }
                 .onChange(of: cam.shootMode) { _, _ in update() }
                 .onChange(of: cam.aiLensLock) { _, _ in update() }
                 .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = maxZoom() }
@@ -226,12 +230,31 @@ struct ContentView: View {
 
     private func updateComp() {
         comp.maxZoom = compMaxZoom
-        if compActive {
-            let c = comp
-            renderer.onAnalysis = { [weak c] img in c?.push(img) }
+        // v0.21: analisis preview dibagi AI Komposisi + panduan gimbal
+        let useComp = compActive, useG = cam.gimbalMode && cam.gimbalGuideOn
+        if useComp || useG {
+            let c = comp, gg = gimbalGuide
+            renderer.onAnalysis = { [weak c, weak gg] img in
+                if useComp { c?.push(img) }
+                if useG { gg?.push(img) }
+            }
         } else {
             renderer.onAnalysis = nil
-            comp.close()
+        }
+        if !useComp { comp.close() }
+        if !useG { gimbalGuide.reset() }
+    }
+
+    /// v0.21: tombol gimbal / remote / keyboard Bluetooth
+    private func handleHardware(_ a: GimbalAction, _ src: String) {
+        touch.mark()
+        if cam.idlePaused { cam.resumeIdle(); return }
+        switch a {
+        case .shutter: cam.hardwareShutter(source: src)
+        case .zoomIn: cam.zoomStep(1.2)
+        case .zoomOut: cam.zoomStep(1 / 1.2)
+        case .flip: if !cam.isRecording && !cam.isCapturing { flipCamera() }
+        case .pause: cam.togglePause()
         }
     }
 
@@ -623,11 +646,15 @@ struct ContentView: View {
     /// v0.12.4: timer rekam besar (ala Blackmagic) - selalu terlihat, merah saat merekam
     private var recTimer: some View {
         HStack(spacing: 6) {
-            Circle().fill(cam.isRecording ? Color.white : Color.red).frame(width: 9, height: 9)
+            if cam.recPaused {
+                Image(systemName: "pause.fill").font(.caption2)
+            } else {
+                Circle().fill(cam.isRecording ? Color.white : Color.red).frame(width: 9, height: 9)
+            }
             Text(recordTimeText).font(.system(.callout, design: .monospaced).bold())
         }
         .padding(.horizontal, 10).padding(.vertical, 4)
-        .background(cam.isRecording ? Color.red : Color.black.opacity(0.55), in: Capsule())
+        .background(cam.recPaused ? Color.orange : (cam.isRecording ? Color.red : Color.black.opacity(0.55)), in: Capsule())
         .foregroundStyle(.white)
         .fixedSize()
     }
@@ -646,6 +673,7 @@ struct ContentView: View {
                              color: cam.zoomQuality == "Native" ? .green : .orange)
                 }
                 if cam.needND { infoPill("ND", icon: "sun.max.fill", color: .orange) }
+                if cam.gimbalMode { infoPill("Gimbal", icon: "gyroscope", color: .green) }
                 if cam.thermal >= 2 { infoPill(cam.thermal >= 3 ? "Kritis" : "Panas", icon: "thermometer.high", color: .red) }
                 if cam.timerSeconds > 0 && !cam.isRecording { infoPill("\(cam.timerSeconds)s", icon: "clock") }
                 Spacer(minLength: 0)
@@ -657,12 +685,13 @@ struct ContentView: View {
 
     // MARK: - preview + baris 2 (info)
     private var preview: some View {
-        MetalPreview(renderer: renderer, onHardwareShutter: { touch.mark(); if cam.idlePaused { cam.resumeIdle() } else { cam.shutterPressed() } },
+        MetalPreview(renderer: renderer, onHardwareShutter: { src in touch.mark(); if cam.idlePaused { cam.resumeIdle() } else { cam.hardwareShutter(source: src) } },
                      fps: cam.thermal >= 2 && !cam.isRecording ? 20 : 30)
             .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
             .overlay { ratioMask }
             .overlay { frameGuideOverlay }
+            .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
             .overlay(alignment: .bottomLeading) { readout }
             .overlay(alignment: .topTrailing) {
                 if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, cam.shootMode == .video ? 72 : 40).padding(8) }
@@ -1192,15 +1221,28 @@ struct ContentView: View {
             }
             .disabled(cam.isCapturing)
 
-            Button(action: flipCamera) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
-                    .font(.title2)
-                    .frame(width: 54, height: 54)
-                    .background(Color.white.opacity(0.12), in: Circle())
-                    .foregroundStyle(isFront ? .yellow : .white)
+            Group {
+                if cam.isRecording {
+                    // v0.21: saat merekam tombol ini = jeda / lanjut
+                    Button { cam.togglePause() } label: {
+                        Image(systemName: cam.recPaused ? "record.circle" : "pause.fill")
+                            .font(.title2)
+                            .frame(width: 54, height: 54)
+                            .background(cam.recPaused ? Color.orange.opacity(0.35) : Color.white.opacity(0.12), in: Circle())
+                            .foregroundStyle(cam.recPaused ? .orange : .white)
+                    }
+                } else {
+                    Button(action: flipCamera) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                            .font(.title2)
+                            .frame(width: 54, height: 54)
+                            .background(Color.white.opacity(0.12), in: Circle())
+                            .foregroundStyle(isFront ? .yellow : .white)
+                    }
+                    .disabled(cam.isCapturing || !cam.availableLenses.contains(.front))
+                }
             }
-            .disabled(cam.isCapturing || cam.isRecording || !cam.availableLenses.contains(.front))
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
@@ -1282,6 +1324,14 @@ private struct AssistPanel: View {
                             Button { close(); comp.startScan() } label: { Label("Susun ulang sekarang", systemImage: "crop") }
                         }
                     } header: { Text("AI Komposisi") }
+                }
+                Section {
+                    Toggle("Mode Gimbal", isOn: $cam.gimbalMode)
+                    if cam.gimbalMode {
+                        Toggle("Panduan tracking (kotak tengah)", isOn: $cam.gimbalGuideOn)
+                    }
+                } header: { Text("Gimbal (DJI Osmo Mobile)") } footer: {
+                    Text("Stabilisasi Action/Cinematic diganti Standard (gimbal yang meredam goyang). Tombol rekam gimbal: 1x mulai/stop, 2x cepat saat merekam = jeda/lanjut. Tracking pakai modul DJI; kotak hijau = subjek di tengah. Tombol lain (roda zoom, Switch) dicatat di log - bilang \"cek\" setelah mencoba semua tombol.")
                 }
                 Section {
                     Toggle("Focus peaking", isOn: $peaking)

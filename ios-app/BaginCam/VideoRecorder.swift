@@ -237,6 +237,11 @@ final class VideoRecorder {
     private var frameIndex = 0
     private var written = 0
     private var stopping = false
+    // v0.21: jeda rekam - frame & audio dibuang, waktu digeser saat lanjut (file tetap satu, tanpa celah)
+    private var paused = false
+    private var resumePending = false
+    private var offset = CMTime.zero
+    private var lastPTS = CMTime.invalid
     private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
     private lazy var lutFilter: CIFilter? = config.bake?.makeFilter()
     private lazy var logFilter = AppleLogLUT.makeFilter()
@@ -303,8 +308,22 @@ final class VideoRecorder {
     }
 
     /// antrean video
-    func appendVideo(_ pb: CVPixelBuffer, pts: CMTime) {
-        guard !stopping else { return }
+    func setPaused(_ p: Bool) {
+        if p { paused = true } else if paused { paused = false; resumePending = true }
+    }
+
+    func appendVideo(_ pb: CVPixelBuffer, pts rawPTS: CMTime) {
+        guard !stopping, !paused else { return }
+        if resumePending {
+            resumePending = false
+            if lastPTS.isValid {
+                let frame = CMTime(value: 1, timescale: CMTimeScale(max(config.sensorFps, 1)))
+                let gap = CMTimeSubtract(CMTimeSubtract(rawPTS, lastPTS), frame)
+                if CMTimeCompare(gap, .zero) > 0 { offset = CMTimeAdd(offset, gap) }
+            }
+        }
+        lastPTS = rawPTS
+        let pts = CMTimeSubtract(rawPTS, offset)
         if !started {
             guard writer.startWriting() else {
                 Log.camera.error("Video: startWriting gagal \(String(describing: self.writer.error), privacy: .public)")
@@ -378,9 +397,30 @@ final class VideoRecorder {
 
     /// antrean video (output audio memakai antrean yang sama)
     func appendAudio(_ sb: CMSampleBuffer) {
-        guard started, !stopping, let aIn, aIn.isReadyForMoreMediaData,
-              CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sb), startPTS) >= 0 else { return }
-        aIn.append(sb)
+        guard started, !stopping, !paused, !resumePending, let aIn, aIn.isReadyForMoreMediaData else { return }
+        var buf = sb
+        if CMTimeCompare(offset, .zero) > 0 {
+            guard let s = Self.shift(sb, by: offset) else { return }
+            buf = s
+        }
+        guard CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(buf), startPTS) >= 0 else { return }
+        aIn.append(buf)
+    }
+
+    private static func shift(_ sb: CMSampleBuffer, by off: CMTime) -> CMSampleBuffer? {
+        var n: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: 0, arrayToFill: nil, entriesNeededOut: &n)
+        guard n > 0 else { return nil }
+        var info = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: n)
+        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: n, arrayToFill: &info, entriesNeededOut: &n)
+        for i in 0..<n {
+            info[i].presentationTimeStamp = CMTimeSubtract(info[i].presentationTimeStamp, off)
+            if info[i].decodeTimeStamp.isValid { info[i].decodeTimeStamp = CMTimeSubtract(info[i].decodeTimeStamp, off) }
+        }
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: n,
+                                              sampleTimingArray: &info, sampleBufferOut: &out)
+        return out
     }
 
     /// antrean video
