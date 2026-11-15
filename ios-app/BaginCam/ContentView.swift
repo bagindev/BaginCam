@@ -35,6 +35,9 @@ struct ContentView: View {
     @State private var touch = TouchClock()
     @State private var pinchBase: Double?
     @State private var showAssist = false
+    @State private var showDrawer = false
+    /// v0.28 (UI B): saklar PRO = angka eksposur + histogram + alat bantu di layar
+    @AppStorage("proLayer") private var proOn = false
 
     enum ProControl: String, CaseIterable, Identifiable {
         case ev = "EV", iso = "ISO", shutter = "Shutter", aperture = "Aperture", wb = "WB", focus = "Fokus", timer = "Timer"
@@ -70,15 +73,14 @@ struct ContentView: View {
             }
             VStack(spacing: 6) {
                 topBar
+                if proOn { proValues }
                 if !videoFullActive { preview }
-                if videoFullActive {
-                    Spacer(minLength: 0)
-                    HStack { readout; Spacer(minLength: 0); assistBadges }.padding(.horizontal, -8)
-                }
+                if videoFullActive { Spacer(minLength: 0) }
                 if showsZoom { zoomRow }
                 if !videoFullActive { Spacer(minLength: 0) }
                 if showPro { proDrawer }
                 if !CameraManager.usesVirtual(cam.mode) { lensRow }
+                drawerGrabber
                 statusLine
                 shutterRow
                 modeRow
@@ -125,6 +127,7 @@ struct ContentView: View {
             cam.orientationAngle = { [weak lv] in lv?.angleNow ?? 90 }
             LibraryViewer.latestThumb { t in cam.showLibraryThumb(t) }
             updateComp()
+            showHistogram = proOn
             cam.start()
             level.start()
             if luts.selected == nil {
@@ -147,47 +150,220 @@ struct ContentView: View {
             if case .success(let url) = result { luts.importLUT(from: url) }
         }
         .modifier(CompHooks(cam: cam, comp: comp, level: level, update: updateComp, maxZoom: { compMaxZoom }))
-        .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer || showAssist },
+        .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer || showAssist || showDrawer },
                              histogram: { on in renderer.histogramEnabled = on && showHistogram; if !on { histogram = [] } }))
     }
 
     // MARK: - baris 1: chip cepat
     private var topBar: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if cam.shootMode == .video {
-                        // v0.12.4: dikelompokkan (Format · LUT · WB · Bantu · AI · Senter)
-                        if cam.videoKind == .cinematic { bokehChip }
-                        videoFormatChip
-                        colorGroupChip
-                        assistChip
-                        upscaleChip
-                        torchChip
-                        if isFront || cam.videoKind == .dual { videoLightChip }
-                    } else {
-                        // v0.14: dikelompokkan (Proses · Hasil · Warna · Bantu · flash · Live)
-                        processChip
-                        if cam.shootMode == .photo || cam.shootMode == .portrait { beautyChip }
-                        resultChip
-                        colorGroupChip
-                        assistChip
-                        if cam.flashAvailable || isFront { flashChip }
-                        if isFront { videoLightChip }
-                        if appleCapable && cam.liveAvailable { liveChip }
-                    }
-                }
-            }
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape.fill")
-                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
-                    .font(.body)
-                    .frame(width: 34, height: 30)
-                    .background(Color.white.opacity(0.16), in: Capsule())
-                    .foregroundStyle(.white)
-            }
+        HStack(spacing: 6) {
+            topLeft.frame(width: 46, alignment: .leading)
+            Spacer(minLength: 0)
+            processPill
+            Spacer(minLength: 0)
+            proToggle.frame(width: 46, alignment: .trailing)
         }
         .padding(.top, 6)
+    }
+
+    @ViewBuilder private var topLeft: some View {
+        if cam.shootMode == .video {
+            torchChip
+        } else if cam.flashAvailable || isFront {
+            flashChip
+        } else {
+            Color.clear.frame(width: 1, height: 1)
+        }
+    }
+
+    /// pil tengah: cara foto / video diproses, isinya mengikuti mode
+    @ViewBuilder private var processPill: some View {
+        switch cam.shootMode {
+        case .photo: photoPill
+        case .night: nightPill
+        case .portrait: HStack(spacing: 6) { bokehChip; beautyChip }
+        case .pro: processChip
+        case .video:
+            HStack(spacing: 6) {
+                if cam.videoKind == .cinematic { bokehChip }
+                videoFormatChip
+            }
+        }
+    }
+
+    /// zoom di luar titik lensa optik -> hasil diproses Super Res / AI
+    private var zoomProcessed: Bool {
+        guard showsZoom, cam.shootMode != .video else { return false }
+        return ![0.5, 1.0, Double(CameraManager.teleNative)].contains { abs($0 - displayZoom) < 0.05 }
+    }
+
+    private var zoomText: String { cam.zoomMethod.rawValue + (cam.zoomAIEnabled ? " + AI" : "") }
+
+    private var photoPill: some View {
+        Menu {
+            Section("Proses foto") {
+                ForEach(CameraManager.PhotoProcess.allCases) { p in
+                    Button { cam.setPhotoProcess(p) } label: { check(p.rawValue, cam.photoProcess == p, detail: p.detail) }
+                }
+            }
+            Toggle("Jumlah frame otomatis (6-15)", isOn: $cam.autoFrames)
+            Toggle("Fusi detail 48MP", isOn: $cam.fusion48)
+            if showsZoom { Menu("Zoom: \(zoomText)") { zoomMenuItems } }
+            Button("Pengaturan lain...") { showSettings = true }
+        } label: {
+            let forced = (cam.livePhoto || cam.flash == .on) && cam.photoProcess != .apple
+            let base = cam.photoProcess.rawValue + (forced ? " → Apple" : "") + (framesText.map { " · " + $0 } ?? "")
+            chip(zoomProcessed ? zoomText : base,
+                 icon: zoomProcessed ? "plus.magnifyingglass" : (cam.photoProcess == .apple ? "apple.logo" : "sparkles"), on: true)
+        }
+    }
+
+    private var nightPill: some View {
+        Menu {
+            Text("Jumlah frame dan lama eksposur dipilih otomatis menurut cahaya dan goyangan HP. Di tripod / gimbal, eksposur lebih panjang.")
+            Button("Pengaturan lain...") { showSettings = true }
+        } label: {
+            chip("MALAM" + (framesText.map { " · " + $0 } ?? ""), icon: "moon.stars.fill", on: true)
+        }
+    }
+
+    /// cara zoom + AI (dipakai bila zoom melewati lensa optik)
+    @ViewBuilder private var zoomMenuItems: some View {
+        Section("Cara zoom (melewati lensa optik)") {
+            ForEach(CameraManager.ZoomMethod.allCases) { z in
+                Button { cam.zoomMethod = z } label: { check(z.rawValue, cam.zoomMethod == z, detail: z.detail) }
+            }
+        }
+        Section("AI setelah zoom") {
+            Toggle("AI", isOn: $cam.zoomAIEnabled)
+            if cam.zoomAIEnabled {
+                ForEach(SRModel.allCases) { m in
+                    Button { cam.srModel = m } label: { check("Model \(m.rawValue)", cam.srModel == m) }
+                }
+                Toggle("Fokus tulisan (OCR)", isOn: $cam.textFocus)
+            }
+        }
+    }
+
+    private var proToggle: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proOn.toggle()
+                showHistogram = proOn
+                if !proOn { showPro = false }
+            }
+        } label: {
+            let lit = proOn || !cam.isAuto
+            Text("PRO")
+                .font(.caption2.weight(.heavy))
+                .frame(width: 42, height: 30)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(lit ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+                .foregroundStyle(lit ? Color.yellow : Color.white)
+                .environment(\.colorScheme, .dark)
+        }
+    }
+
+    /// PRO nyala: angka eksposur selalu tampil; ketuk = penggaris nilai muncul di atas shutter
+    private var proValues: some View {
+        HStack(spacing: 5) {
+            proValue(.iso, "ISO", "\(Int(cam.manualExposure ? cam.iso : cam.liveISO))")
+            proValue(.shutter, "SHUTTER", Self.shutterText(cam.manualExposure ? cam.shutter : cam.liveShutter))
+            proValue(.wb, "WB", "\(Int(cam.manualWB ? cam.temperature : cam.liveTemp))K")
+            proValue(.ev, "EV", String(format: "%+.1f", cam.evBias))
+            proValue(.focus, "FOKUS", String(format: "%.2f", cam.manualFocus ? cam.lensPosition : cam.liveLens))
+            if !cam.apertureStops.isEmpty {
+                proValue(.aperture, "F", cam.liveAperture > 0 ? String(format: "%.1f", cam.liveAperture) : "-")
+            }
+        }
+    }
+
+    private func proValue(_ c: ProControl, _ title: String, _ value: String) -> some View {
+        let on = showPro && proControl == c
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                if on { showPro = false } else { proControl = c; showPro = true }
+            }
+        } label: {
+            VStack(spacing: 0) {
+                Text(title).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.6))
+                Text(value).font(.footnote.monospacedDigit().bold())
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .foregroundStyle(isManual(c) ? Color.yellow : Color.white)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(on ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+            .environment(\.colorScheme, .dark)
+        }
+    }
+
+    /// PRO nyala: alat bantu di tepi kiri preview
+    private var toolStrip: some View {
+        VStack(spacing: 8) {
+            toolButton("grid", showGrid) { showGrid.toggle() }
+            toolButton("level", showLevel) { showLevel.toggle() }
+            toolButton("scope", peaking) { peaking.toggle() }
+            toolButton("line.diagonal", zebra) { zebra.toggle() }
+        }
+        .padding(.leading, 8)
+    }
+
+    private func toolButton(_ icon: String, _ on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.footnote.weight(.semibold))
+                .frame(width: 34, height: 34)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(on ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+                .foregroundStyle(on ? Color.yellow : Color.white)
+                .environment(\.colorScheme, .dark)
+        }
+    }
+
+    /// pegangan laci pengaturan (ketuk atau geser ke atas)
+    private var drawerGrabber: some View {
+        Button { showDrawer = true } label: {
+            Label("pengaturan", systemImage: "chevron.up")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 16).padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                .foregroundStyle(.white)
+                .environment(\.colorScheme, .dark)
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { v in
+            if v.translation.height < -10 { showDrawer = true }
+        })
+        .disabled(cam.isCapturing)
+        .sheet(isPresented: $showDrawer) {
+            ControlDrawer(cam: cam, luts: luts, peaking: $peaking, peakColor: $peakColor, zebra: $zebra,
+                          zebraLevel: $zebraLevel, showGrid: $showGrid, showLevel: $showLevel, isFront: isFront,
+                          lutName: luts.selected.map { shortLUT($0.name) } ?? "Tanpa",
+                          compScan: { showDrawer = false; comp.startScan() },
+                          open: { target in openFromDrawer(target) })
+        }
+    }
+
+    private func openFromDrawer(_ target: ControlDrawer.Target) {
+        showDrawer = false
+        if target == .manualWB {
+            proOn = true
+            showHistogram = true
+            proControl = .wb
+            showPro = true
+            return
+        }
+        // lembar baru baru bisa dibuka setelah laci selesai menutup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            switch target {
+            case .settings: showSettings = true
+            case .importLUT: showImporter = true
+            case .upscale: showUpscale = true
+            case .manualWB: break
+            }
+        }
     }
 
     /// v0.15: waktu sentuhan terakhir (kelas -> tidak memicu render ulang)
@@ -608,7 +784,9 @@ struct ContentView: View {
             }
         } label: {
             let rate = cam.timelapse > 1 ? "TL \(cam.timelapse)x" : cam.videoFps.label
-            chip("\(cam.videoRes.rawValue) · \(rate) · \(cam.videoCodec.short) · \(cam.videoColor.short)", icon: "video", on: true)
+            chip(cam.videoKind == .normal
+                 ? "\(cam.videoRes.rawValue) · \(rate) · \(cam.videoCodec.short) · \(cam.videoColor.short)"
+                 : "\(cam.videoRes.rawValue) · \(rate)", icon: "video", on: true)
         }
         .disabled(cam.isRecording)
     }
@@ -658,7 +836,7 @@ struct ContentView: View {
             ForEach([(25.0, "Tipis"), (50.0, "Natural"), (75.0, "Kuat"), (100.0, "Maksimal")], id: \.0) { v, name in
                 Button { cam.bokehIntensity = v } label: { check("\(name) \(Int(v))%", abs(cam.bokehIntensity - v) < 2.5) }
             }
-            Text("Atur lebih halus: Bantu > Wajah & Bokeh")
+            Text("Atur lebih halus: laci pengaturan")
         } label: {
             chip("Bokeh \(Int(cam.bokehIntensity))%", icon: "camera.aperture", on: true)
         }
@@ -816,11 +994,15 @@ struct ContentView: View {
             .overlay { frameGuideOverlay }
             .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
             .overlay { if cam.faceTrack { FaceTrackOverlay(tracker: faceTracker) } }
-            .overlay(alignment: .bottomLeading) { if !videoFullActive { readout } }
             .overlay(alignment: .topTrailing) {
-                if showHistogram && !histogram.isEmpty { HistogramView(bins: histogram).padding(.top, cam.shootMode == .video ? 72 : 40).padding(8) }
+                if showHistogram && !histogram.isEmpty {
+                    HistogramView(bins: histogram)
+                        .padding(.top, (cam.shootMode == .video ? 72 : 40) + (videoFullActive && proOn ? 46 : 0)).padding(8)
+                }
             }
-            .overlay(alignment: .bottomTrailing) { if !videoFullActive { assistBadges } }
+            .overlay(alignment: .leading) {
+                if proOn && !(cam.isRecording && cam.recCanFlip && cam.videoKind != .dual) { toolStrip }
+            }
             .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay { countdownLayer }
@@ -847,7 +1029,7 @@ struct ContentView: View {
                 UIScreen.main.brightness = new == .off ? lightSavedBrightness : max(lightSavedBrightness, new.brightness)
             }
             .overlay(alignment: .top) {
-                if cam.shootMode == .video { videoInfoRow.padding(.top, videoFullActive ? 30 : 0) } else { infoRow }
+                if cam.shootMode == .video { videoInfoRow.padding(.top, videoFullActive ? (proOn ? 76 : 30) : 0) } else { infoRow }
             }
     }
 
@@ -889,8 +1071,6 @@ struct ContentView: View {
     private var infoRow: some View {
         HStack(spacing: 6) {
             lensBadge
-            if showsZoom { zoomChip }
-            if let f = framesText { infoPill(f, icon: cam.shootMode == .night && level.steady ? "camera.on.rectangle" : "square.stack.3d.up") }
             Spacer(minLength: 0)
             if nightSuggest {
                 Button { cam.setShootMode(.night) } label: { infoPill("MALAM?", icon: "moon.stars.fill", color: .yellow) }
@@ -1093,9 +1273,34 @@ struct ContentView: View {
                 .environment(\.colorScheme, .dark)
                 Text(String(format: "%.1fx", displayZoom)).fixedSize()
                     .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
+                if cam.videoKind != .dual && (cam.autoLensAvailable || cam.shootMode != .video) { zoomMenu }
             }
-            Slider(value: zoomBinding, in: 0...1).tint(.yellow)
-            if cam.videoKind == .dual { dualLensRow } else if cam.autoLensAvailable { lockRow }
+            if proOn { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
+            if cam.videoKind == .dual { dualLensRow }
+        }
+    }
+
+    /// kunci lensa + cara zoom / AI
+    private var zoomMenu: some View {
+        Menu {
+            if cam.autoLensAvailable {
+                Section("Lensa") {
+                    ForEach(lockOptions, id: \.self) { l in
+                        Button { cam.setAILensLock(l) } label: { check(lockLabel(l), cam.aiLensLock == l) }
+                            .disabled(cam.isCapturing || cam.isRecording)
+                    }
+                }
+            }
+            if cam.shootMode != .video { zoomMenuItems }
+        } label: {
+            let locked = cam.aiLensLock != nil && cam.aiLensLock != .front
+            Image(systemName: locked ? "lock.fill" : "ellipsis")
+                .font(.caption.bold())
+                .frame(width: 34, height: 28)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(locked ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+                .foregroundStyle(locked ? Color.yellow : Color.white)
+                .environment(\.colorScheme, .dark)
         }
     }
 
@@ -1245,30 +1450,12 @@ struct ContentView: View {
 
     // MARK: - laci Pro (ala GCam)
     private var proDrawer: some View {
-        VStack(spacing: 8) {
-            proRuler
-            HStack(spacing: 0) {
-                // v0.20: tab Aperture hanya di HP dengan aperture variabel (iPhone 18 Pro / Pro Max)
-                ForEach(ProControl.allCases.filter { $0 != .aperture || !cam.apertureStops.isEmpty }) { c in
-                    Button { proControl = c } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: c.icon).font(.body)
-                            Text(c.rawValue).font(.caption2)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(proControl == c ? Color.yellow.opacity(0.25) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(alignment: .topTrailing) {
-                            if isManual(c) { Circle().fill(Color.yellow).frame(width: 6, height: 6).padding(4) }
-                        }
-                    }
-                    .foregroundStyle(proControl == c ? .yellow : .white)
-                }
-            }
-        }
-        .padding(10)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .foregroundStyle(.white)
+        proRuler
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.yellow.opacity(0.6), lineWidth: 1))
+            .foregroundStyle(.white)
+            .environment(\.colorScheme, .dark)
     }
 
     private func isManual(_ c: ProControl) -> Bool {
@@ -1503,7 +1690,7 @@ struct ContentView: View {
                      ModeItem(id: "POTRET", mode: .portrait), ModeItem(id: "VIDEO", mode: .video),
                      ModeItem(id: "SINEMA", mode: .video, kind: .cinematic)]
         if cam.dualSupported { items.append(ModeItem(id: "DUAL", mode: .video, kind: .dual)) }
-        items.append(ModeItem(id: "PRO", mode: .pro))
+        items.append(ModeItem(id: "RAW", mode: .pro))
         return items
     }
 
@@ -1543,13 +1730,6 @@ struct ContentView: View {
                 .onChange(of: currentModeID) { _, id in
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
                 }
-            }
-            Button { withAnimation { showPro.toggle() } } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
-                    .font(.title3)
-                    .frame(width: 40, height: 34)
-                    .foregroundStyle(showPro || !cam.isAuto ? .yellow : .white)
             }
         }
         .frame(height: 36)
