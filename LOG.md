@@ -1627,3 +1627,19 @@ IMG_7295 AI Cepat 100 %, IMG_7296 AI Detail 100 %. Gambar: `data/output/zoom75_a
 - + AI 100 %: bergaya lukisan, tekstur karangan (Detail), bentuk tepi berubah (Cepat). Lebih buruk dari 50 %.
 Kesimpulan: olahan kita pada zoom Apple bersifat merapikan (tepi + noise), bukan menambah detail.
 50 % adalah titik yang wajar. Pengguna sempat menyetel Kekuatan AI ke 100 % - perlu dikembalikan ke 50 %.
+
+## 2026-11-15 - v0.31.0 build 79: percobaan cara zoom "Apple x5" (tumpuk 5 foto zoom Apple)
+
+Usul pengguna: pakai cara Apple lalu gabungkan beberapa frame / "hasil Apple di-drizzle lalu di-upscale".
+
+- `ZoomMethod.appleStack` ("Apple x5"), muncul di semua menu cara zoom.
+- Capture: 5 foto zoom Apple berurutan di kamera virtual (tiap foto sudah komposit Apple). Petunjuk "tahan HP ~3 detik".
+- `processAppleStack`: foto 2-5 disejajarkan ke foto 1 dengan `VNTranslationalImageRegistrationRequest` (geseran saja,
+  tanpa putaran), lalu dirata-rata dengan Core Image. Piksel yang bedanya > 0,12 (skala 0..1, setelah blur 3 px)
+  memakai foto 1; di bawah 0,05 dipakai penuh.
+- Hasil tumpukan diperkecil ke 2x "detail asli" foto tunggal (mis. 1074 px di 75x, dulu 537) lalu masuk jalur AI
+  yang sama. Catatan: dua hal berubah sekaligus (tumpukan + sumber AI 2x lebih besar).
+- Log: `Zoom Apple x5: WxH, geseran px:terpakai [tx,ty:nn% ...], t s, sumber AI n px`.
+  Bila "terpakai" mendekati 0 % di semua foto -> penyejajaran gagal (hasil = foto pertama saja).
+- Dugaan manfaat: noise turun, tepi bertangga berkurang; detail baru belum tentu (uji PC 20 frame RAW: tidak ada).
+- Build: run 43684070098 sukses. IPA: `data/ipa-v0.31.0/BaginCam-unsigned.ipa`. IPA v0.30.2 dihapus. Belum diuji di HP.
