@@ -1531,3 +1531,17 @@ Kenapa Apple lebih fokus/tajam (dari kode + log):
 Perubahan build 75: cara zoom **Auto** kini = zoom Apple di tele / crop >= 3x (dulu Super Res), Crop penuh di bawahnya.
 Setelan pengguna saat ini "Crop penuh" -> perlu diganti ke Auto atau Apple agar berlaku.
 Build: run 43678974725 sukses. IPA: `data/ipa-v0.29.4/BaginCam-unsigned.ipa`. IPA v0.29.3 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - v0.30.0 build 76: percobaan "fokus cara Apple, burst RAW cara kita"
+
+Usul pengguna: pelajari cara zoom Apple lalu kombinasikan dengan cara kita. Disepakati mulai dari percobaan 1.
+
+- `zoomedRefocus`: di jalur burst RAW zoom (crop >= 2x, pindah ke lensa fisik), setelah AF pertama di 1x,
+  lensa fisik di-zoom ke perbesaran sebenarnya (dibatasi maks perangkat/format), AF sekali lagi di tengah,
+  fokus dikunci, zoom dikembalikan ke 1x, jeda 0,15 s, baru burst RAW.
+- Log baru: `Fokus zoom (di-zoom Nx): posisi lensa a -> b, t s, selesai true/false`.
+  Kalau a dan b selalu sama, iOS tidak mempersempit area AF saat lensa fisik di-zoom -> percobaan gagal.
+- Hanya berlaku bila cara zoom = Super Res atau Crop penuh (Auto kini memakai zoom Apple).
+- Jepretan lebih lambat ~0,5-1 s. Fokus manual tidak terpengaruh.
+- Rencana lanjutan bila gagal: (2) gabung 3-5 foto zoom Apple, (3) detail Apple + pembersih burst kita.
+- Build: run 43679586286 sukses. IPA: `data/ipa-v0.30.0/BaginCam-unsigned.ipa`. IPA v0.29.4 dihapus. Belum diuji di HP.
