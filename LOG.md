@@ -1408,3 +1408,24 @@ Perbaikan (HDRPlus.metal, HDRPlusMerger.swift):
   (12 % sinyal + 3 sigma noise + 0,4 % rentang) diganti nilai acuan secara bertahap.
 - `DrizzleParams` ditambah black/range/noiseS/noiseO (dari `FreqConfig`); frame acuan diikat di buffer 4.
 - Build: run 43672179932 sukses. IPA: `data/ipa-v0.28.3/BaginCam-unsigned.ipa`. IPA v0.28.2 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - v0.28.4 build 70: cek build 69 + fokus objek jauh
+
+Laporan pengguna: "kalau fokusnya jauh susah banget".
+
+Cek build 69 (10:31-10:38, 20 foto zoom 23x-100x):
+- Kotak tempelan drizzle hilang (menara + kabel, IMG_7126/7127 bersih). Satu foto dedaunan masih ada pola
+  garis tegak halus (belum diselidiki).
+- Fokus: banyak ketukan fokus berulang di preview (25 ketukan dalam 1 menit, 10:35-10:36). Posisi lensa saat
+  jepret berubah-ubah 0,70-0,81 untuk adegan serupa. Di beberapa foto yang tajam justru daun/bunga di depan.
+- Penyebab 1: saat jepret zoom, app pindah ke lensa fisik lalu AF ulang di tengah -> fokus hasil ketukan dibuang.
+- Penyebab 2 (dugaan, tidak terukur dari log): area AF iOS lebih lebar dari bidang pandang 75x (1/15 frame tele),
+  jadi benda di luar layar ikut diperhitungkan dan yang dekat cenderung menang.
+
+Perubahan:
+- Fokus yang sudah terkunci lewat ketukan di preview dibawa ke lensa fisik (`setFocusModeLocked(lensPosition:)`),
+  tanpa AF ulang. Log: `Fokus zoom: memakai fokus ketukan di preview, posisi lensa x`.
+  BELUM TERBUKTI bahwa posisi lensa kamera virtual sama skalanya dengan lensa fisik - periksa di cek berikutnya.
+- Setelan baru "Jarak fokus" Auto / Jauh / Dekat (`autoFocusRangeRestriction`), ubin di laci (bagian mode) dan
+  lencana kuning "Fokus jauh" di preview (ketuk = kembali Auto). Log: `Jarak fokus: x, didukung true/false`.
+- Build: run 43673521440 sukses. IPA: `data/ipa-v0.28.4/BaginCam-unsigned.ipa`. IPA v0.28.3 dihapus. Belum diuji di HP.
