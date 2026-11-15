@@ -3034,7 +3034,7 @@ final class CameraManager: NSObject, ObservableObject {
         let prefix = burstAppleZoomAI ? "APPLEZOOM" : (burstMode == .aiZoom ? "AIZOOM"
             : (burstMode == .hdrplus ? (burstPortrait ? "POTRET_ZOOM" : (burstNight ? "MALAM_ZOOM" : "SUPERRES")) : "CROPZOOM"))
         let mfTag = multiFrame > 0 ? "_MF\(multiFrame)" : ""
-        let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(burstSRModel == .detail ? "D" : "C")" : ""
+        let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(burstSRModel.tag)" : ""
         let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, burstLensName, mfTag, aiTag, res.label)
         save(out as Data, fileName: name, dir: dir)
         Log.sr.info("AI Zoom \(tz, privacy: .public)x lensa \(self.burstLensName, privacy: .public) crop \(Double(self.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")

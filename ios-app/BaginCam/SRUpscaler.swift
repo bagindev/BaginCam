@@ -8,8 +8,23 @@ import Foundation
 enum SRModel: String, CaseIterable, Identifiable {
     case fast = "Cepat"     // realesr-general-x4v3 (SRVGGNetCompact, 1.2 M param)
     case detail = "Detail"  // RealESRGAN_x4plus (RRDBNet, 16.7 M param)
+    case sharp = "Tajam"    // 4xNomos8kSC (RRDBNet, 16.7 M param, CC BY 4.0, Philip Hofmann) - v0.32
     var id: String { rawValue }
-    var fileName: String { self == .fast ? "BaginCamSR_x4_256" : "BaginCamSRplus_x4_256" }
+    var fileName: String {
+        switch self {
+        case .fast: return "BaginCamSR_x4_256"
+        case .detail: return "BaginCamSRplus_x4_256"
+        case .sharp: return "BaginCamSRnomos_x4_256"
+        }
+    }
+    /// huruf di nama file hasil (_AIC / _AID / _AIT)
+    var tag: String {
+        switch self {
+        case .fast: return "C"
+        case .detail: return "D"
+        case .sharp: return "T"
+        }
+    }
 }
 
 /// Resolusi output (4:3, sisi panjang).
