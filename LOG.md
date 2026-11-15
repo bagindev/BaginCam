@@ -1545,3 +1545,20 @@ Usul pengguna: pelajari cara zoom Apple lalu kombinasikan dengan cara kita. Dise
 - Jepretan lebih lambat ~0,5-1 s. Fokus manual tidak terpengaruh.
 - Rencana lanjutan bila gagal: (2) gabung 3-5 foto zoom Apple, (3) detail Apple + pembersih burst kita.
 - Build: run 43679586286 sukses. IPA: `data/ipa-v0.30.0/BaginCam-unsigned.ipa`. IPA v0.29.4 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - v0.30.1 build 77: cek build 76, percobaan fokus di-zoom GAGAL dan dicabut
+
+Cek build 76 (12:11-12:13, 7 foto 75x, adegan sama: lampu jalan + dedaunan):
+- 5 jepretan Crop penuh (HDR+, 20 frame): `Fokus zoom (di-zoom 15.0x): posisi lensa a -> a` di SEMUA jepretan
+  (0,745->0,745; 0,749->0,749; 0,780->0,780; 0,776->0,776; 0,780->0,780), selesai dalam 0,31 s.
+  AF kedua dengan lensa fisik di-zoom tidak mengubah fokus sama sekali.
+- 2 jepretan cara zoom Apple (IMG_7178 lampu, IMG_7179 daun): tajam.
+- Lampu: Crop penuh (IMG_7176/7177) lunak, Apple (IMG_7178) tajam. Daun: Crop penuh (IMG_7180-7182) buram dan
+  berkabut, Apple (IMG_7179) tajam. Zoom dan adegan sama -> perbandingan adil.
+- Sumber untuk AI di 75x: Apple 537x403, jalur kita 268x200 nyata (400x536 setelah drizzle).
+
+Kesimpulan: area fokus bukan pembeda (atau tidak bisa dipengaruhi lewat zoom lensa fisik di iOS 18).
+Selisihnya ada di olahan / jumlah piksel sumber. `zoomedRefocus` dihapus.
+Belum diketahui: di tahap mana jalur RAW kita kehilangan ketajaman (frame RAW itu sendiri, merge, drizzle, atau
+develop). Perlu satu burst dengan "Frame DNG" nyala untuk dianalisis di PC.
+Build: run 43680254491 sukses. IPA: `data/ipa-v0.30.1/BaginCam-unsigned.ipa`. IPA v0.30.0 dihapus. Belum diuji di HP.
