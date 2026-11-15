@@ -106,6 +106,7 @@ struct ControlDrawer: View {
             }
         }
         timerTile
+        focusRangeTile
         menuTile(cam.aspect.rawValue, "Rasio", on: cam.aspect != .r43) {
             ForEach(AspectRatio.allCases) { a in
                 pick(a.rawValue, cam.aspect == a) { cam.aspect = a }
@@ -151,9 +152,19 @@ struct ControlDrawer: View {
         }
         toggleTile("arrow.up.left.and.arrow.down.right", "Layar penuh", videoFull) { videoFull.toggle() }
         timerTile
+        focusRangeTile
         toggleTile("sparkles", "AI usai rekam", cam.aiAfterRecord) { cam.aiAfterRecord.toggle() }
         toggleTile("wand.and.stars", "AI Upscale", false) { open(.upscale) }
             .disabled(cam.isRecording)
+    }
+
+    private var focusRangeTile: some View {
+        menuTile(cam.focusRange.rawValue, "Jarak fokus", on: cam.focusRange != .auto) {
+            ForEach(CameraManager.FocusRange.allCases) { r in
+                pick(r.rawValue, cam.focusRange == r) { cam.focusRange = r }
+            }
+            Text("Jauh: autofokus mengabaikan benda dekat (daun, kabel di depan). Dekat: sebaliknya.")
+        }
     }
 
     private var timerTile: some View {

@@ -60,6 +60,14 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// batas jarak autofokus (zoom jauh: daun / kabel di depan sering merebut fokus dari objek jauh)
+    enum FocusRange: String, CaseIterable, Identifiable {
+        case auto = "Auto"
+        case far = "Jauh"
+        case near = "Dekat"
+        var id: String { rawValue }
+    }
+
     enum BeautyLevel: String, CaseIterable, Identifiable {
         case off = "Mati"
         case standard = "Standard"
@@ -374,6 +382,30 @@ final class CameraManager: NSObject, ObservableObject {
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
+    @Published var focusRange: FocusRange = Prefs.raw("focusRange", .auto) {
+        didSet {
+            Prefs.set("focusRange", focusRange.rawValue)
+            let r = focusRange
+            sessionQueue.async {
+                self.focusRangeS = r
+                guard let d = self.device else { return }
+                self.applyFocusRange(d)
+                // fokus ulang supaya batas baru langsung terasa
+                if !self.manualS.focus, (try? d.lockForConfiguration()) != nil {
+                    if d.isFocusModeSupported(.continuousAutoFocus) { d.focusMode = .continuousAutoFocus }
+                    d.unlockForConfiguration()
+                }
+                Log.camera.info("Jarak fokus: \(r.rawValue, privacy: .public), didukung \(d.isAutoFocusRangeRestrictionSupported, privacy: .public) (\(d.localizedName, privacy: .public))")
+            }
+        }
+    }
+    private var focusRangeS: FocusRange = Prefs.raw("focusRange", .auto)
+
+    private func applyFocusRange(_ d: AVCaptureDevice) {
+        guard d.isAutoFocusRangeRestrictionSupported, (try? d.lockForConfiguration()) != nil else { return }
+        d.autoFocusRangeRestriction = focusRangeS == .far ? .far : (focusRangeS == .near ? .near : .none)
+        d.unlockForConfiguration()
+    }
     var faceBeauty: Bool { beautyLevel.active }
     @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) {
         didSet { Prefs.set("bokehIntensity", bokehIntensity); let v = bokehIntensity; videoQueue.async { self.cineIntensity = v } }
@@ -691,6 +723,7 @@ final class CameraManager: NSObject, ObservableObject {
             session.addInput(input)
             currentInput = input
             device = d
+            applyFocusRange(d)
         } else if let cur = currentInput, session.canAddInput(cur) {
             session.addInput(cur)
         }
@@ -2249,6 +2282,9 @@ final class CameraManager: NSObject, ObservableObject {
                     if d.maxWhiteBalanceGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 {
                         tt = d.temperatureAndTintValues(for: Self.clamp(g, d.maxWhiteBalanceGain))
                     }
+                    // fokus yang sudah dikunci lewat ketukan di preview (lensa sama) dipakai apa adanya
+                    let keepFocus: Float? = (!self.manualS.focus && d.focusMode == .locked && !d.isAdjustingFocus)
+                        ? d.lensPosition : nil
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
@@ -2313,7 +2349,10 @@ final class CameraManager: NSObject, ObservableObject {
                                                         completionHandler: nil)
                         }
                         if !self.manualS.focus {
-                            if zoomed && crop >= 2 && p.isFocusModeSupported(.autoFocus) {
+                            if let kf = keepFocus, zoomed, kf.isFinite, p.isLockingFocusWithCustomLensPositionSupported {
+                                p.setFocusModeLocked(lensPosition: min(max(kf, 0), 1), completionHandler: nil)
+                                Log.camera.info("Fokus zoom: memakai fokus ketukan di preview, posisi lensa \(Double(kf), format: .fixed(precision: 3), privacy: .public)")
+                            } else if zoomed && crop >= 2 && p.isFocusModeSupported(.autoFocus) {
                                 // zoom jauh: hasil hanya bagian tengah sensor -> fokus sekali di tengah, lalu ditunggu
                                 // sampai selesai (AF kontinu + jeda 0,5 s sering terkunci saat masih mencari, IMG_7108)
                                 if p.isFocusPointOfInterestSupported { p.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }

@@ -1071,6 +1071,11 @@ struct ContentView: View {
     private var infoRow: some View {
         HStack(spacing: 6) {
             lensBadge
+            if cam.focusRange != .auto {
+                Button { cam.focusRange = .auto } label: {
+                    infoPill("Fokus " + cam.focusRange.rawValue.lowercased(), icon: "scope", color: .yellow)
+                }
+            }
             Spacer(minLength: 0)
             if nightSuggest {
                 Button { cam.setShootMode(.night) } label: { infoPill("MALAM?", icon: "moon.stars.fill", color: .yellow) }
