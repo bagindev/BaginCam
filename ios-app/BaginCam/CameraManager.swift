@@ -2203,6 +2203,7 @@ final class CameraManager: NSObject, ObservableObject {
                 nativeLong = self.maxDimensions(of: d).map { Int(max($0.width, $0.height)) } ?? 4032
             }
             let crop = max(1, tz * virtualWide / base)
+            var focusWait = false
             let canZoom = m == .hdrplus || m == .heif
             let zoomed = canZoom && Self.usesVirtual(m) && crop > 1.05
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
@@ -2311,7 +2312,17 @@ final class CameraManager: NSObject, ObservableObject {
                             p.setWhiteBalanceModeLocked(with: Self.clamp(p.deviceWhiteBalanceGains(for: tt), p.maxWhiteBalanceGain),
                                                         completionHandler: nil)
                         }
-                        if p.isFocusModeSupported(.continuousAutoFocus) && !self.manualS.focus { p.focusMode = .continuousAutoFocus }
+                        if !self.manualS.focus {
+                            if zoomed && crop >= 2 && p.isFocusModeSupported(.autoFocus) {
+                                // zoom jauh: hasil hanya bagian tengah sensor -> fokus sekali di tengah, lalu ditunggu
+                                // sampai selesai (AF kontinu + jeda 0,5 s sering terkunci saat masih mencari, IMG_7108)
+                                if p.isFocusPointOfInterestSupported { p.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
+                                p.focusMode = .autoFocus
+                                focusWait = true
+                            } else if p.isFocusModeSupported(.continuousAutoFocus) {
+                                p.focusMode = .continuousAutoFocus
+                            }
+                        }
                         p.unlockForConfiguration()
                     }
                     self.switchedToPhysicalForMF = true
@@ -2402,11 +2413,26 @@ final class CameraManager: NSObject, ObservableObject {
                 Log.camera.info("Lampu isi: \(screenFill ? "layar (kamera depan)" : "senter", privacy: .public), senter nyala \(self.burstTorch, privacy: .public)")
             }
             // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
+            let fw = focusWait
             self.sessionQueue.asyncAfter(deadline: .now() + delay) {
-                if isMulti { self.lockCurrent() }
-                self.sessionQueue.asyncAfter(deadline: .now() + (isMulti ? 0.15 : 0)) { self.captureNext() }
+                self.afterFocus(wait: fw) {
+                    if isMulti { self.lockCurrent() }
+                    self.sessionQueue.asyncAfter(deadline: .now() + (isMulti ? 0.15 : 0)) { self.captureNext() }
+                }
             }
         }
+    }
+
+    /// Tunggu AF selesai (maks 1,5 s) sebelum fokus dikunci untuk burst zoom jauh.
+    private func afterFocus(wait: Bool, started: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(), _ done: @escaping () -> Void) {
+        guard wait, let d = device else { done(); return }
+        let dt = CFAbsoluteTimeGetCurrent() - started
+        if !d.isAdjustingFocus || dt > 1.5 {
+            Log.camera.info("Fokus zoom: tunggu tambahan \(dt, format: .fixed(precision: 2), privacy: .public) s, selesai \(!d.isAdjustingFocus, privacy: .public), posisi lensa \(Double(d.lensPosition), format: .fixed(precision: 3), privacy: .public)")
+            done()
+            return
+        }
+        sessionQueue.asyncAfter(deadline: .now() + 0.05) { self.afterFocus(wait: true, started: started, done) }
     }
 
     /// v0.18.3: install() (pindah ke lensa fisik untuk HDR+/Super Res) mengembalikan sudut koneksi ke 90 ->
