@@ -1695,3 +1695,25 @@ Semua kandidat CC-BY 4.0 (Phhofm / Phips, Hugging Face, safetensors). Di campura
 Kesimpulan: tidak ada model yang menambah detail; yang berubah hanya gaya. Kandidat terbaik sebagai pengganti
 "Detail" adalah 4xNomos8kSC (arsitektur sama dengan x4plus -> konversi lewat workflow yang ada). Belum dikonversi.
 Model unduhan ada di %TEMP%\claude\srmodels (tidak disimpan di D:).
+
+## 2026-11-15 - v0.32.0 build 81: model AI "Tajam" (4xNomos8kSC) + bahan uji Colab
+
+Permintaan pengguna: coba Nomos8kSC; uji RAW di Google Colab.
+
+Model "Tajam":
+- `tools/sr_model/convert_sr.py`: baca safetensors, petakan kunci ESRGAN lama (model.1.sub.N.RDBj.convk.0) ke
+  nama RRDBNet basicsr; opsi --src / --author / --license. Diverifikasi di PC: keluaran identik dengan spandrel.
+- Workflow `convert-sr-model.yml`: unduh `4xNomos8kSC.safetensors` (Hugging Face Phips/4xNomos8kSC, SHA-256
+  9e158a60...12122c), konversi fp16, PSNR Core ML vs PyTorch 45,9 dB. Run 43686337911 (~12 menit).
+- `ios-app/BaginCam/Models/BaginCamSRnomos_x4_256.mlmodelc` (33 MB) + `LICENSE-4xNomos8kSC.txt` (CC BY 4.0,
+  Philip Hofmann). `SRModel.sharp = "Tajam"`, tag nama file `_AIT`. Muncul di semua menu model AI.
+- IPA naik dari 36,9 MB ke ukuran baru (lihat di bawah).
+Catatan untuk pengguna: Cepat & Detail yang terpasang sama-sama 4x; tidak ada catatan versi 2x pernah dipasang.
+Varian lain dari pembuat yang sama: Nomos8kSC HAT-L / HAT-S / SRFormer; NomosUni 2x (SPAN, Compact, ESRGAN).
+
+Uji RAW di Colab (belum dijalankan; perlu akun Google pengguna):
+- `tools/BaginCam_uji_superres_burst.ipynb`: pasang Jamy-L/Handheld-Multi-Frame-Super-Resolution (MIT), unggah zip
+  burst, `handheld --scale 2 --robustness.no-noise-correction`, potong bidang 75x, unduh. BELUM DIUJI.
+- Bahan: `data/bursts/colab/burst_tripod.zip` (burst 123257) dan `burst_tangan.zip` (burst 122337), 430 MB di D:.
+
+Build: run 43687776637 sukses. IPA: `data/ipa-v0.32.0/BaginCam-unsigned.ipa`. IPA v0.31.1 dihapus. Belum diuji di HP.
