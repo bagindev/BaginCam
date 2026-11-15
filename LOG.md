@@ -1717,3 +1717,16 @@ Uji RAW di Colab (belum dijalankan; perlu akun Google pengguna):
 - Bahan: `data/bursts/colab/burst_tripod.zip` (burst 123257) dan `burst_tangan.zip` (burst 122337), 430 MB di D:.
 
 Build: run 43687776637 sukses. IPA: `data/ipa-v0.32.0/BaginCam-unsigned.ipa`. IPA v0.31.1 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - Colab: galat di `compute_hessian` (kernel CUDA pertama), notebook v2
+
+Laporan pengguna (tangkapan layar): sel 3 notebook gagal setelah "Processing reference image", jejak berakhir di
+`ICA.py compute_hessian[...]` -> `numba_cuda ... dispatcher.call`. Baris pesan galat terakhir terpotong di gambar.
+Analisis sumber (commit 27c4655): `compute_hessian` adalah kernel numba-CUDA PERTAMA yang dikompilasi (langkah
+sebelumnya memakai torch), tipe argumennya benar -> dugaan kuat masalah lingkungan CUDA/NVVM numba di Colab
+(mis. paket cu12 hasil `sed` tidak cocok dengan CUDA Colab), bukan data burst. BELUM TERBUKTI - menunggu pesan galat.
+Perubahan `tools/BaginCam_uji_superres_burst.ipynb` (+ salinan di `data/bursts/colab/`):
+- sel pasang: pilih `numba-cuda[cu12|cu13]` mengikuti `torch.version.cuda`, tampilkan 8 baris akhir pip;
+- sel baru "1b. Uji GPU": versi python/torch/numba, driver, daftar paket CUDA, kernel numba kecil (BERHASIL/GAGAL);
+- sel jalankan: keluaran ke `/content/log.txt`, cetak kode keluar + 40 baris terakhir.
+Notebook v2 BELUM DIUJI.
