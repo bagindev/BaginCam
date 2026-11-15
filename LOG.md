@@ -1429,3 +1429,17 @@ Perubahan:
 - Setelan baru "Jarak fokus" Auto / Jauh / Dekat (`autoFocusRangeRestriction`), ubin di laci (bagian mode) dan
   lencana kuning "Fokus jauh" di preview (ketuk = kembali Auto). Log: `Jarak fokus: x, didukung true/false`.
 - Build: run 43673521440 sukses. IPA: `data/ipa-v0.28.4/BaginCam-unsigned.ipa`. IPA v0.28.3 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - v0.29.0 build 71: zoom jauh - burst 20 frame + pilih frame tertajam
+
+Permintaan pengguna: metode untuk zoom ekstrem. Disetujui: lebih banyak frame + buang frame goyang.
+
+- Zoom dengan crop >= 3x dari lensa (mis. 15x ke atas di tele 5x), bukan MALAM: burst 20 frame (dulu 6-15).
+  Petunjuk di layar: "Zoom jauh: tahan HP (20 frame)".
+- `pickSharp` (lucky imaging): ketajaman tiap frame diukur di area crop tengah (Laplacian kanal hijau /
+  kecerahan^2). Frame tertajam jadi acuan merge + drizzle; frame dengan skor < 80 % dari yang terbaik dibuang,
+  minimal 8 frame dipakai. Log: `Frame tertajam: dipakai x dari 20, acuan frame n (frame:skor% ...)`.
+- Batas yang sudah disampaikan ke pengguna: tele 5x 12MP hanya punya detail nyata sampai ~25-30x.
+- Risiko belum diuji: memori 20 frame RAW (~24 MB per frame), waktu proses lebih lama.
+- Push sempat gagal 4x (github.com tidak terjangkau dari PC, situs lain normal), berhasil setelah diulang.
+- Build: run 43674438227 sukses. IPA: `data/ipa-v0.29.0/BaginCam-unsigned.ipa`. IPA v0.28.4 dihapus. Belum diuji di HP.
