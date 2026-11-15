@@ -1614,3 +1614,16 @@ Kesimpulan: tidak ada pembacaan sensor khusus / piksel tambahan. Apple menggabun
 dan memperbesarnya (super-resolusi multi-frame) - konsep sama dengan drizzle kita, eksekusinya jauh lebih baik.
 Catatan: kode kita memperkecil keluaran Apple 12MP ke ~537 px lalu AI x4 -> hasil bergaya lukisan. Uji murah yang
 belum dilakukan: cara zoom Apple dengan AI zoom MATI (keluaran Apple apa adanya).
+
+## 2026-11-15 - Cek build 78: zoom Apple murni vs + AI (tanpa perubahan kode)
+
+Sampel 12:58-13:00, 75x, cara zoom Apple, tandon + genteng (dipegang tangan, bidang sedikit bergeser):
+IMG_7291/7292 AI mati (keluaran Apple 12MP apa adanya), IMG_7294 AI Cepat 50 %, IMG_7293 AI Detail 50 %,
+IMG_7295 AI Cepat 100 %, IMG_7296 AI Detail 100 %. Gambar: `data/output/zoom75_apple_vs_ai_1115.jpg`.
+
+- Apple murni: paling jujur, tapi di 100 % tepi bertangga / berkotak dan ada bintik.
+- + AI 50 % (Cepat maupun Detail): tepi bersih, bintik hilang, jumlah detail nyata setara Apple murni.
+  Cepat 0,17 s, Detail 1,3 s; beda mutu keduanya di 50 % kecil.
+- + AI 100 %: bergaya lukisan, tekstur karangan (Detail), bentuk tepi berubah (Cepat). Lebih buruk dari 50 %.
+Kesimpulan: olahan kita pada zoom Apple bersifat merapikan (tepi + noise), bukan menambah detail.
+50 % adalah titik yang wajar. Pengguna sempat menyetel Kekuatan AI ke 100 % - perlu dikembalikan ke 50 %.
