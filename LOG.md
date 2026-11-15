@@ -1488,3 +1488,20 @@ Riset:
 
 Perubahan build 74: hasil 12MP hanya untuk zoom di atas 50x (75x, 100x); 50x ke bawah ikut setelan resolusi.
 Build: run 43677126743 sukses. IPA: `data/ipa-v0.29.3/BaginCam-unsigned.ipa`. IPA v0.29.2 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - Riset: manfaat iOS 26 untuk BaginCam (tanpa perubahan kode)
+
+Sumber: dokumentasi Apple, sesi WWDC25 251 / 253 / 319, diff header AVFoundation Xcode 26 (terbaca sebagian).
+- Fokus & eksposur: `focusRectOfInterest`, `exposureRectOfInterest` (ukuran area bisa diatur) -> zoom jauh.
+- Video sinematik: `AVCaptureDeviceInput.isCinematicVideoCaptureEnabled`, `simulatedAperture`,
+  `setCinematicVideoTrackingFocus` / `setCinematicVideoFixedFocus`. Batas: kamera Dual Wide belakang + TrueDepth
+  depan, 1080p / 4K hanya 30 fps, butuh cahaya cukup. Video data output menerima frame dengan bokeh jadi.
+- Audio: mikrofon AirPods kualitas tinggi (`configuresApplicationAudioSessionForBluetoothHighQualityRecording`),
+  pemilih mikrofon `AVInputPickerInteraction`, Spatial Audio lewat AVAssetWriter
+  (`AVCaptureSpatialAudioMetadataSampleGenerator`).
+- Lain: shutter lewat batang AirPods (H2), stabilisasi `lowLatency`, frame rate terkunci
+  (`isLockedVideoFrameDurationSupported`), WB kunci langsung dari Kelvin.
+- Hanya iPhone 17: Apple Log 2, genlock / external sync, rasio dinamis kamera depan.
+- Risiko (laporan pengguna di forum Apple, belum terverifikasi): iPhone 16 Pro Max kamera hitam / beku setelah
+  iOS 26.1-26.2, foto bulan kurang detail, fokus astrofotografi rusak. Ada sesi WWDC26 (iOS 27) yang belum diriset.
+- Saran ke pengguna: jangan naik iOS hanya untuk ini; coba dulu Jarak fokus Jauh + tes Apple vs HDR+.
