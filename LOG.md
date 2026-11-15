@@ -1663,3 +1663,35 @@ C. Sistem Apple
 - VideoToolbox VTSuperResolutionScaler (iOS 26): punya model untuk gambar diam; batas lebar masukan ~1920 px
   (sumber sekunder). Hanya iOS 26.
 Saran ke pengguna: uji model AI pengganti di PC memakai sumber zoom Apple yang sudah ada sebelum menyentuh app.
+
+## 2026-11-15 - v0.31.1 build 80: cek "Apple x5", perbaikan drizzle kedua, uji model AI pengganti di PC
+
+Cek build 79 (13:14-13:15, 75x, dipegang tangan). Gambar: `data/output/zoom75_apple_x5_1115.jpg`.
+- Apple x5 jalan: geseran antar foto Apple 7-110 px (satu burst sampai 558/608 px), bagian terpakai 27-81 %.
+- Apple x5 + Detail (IMG_7298) vs Apple 1 foto + Detail (IMG_7297): x5 TIDAK lebih baik - tepi bertangga dan
+  garis ganda di lengan besi. Sumber AI 2x lebih besar membawa tangga pembesaran Apple, dan AI menganggapnya tepi.
+  Artinya pengecilan ke ~560 px sebelum AI justru berguna (meratakan tangga Apple).
+- Crop penuh HDR+ build 79 (IMG_7302): garis sisir hilang, tapi muncul pinggiran warna toska/jingga di tepi.
+  Penyebab: perbaikan v0.30.2 merata-rata kanal dengan jumlah tap berbeda (R 1, G 2, B 4).
+
+Perubahan build 80:
+- Drizzle: tiap kanal Bayer diambil di posisinya sendiri saat sampling (`drizzle_channel`, grid G1 dibaca di
+  px - 0,25, G2 di py - 0,25, B keduanya), interpolasi sama untuk semua kanal; `drizzle_to_bayer` kembali polos.
+- Apple x5: sumber AI kembali sama dengan foto tunggal (bukan 2x).
+- Build: run 43685271052 sukses. IPA: `data/ipa-v0.31.1/BaginCam-unsigned.ipa`. IPA v0.31.0 dihapus. Belum diuji di HP.
+
+Uji model AI pengganti (PC, CPU, torch + spandrel; skrip `tools/sr_compare.py`; sumber IMG_7291 Apple murni 75x
+diperkecil ke 563 px seperti di app; gambar `data/output/model_ai_banding_100_1115.jpg` dan `..._50_1115.jpg`):
+| Model | Arsitektur | Param | CPU (area 249x227) | Hasil 100 % |
+|---|---|---|---|---|
+| realesr-general-x4v3 (Cepat sekarang) | Compact | 1,2 M | 0,6 s | bersih, agak lukisan |
+| RealESRGAN_x4plus (Detail sekarang) | RRDB | 16,7 M | 8,2 s | paling tegas, tekstur karangan |
+| 4xLSDIRCompactC3 | Compact | 0,6 M | 0,3 s | lunak |
+| 4xNomosUni_span_multijpg | SPAN | 2,2 M | 0,3 s | lunak |
+| 4xNomosWebPhoto_RealPLKSR | PLKSR | 7,4 M | 3,7 s | tangga Apple dipertahankan (berkotak) |
+| 4xNomosWebPhoto_esrgan | RRDB | 16,7 M | 7,3 s | sama, berkotak |
+| 4xNomos8kSC | RRDB | 16,7 M | 6,6 s | tegas dan bersih, tekstur karangan lebih sedikit dari x4plus |
+Semua kandidat CC-BY 4.0 (Phhofm / Phips, Hugging Face, safetensors). Di campuran 50 % bedanya kecil.
+Kesimpulan: tidak ada model yang menambah detail; yang berubah hanya gaya. Kandidat terbaik sebagai pengganti
+"Detail" adalah 4xNomos8kSC (arsitektur sama dengan x4plus -> konversi lewat workflow yang ada). Belum dikonversi.
+Model unduhan ada di %TEMP%\claude\srmodels (tidak disimpan di D:).
