@@ -1465,3 +1465,26 @@ Perubahan:
 - Tetap: burst 20 frame, setelan Jarak fokus Auto/Jauh/Dekat.
 - Build: run 43676224986 (72) dan 43676375462 (73) sukses. IPA: `data/ipa-v0.29.2/BaginCam-unsigned.ipa`
   (build 72 tidak diunduh; IPA v0.29.0 dihapus). Belum diuji di HP.
+
+## 2026-11-15 - v0.29.3 build 74: 12MP hanya di atas 50x + riset zoom jauh
+
+Permintaan pengguna: riset ulang metode detail & fokus di zoom tinggi; kenapa foto malam 50x dulu bagus tapi
+siang aneh; aturan 12MP mulai di atas 50x.
+
+Temuan dari log lama (13-14 Nov, build 50, IMG_7050-7055 dan 13 Nov 21:47-21:49):
+- Foto malam 50x itu `mode HEIF, 1 frame, cara zoom Crop penuh`: SATU foto lensa tele hasil proses Apple
+  (4032x3024), di-crop 402x302, lalu AI x4. Bukan burst RAW.
+- Foto siang hari ini `mode HDR+, 6-20 frame`: burst Bayer RAW -> merge + drizzle + develop buatan sendiri.
+  Jalur ini dipaksa setiap kali proses foto = HDR+ dan cara zoom = Crop penuh (log "Crop penuh gelap" muncul
+  juga saat terang, ISO x t 0,1 - nama lognya menyesatkan).
+- Jadi bedanya jalur proses, bukan siang/malam. Belum ada A/B adegan sama, jadi belum terbukti mana yang lebih baik.
+
+Riset:
+- Google "Handheld Multi-Frame Super-Resolution" (Wronski dkk. 2019, dasar Super Res Zoom Pixel): burst RAW
+  digabung langsung ke RGB tanpa demosaic terpisah, dengan penolakan gerak lokal. Punya kita: drizzle per tile
+  lalu demosaic biasa - lebih sederhana.
+- Fokus: `focusRectOfInterest` (atur UKURAN area fokus) baru ada di iOS 26; HP pengguna iOS 18.7.8.
+  Di iOS 18 hanya titik fokus + `autoFocusRangeRestriction` (sudah dipasang sebagai setelan Jarak fokus).
+
+Perubahan build 74: hasil 12MP hanya untuk zoom di atas 50x (75x, 100x); 50x ke bawah ikut setelan resolusi.
+Build: run 43677126743 sukses. IPA: `data/ipa-v0.29.3/BaginCam-unsigned.ipa`. IPA v0.29.2 dihapus. Belum diuji di HP.
