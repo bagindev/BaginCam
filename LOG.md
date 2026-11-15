@@ -1505,3 +1505,29 @@ Sumber: dokumentasi Apple, sesi WWDC25 251 / 253 / 319, diff header AVFoundation
 - Risiko (laporan pengguna di forum Apple, belum terverifikasi): iPhone 16 Pro Max kamera hitam / beku setelah
   iOS 26.1-26.2, foto bulan kurang detail, fokus astrofotografi rusak. Ada sesi WWDC26 (iOS 27) yang belum diriset.
 - Saran ke pengguna: jangan naik iOS hanya untuk ini; coba dulu Jarak fokus Jauh + tes Apple vs HDR+.
+
+## 2026-11-15 - v0.29.4 build 75: cek build 74 (Apple vs HDR+) + Auto = zoom Apple
+
+Laporan pengguna: hasil Apple lebih fokus; pembanding: foto gedung malam "Western Sydney University".
+
+Data:
+- Jumat 13 Nov 21:47-21:49, IMG_7030-7035 (build lama): `mode HEIF, 1 frame, cara zoom Crop penuh` 25-50x.
+  Satu foto tele olahan Apple (4032x3024) di-crop; tulisan gedung terbaca jelas.
+- Hari ini 11:41-11:43, IMG_7160-7165: `cara zoom Apple`, mode HEIF, 1 frame, 50-100x. Jepret di kamera virtual
+  pada zoom sebenarnya. Sumber untuk AI: 844x633 (50x), 563x422 (75x), 512x384 (100x).
+- Hari ini 11:44-11:47, IMG_7166-7175: `mode HDR+`, 20 frame, 100x, Crop penuh. Sumber 296x400, hasil 12MP.
+- Lampu jalan: Apple 75x (IMG_7162) genteng & detail lampu tajam; HDR+ 100x (IMG_7166/7167/7170) lunak dan
+  bergelombang. Tandon: Apple 75x (IMG_7161/7163) lebih tajam dari HDR+ (IMG_7171). Zoom tidak sama persis
+  (75x vs 100x), tapi selisih mutunya jauh lebih besar dari selisih zoom.
+- Jarak fokus Jauh dicoba pengguna 11:44:58-11:45:42 (3 jepretan HDR+ 100x): posisi lensa 0,78-0,79, tidak
+  terlihat beda berarti di foto.
+
+Kenapa Apple lebih fokus/tajam (dari kode + log):
+1. Jepret di kamera virtual pada zoom sebenarnya -> fokus & eksposur dinilai di bidang yang terlihat.
+   Jalur kita pindah ke lensa fisik zoom 1x -> fokus dinilai di bidang 10-20x lebih lebar.
+2. Sumber yang diterima AI ~2x lebih besar per sisi (zoom digital Apple sudah multi-frame).
+3. Olahan Apple (Deep Fusion, penajaman, koreksi lensa) vs merge + drizzle + develop kita.
+
+Perubahan build 75: cara zoom **Auto** kini = zoom Apple di tele / crop >= 3x (dulu Super Res), Crop penuh di bawahnya.
+Setelan pengguna saat ini "Crop penuh" -> perlu diganti ke Auto atau Apple agar berlaku.
+Build: run 43678974725 sukses. IPA: `data/ipa-v0.29.4/BaginCam-unsigned.ipa`. IPA v0.29.3 dihapus. Belum diuji di HP.
