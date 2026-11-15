@@ -406,32 +406,16 @@ struct DrizzleParams {
     uint outW, outH;       // ukuran output plane (2x crop superpixel)
     float cropX, cropY;    // posisi crop di koordinat superpixel (plane)
     uint antx, anty;       // ukuran grid alignment tile
+    float black, range;    // level hitam & rentang data (0 = tidak diketahui)
+    float noiseS, noiseO;  // model noise ternormalisasi: var = S*x + O
 };
 
-kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
-                             device const float2*   align [[buffer(1)]],
-                             device float4*         acc   [[buffer(2)]],
-                             constant DrizzleParams& p    [[buffer(3)]],
-                             uint2 gid [[thread_position_in_grid]])
+// rata-rata bilinear 4 superpixel (R, G1, G2, B) di posisi plane (px, py)
+static inline float4 drizzle_sample(device const ushort* raw, uint W, int pw, int ph, float px, float py)
 {
-    if (gid.x >= p.outW || gid.y >= p.outH) return;
-    const float refPX = p.cropX + float(gid.x) * 0.5f;
-    const float refPY = p.cropY + float(gid.y) * 0.5f;
-
-    // alignment tile terdekat
-    const uint tx = min(uint(max(0.0f, refPX) * 2.0f * float(p.antx) / float(p.rawW)), p.antx - 1);
-    const uint ty = min(uint(max(0.0f, refPY) * 2.0f * float(p.anty) / float(p.rawH)), p.anty - 1);
-    const float2 a = align[ty * p.antx + tx];
-
-    const float srcPX = refPX + a.x;
-    const float srcPY = refPY + a.y;
-    const int pw = int(p.rawW / 2), ph = int(p.rawH / 2);
-    if (srcPX < 0.0f || srcPY < 0.0f || srcPX >= float(pw - 1) || srcPY >= float(ph - 1)) return;
-
-    const int ix = clamp(int(floor(srcPX)), 0, pw - 2);
-    const int iy = clamp(int(floor(srcPY)), 0, ph - 2);
-    const float fx = srcPX - float(ix), fy = srcPY - float(iy);
-    const uint W = p.rawW;
+    const int ix = clamp(int(floor(px)), 0, pw - 2);
+    const int iy = clamp(int(floor(py)), 0, ph - 2);
+    const float fx = clamp(px - float(ix), 0.0f, 1.0f), fy = clamp(py - float(iy), 0.0f, 1.0f);
     const uint x0 = uint(ix)*2, y0 = uint(iy)*2, x1 = x0+2, y1 = y0+2;
     float4 v00 = float4(float(raw[y0*W+x0]),   float(raw[y0*W+x0+1]),
                          float(raw[(y0+1)*W+x0]), float(raw[(y0+1)*W+x0+1]));
@@ -441,7 +425,52 @@ kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
                          float(raw[(y1+1)*W+x0]), float(raw[(y1+1)*W+x0+1]));
     float4 v11 = float4(float(raw[y1*W+x1]),   float(raw[y1*W+x1+1]),
                          float(raw[(y1+1)*W+x1]), float(raw[(y1+1)*W+x1+1]));
-    acc[gid.y * p.outW + gid.x] += mix(mix(v00, v10, fx), mix(v01, v11, fx), fy);
+    return mix(mix(v00, v10, fx), mix(v01, v11, fx), fy);
+}
+
+// v0.28.3: (1) geseran tile diinterpolasi antar-tile (dulu tile terdekat -> batas kotak terlihat),
+// (2) tiap sampel dibandingkan dengan frame acuan; yang berbeda jauh (tile salah sejajar di langit polos /
+//     kabel, objek bergerak) diganti nilai acuan -> tidak ada lagi kotak tempelan / bayangan (IMG_7116).
+kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
+                             device const float2*   align [[buffer(1)]],
+                             device float4*         acc   [[buffer(2)]],
+                             constant DrizzleParams& p    [[buffer(3)]],
+                             device const ushort*   refRaw [[buffer(4)]],
+                             uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= p.outW || gid.y >= p.outH) return;
+    const float refPX = p.cropX + float(gid.x) * 0.5f;
+    const float refPY = p.cropY + float(gid.y) * 0.5f;
+    const int pw = int(p.rawW / 2), ph = int(p.rawH / 2);
+
+    // pusat tile i = i * step + 8 (tile 16 superpixel, lihat refine_subpx)
+    const float stepX = p.antx > 1 ? float(pw - 16) / float(p.antx - 1) : 1.0f;
+    const float stepY = p.anty > 1 ? float(ph - 16) / float(p.anty - 1) : 1.0f;
+    const float tfx = clamp((refPX - 8.0f) / max(stepX, 1.0f), 0.0f, float(p.antx - 1));
+    const float tfy = clamp((refPY - 8.0f) / max(stepY, 1.0f), 0.0f, float(p.anty - 1));
+    const uint tx0 = min(uint(tfx), p.antx - 1), ty0 = min(uint(tfy), p.anty - 1);
+    const uint tx1 = min(tx0 + 1, p.antx - 1), ty1 = min(ty0 + 1, p.anty - 1);
+    const float ax = tfx - float(tx0), ay = tfy - float(ty0);
+    const float2 a = mix(mix(align[ty0 * p.antx + tx0], align[ty0 * p.antx + tx1], ax),
+                         mix(align[ty1 * p.antx + tx0], align[ty1 * p.antx + tx1], ax), ay);
+
+    const float4 r = drizzle_sample(refRaw, p.rawW, pw, ph, refPX, refPY);
+    const float srcPX = refPX + a.x;
+    const float srcPY = refPY + a.y;
+    if (srcPX < 0.0f || srcPY < 0.0f || srcPX >= float(pw - 1) || srcPY >= float(ph - 1)) {
+        acc[gid.y * p.outW + gid.x] += r;
+        return;
+    }
+    const float4 v = drizzle_sample(raw, p.rawW, pw, ph, srcPX, srcPY);
+
+    const float mr = (r.x + r.y + r.z + r.w) * 0.25f, mv = (v.x + v.y + v.z + v.w) * 0.25f;
+    const float sig = max(mr - p.black, 0.0f);
+    const float rng = max(p.range, 1.0f);
+    const float sd = p.range > 0.0f ? rng * sqrt(max(p.noiseS * sig / rng + p.noiseO, 0.0f)) : 0.0f;
+    // longgar: beda eksposur antar frame (~10 %) & noise tidak boleh ditolak
+    const float t0 = 0.12f * sig + 3.0f * sd + 0.004f * rng;
+    const float w = 1.0f - smoothstep(t0, 2.0f * t0, fabs(mv - mr));
+    acc[gid.y * p.outW + gid.x] += mix(r, v, w);
 }
 
 // ---------- normalisasi akumulator -> Bayer uint16 ----------

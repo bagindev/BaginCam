@@ -343,12 +343,13 @@ final class HDRPlusMerger {
     private struct DrizzleParams {
         var rawW: UInt32, rawH: UInt32, outW: UInt32, outH: UInt32
         var cropX: Float, cropY: Float, antx: UInt32, anty: UInt32
+        var black: Float, range: Float, noiseS: Float, noiseO: Float
     }
 
     var canDrizzle: Bool { pso["refine_subpx"] != nil && pso["drizzle_warp_acc"] != nil && pso["drizzle_to_bayer"] != nil }
 
     func mergeDrizzle(_ frames: [BayerFrame], crop: CGRect, tile: Int = 16, search: Int = 2,
-                      progress: ((Int, Int) -> Void)? = nil) -> Result? {
+                      noise: FreqConfig? = nil, progress: ((Int, Int) -> Void)? = nil) -> Result? {
         guard canDrizzle, let ref = frames.first, frames.count >= 2 else { return nil }
         let t0 = CFAbsoluteTimeGetCurrent()
         let W = ref.width, H = ref.height, pw = W / 2, ph = H / 2
@@ -416,12 +417,15 @@ final class HDRPlusMerger {
 
         var dp = DrizzleParams(rawW: UInt32(W), rawH: UInt32(H), outW: UInt32(outW), outH: UInt32(outH),
                                cropX: Float(crop.minX), cropY: Float(crop.minY),
-                               antx: UInt32(tiles[0].0), anty: UInt32(tiles[0].1))
+                               antx: UInt32(tiles[0].0), anty: UInt32(tiles[0].1),
+                               black: noise?.black ?? 0, range: noise?.range ?? 0,
+                               noiseS: noise?.noiseS ?? 0, noiseO: noise?.noiseO ?? 0)
         guard run({ enc in
             enc.setBuffer(ref.buffer, offset: 0, index: 0)
             enc.setBuffer(zeroSubpx, offset: 0, index: 1)
             enc.setBuffer(acc, offset: 0, index: 2)
             enc.setBytes(&dp, length: MemoryLayout<DrizzleParams>.stride, index: 3)
+            enc.setBuffer(ref.buffer, offset: 0, index: 4)
             dispatch(enc, "drizzle_warp_acc", outW, outH)
         }) else { return nil }
 
@@ -458,6 +462,7 @@ final class HDRPlusMerger {
                 enc.setBuffer(subpxBuf, offset: 0, index: 1)
                 enc.setBuffer(acc, offset: 0, index: 2)
                 enc.setBytes(&dp, length: MemoryLayout<DrizzleParams>.stride, index: 3)
+                enc.setBuffer(ref.buffer, offset: 0, index: 4)
                 dispatch(enc, "drizzle_warp_acc", outW, outH)
             }) else { return nil }
         }

@@ -2720,6 +2720,7 @@ final class CameraManager: NSObject, ObservableObject {
                 let td = CFAbsoluteTimeGetCurrent()
                 if let dr = merger.mergeDrizzle(frames, crop: CGRect(x: CGFloat(cropX), y: CGFloat(cropY),
                                                                       width: CGFloat(cropW), height: CGFloat(cropH)),
+                                                noise: freq,
                                                 progress: { i, n in self.report("Drizzle 2x", i, n, since: td) }) {
                     let dpx = dr.buffer.contents().bindMemory(to: UInt16.self, capacity: dr.width * dr.height)
                     if let dw = try? DNGWriter.rewrite(original: refDNG, pixels: dpx, width: dr.width, height: dr.height,
