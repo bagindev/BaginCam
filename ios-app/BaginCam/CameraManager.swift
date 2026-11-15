@@ -2385,6 +2385,12 @@ final class CameraManager: NSObject, ObservableObject {
                 if bayerBurst {
                     self.burstAIMultiFrame = true
                     frames = m == .hdrplus ? count : 8
+                    // v0.29: zoom jauh (crop >= 3x dari lensa) - drizzle butuh banyak frame untuk mengisi grid
+                    // sub-piksel; frame goyang dibuang di processHDRPlus (pickSharp)
+                    if zoomed && crop >= 3 && !night {
+                        frames = max(frames, 20)
+                        hint = "Zoom jauh: tahan HP (\(frames) frame)"
+                    }
                 } else {
                     self.burstAIFull = true
                     frames = 1
@@ -2698,6 +2704,46 @@ final class CameraManager: NSObject, ObservableObject {
         return (mixed, "AI \(model.rawValue) \(Int((strength * 100).rounded()))%")
     }
 
+    /// Zoom jauh ("lucky imaging"): ketajaman tiap frame diukur di area crop tengah (Laplacian kanal hijau,
+    /// dinormalkan kecerahan). Frame tertajam jadi acuan (urutan pertama); frame yang goyang dibuang.
+    private static func pickSharp(_ frames: [BayerFrame], crop: Double, black: Double) -> [BayerFrame] {
+        guard let f0 = frames.first, frames.count > 2 else { return frames }
+        let W = f0.width, H = f0.height
+        let cw = max(64, Int(Double(W) / crop)) & ~1, ch = max(64, Int(Double(H) / crop)) & ~1
+        let x0 = max(2, ((W - cw) / 2) & ~1), y0 = max(2, ((H - ch) / 2) & ~1)
+        let x1 = min(W - 3, x0 + cw), y1 = min(H - 3, y0 + ch)
+        var scores: [Double] = []
+        for f in frames {
+            guard f.width == W, f.height == H, f.buffer.length >= W * H * 2 else { scores.append(0); continue }
+            let px = f.buffer.contents().bindMemory(to: UInt16.self, capacity: W * H)
+            var lap = 0.0, sum = 0.0, n = 0.0
+            var y = y0
+            while y < y1 {
+                var x = x0 + 1                       // hijau pertama (RGGB): x ganjil, y genap
+                while x < x1 {
+                    let c = Double(px[y * W + x])
+                    let l = 4 * c - Double(px[y * W + x - 2]) - Double(px[y * W + x + 2])
+                        - Double(px[(y - 2) * W + x]) - Double(px[(y + 2) * W + x])
+                    lap += l * l
+                    sum += c
+                    n += 1
+                    x += 2
+                }
+                y += 2
+            }
+            let mean = max(1, sum / max(n, 1) - black)
+            scores.append(n > 0 ? lap / n / (mean * mean) : 0)
+        }
+        let order = scores.indices.sorted { scores[$0] > scores[$1] }
+        let best = max(scores[order[0]], 1e-12)
+        let minKeep = min(frames.count, 8)
+        var keep: [Int] = []
+        for (rank, i) in order.enumerated() where rank < minKeep || scores[i] >= 0.8 * best { keep.append(i) }
+        let txt = order.map { String(format: "%d:%.0f", $0 + 1, 100 * scores[$0] / best) }.joined(separator: " ")
+        Log.hdr.info("Frame tertajam: dipakai \(keep.count, privacy: .public) dari \(frames.count, privacy: .public), acuan frame \(order[0] + 1, privacy: .public) (frame:skor% \(txt, privacy: .public))")
+        return keep.map { frames[$0] }
+    }
+
     // MARK: HDR+
     private func processHDRPlus(frames: [BayerFrame], ref: AVCapturePhoto?, dir: URL?, noiseReduction: Double,
                                 forAIZoom: Bool, fusion: Data? = nil) {
@@ -2722,6 +2768,8 @@ final class CameraManager: NSObject, ObservableObject {
             freq = FreqConfig(noiseS: Float(inf.noiseS), noiseO: Float(inf.noiseO),
                               black: Float(Double(inf.black) * k), range: Float(Double(inf.white - inf.black) * k), c: c)
         }
+        let frames = burstZoomed && burstCrop >= 3 && frames.count > 8
+            ? Self.pickSharp(frames, crop: Double(burstCrop), black: Double(freq?.black ?? 0)) : frames
         let tm = CFAbsoluteTimeGetCurrent()
         guard let r = merger.merge(frames, noiseReduction: noiseReduction, freq: freq, progress: { i, n in
             self.report("Merge HDR+ \(freq != nil ? "frekuensi" : "spasial")", i, n, since: tm)
