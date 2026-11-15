@@ -1779,3 +1779,20 @@ Temuan:
 - Masih di bawah Apple + AI 50% di siang hari (tepi lebih bersih, kawat lebih jelas).
 Kesimpulan tetap: siang -> jalur Apple; algoritma ini belum layak dipindahkan ke app. Uji yang masih bernilai:
 burst RAW malam/senja di Colab (di situ jalur RAW app sudah menang atas Apple, lihat cek build 81).
+
+## 2026-11-15 - v0.33.0 build 82: cara zoom Auto menurut cahaya; Apple x5 dan model Tajam dicabut
+
+Pengguna menjawab "oke" atas tiga usul dari cek senja + penghapusan zip Colab.
+- `CameraManager.swift`: cara zoom Auto di tele / crop >= 3x sekarang melihat cahaya. Terang -> zoom Apple (seperti
+  v0.29.4). Redup = mode HDR+ dan Bayer tersedia dan ISO x t >= 2 -> Crop penuh, yang di mode HDR+ berarti burst RAW
+  20 frame digabung (drizzle). Proses Apple yang dipilih manual tetap zoom Apple. Log baru: `Cara zoom Auto -> ...`.
+  Ambang 2 = sama dengan ambang proses Auto (HEIF vs HDR+); baru didukung dua titik data (siang ~0,1 dan senja 2-8).
+- Apple x5 dihapus seluruhnya (`ZoomMethod.appleStack`, `processAppleStack`, state burst). Setelan tersimpan
+  "Apple x5" otomatis jatuh ke Auto.
+- Model Tajam dihapus: `SRModel.sharp`, `Models/BaginCamSRnomos_x4_256.mlmodelc`, `LICENSE-4xNomos8kSC.txt`, baris
+  README. Setelan tersimpan "Tajam" jatuh ke Cepat. Workflow `convert-sr-model.yml` dan `convert_sr.py` dibiarkan
+  (masih bisa membuat model itu lagi bila perlu).
+Build: run 43705930708 sukses. IPA: `data/ipa-v0.33.0/BaginCam-unsigned.ipa` (36,9 MB). IPA v0.32.0 dihapus.
+BELUM DIUJI DI HP.
+Kebersihan: `data/bursts/colab/` (2 zip burst 430 MB + salinan notebook) dihapus; DNG sumbernya masih ada di
+`%TEMP%\claude\burst77` (genggam) dan `burst78` (tripod). D: 2,5 GB kosong sebelum IPA baru.
