@@ -1330,3 +1330,15 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   satu laci pengaturan yang isinya ikut mode; (2) gaya kamera pro: ISO/shutter/WB/EV/format selalu tampil
   dan diketuk untuk diubah, alat bantu di kiri, zoom tegak di kanan. Menunggu pilihan user.
 - User menyebut Project Indigo (Adobe) sebagai acuan mode MALAM - baru dibahas, belum dikerjakan.
+
+## 2026-11-15 - Rancangan UI gabungan + riset Project Indigo (belum ada perubahan kode)
+
+- `docs/ui-mockup-gabungan.html`: tiga pilihan gabungan gaya iPhone + kamera pro.
+  A = strip angka ISO/S/EV/WB di atas zoom (ketuk = roda nilai), B = saklar PRO yang menyalakan
+  lapisan angka + histogram + alat bantu, C = kontrol manual sebagai baris pertama laci.
+- Riset Project Indigo (sumber: artikel Adobe Research, bukan bedah aplikasi). Aplikasinya hanya ada
+  di iPhone; versi Android belum dirilis. IPA App Store terenkripsi, jadi tidak bisa dibedah.
+  Catatan untuk mode MALAM: under-expose lebih kuat; sampai 32 frame; Night = eksposur lebih panjang,
+  sampai 1 s x 32 frame bila gelap sekali dan HP di tripod; penghalusan minimal (noise sedikit dibiarkan);
+  tone mapping lokal ringan; Long Exposure = frame dijumlah biasa tanpa robust merge.
+- Menunggu pilihan UI dari pengguna dan persetujuan sebelum mengubah mode MALAM.
