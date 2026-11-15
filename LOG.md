@@ -1602,3 +1602,15 @@ Perbaikan: G1 = rata-rata sel ini + sel kiri, G2 = sel ini + sel atas, B = rata-
 
 Belum diperbaiki: tekstur hilang (deconv + AI di sumber kecil), kontras/saturasi lebih rendah dari Apple.
 Build: run 43682015151 sukses. IPA: `data/ipa-v0.30.2/BaginCam-unsigned.ipa`. IPA v0.30.1 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - Cek dugaan pengguna: "Apple crop sensor langsung lalu dijahit" (tanpa perubahan kode)
+
+EXIF foto zoom Apple 75x (IMG_7290, cara zoom Apple, tripod):
+- LensModel "back triple camera 15.66mm f/2.8", FocalLength 15,66 mm -> lensa tele yang sama dengan jalur kita.
+- DigitalZoomRatio 16,43 -> zoom digital dari tele 12MP (bidang ~245x184 piksel sensor).
+- CompositeImage = 2 -> gambar komposit (hasil gabungan beberapa frame).
+- Ukuran keluaran Apple 4032x3024 (12MP).
+Kesimpulan: tidak ada pembacaan sensor khusus / piksel tambahan. Apple menggabung beberapa frame di area crop
+dan memperbesarnya (super-resolusi multi-frame) - konsep sama dengan drizzle kita, eksekusinya jauh lebih baik.
+Catatan: kode kita memperkecil keluaran Apple 12MP ke ~537 px lalu AI x4 -> hasil bergaya lukisan. Uji murah yang
+belum dilakukan: cara zoom Apple dengan AI zoom MATI (keluaran Apple apa adanya).
