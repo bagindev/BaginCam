@@ -1643,3 +1643,23 @@ Usul pengguna: pakai cara Apple lalu gabungkan beberapa frame / "hasil Apple di-
   Bila "terpakai" mendekati 0 % di semua foto -> penyejajaran gagal (hasil = foto pertama saja).
 - Dugaan manfaat: noise turun, tepi bertangga berkurang; detail baru belum tentu (uji PC 20 frame RAW: tidak ada).
 - Build: run 43684070098 sukses. IPA: `data/ipa-v0.31.0/BaginCam-unsigned.ipa`. IPA v0.30.2 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - Riset metode zoom lain (tanpa perubahan kode)
+
+A. Multi-frame dari RAW (detail nyata)
+- Google Handheld Multi-Frame Super-Resolution: ada implementasi terbuka Python + Numba GPU
+  (github.com/Jamy-L/Handheld-Multi-Frame-Super-Resolution, artikel IPOL 2023 "Implementing Handheld Burst
+  Super-Resolution"): 20 frame 12MP -> 48MP < 4 s di RTX 3090. Butuh GPU NVIDIA (CUDA).
+  PC ini AMD Radeon 860M -> tidak bisa dijalankan di sini.
+- kunzmi/ImageStackAlignator: aplikasi desktop yang mengimplementasi algoritma yang sama (belum diverifikasi).
+- hdr-plus-swift (Burst Photo, Swift + Metal): super-resolusi masih di daftar rencana mereka, belum ada.
+- Burst SR berbasis deep learning (Burstormer, BSRT, FBANet / RealBSR): model riset, berat, dilatih di sensor lain.
+B. AI satu gambar (pengganti Real-ESRGAN)
+- Arsitektur lebih baru: RealPLKSR, SPAN, DAT; ada model foto komunitas (mis. 4xNomosWebPhoto_RealPLKSR di
+  OpenModelDB, dilatih dengan noise + blur lensa + kompresi). Perlu konversi ke Core ML dan cek lisensi.
+- Difusi satu langkah (OSEDiff; port Core ML komunitas "AdcSR" ~1,7 GB fp32, tile 128 px; Samsung Edge-SD-SR
+  512->2048 dalam ~1,1 s di Galaxy S24). Menghasilkan detail karangan yang meyakinkan; berat.
+C. Sistem Apple
+- VideoToolbox VTSuperResolutionScaler (iOS 26): punya model untuk gambar diam; batas lebar masukan ~1920 px
+  (sumber sekunder). Hanya iOS 26.
+Saran ke pengguna: uji model AI pengganti di PC memakai sumber zoom Apple yang sudah ada sebelum menyentuh app.
