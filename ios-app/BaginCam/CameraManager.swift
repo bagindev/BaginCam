@@ -145,7 +145,7 @@ final class CameraManager: NSObject, ObservableObject {
         var id: String { rawValue }
         var detail: String {
             switch self {
-            case .auto: return "Super Res di tele atau crop >= 3x, Crop penuh di bawahnya (logika AI ZOOM lama)"
+            case .auto: return "Zoom Apple di tele atau crop >= 3x (paling tajam untuk zoom jauh), Crop penuh di bawahnya"
             case .apple: return "Zoom digital Apple seperti kamera bawaan (1 jepretan, Deep Fusion). + AI: diperkecil ke detail aslinya lalu diperbesar AI"
             case .superRes: return "Multi-frame: burst RAW lensa fisik digabung (HDR+), lalu crop & perbesar - noise rendah, detail asli"
             case .fullCrop: return "1 foto resolusi penuh sensor (48MP utama / 12MP tele) di-crop lalu diperbesar"
@@ -2242,7 +2242,10 @@ final class CameraManager: NSObject, ObservableObject {
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 || self.photoOutput.isAppleProRAWEnabled
             var zm = night ? ZoomMethod.superRes : method
-            if zm == .auto { zm = (lensName == "Tele" || crop >= 3) ? .superRes : .fullCrop }
+            // v0.29.4: Auto di tele / crop >= 3x = zoom Apple (kamera virtual pada zoom sebenarnya: fokus & eksposur
+            // dinilai di bidang yang terlihat, sumber 2x lebih besar). Uji 15 Nov: lampu 75x Apple jauh lebih tajam
+            // dari burst RAW + drizzle (IMG_7162 vs IMG_7166).
+            if zm == .auto { zm = (lensName == "Tele" || crop >= 3) ? .apple : .fullCrop }
             if zm == .superRes && !bayerOK { zm = .fullCrop }
             // v0.12.1: Super Res di lensa utama < 3x saat terang: 12 MP digabung lalu di-crop hanya ~2000 px
             // (AI 2.8x -> tekstur seperti lukisan, IMG_6958). Crop sensor 48 MP memberi detail asli 2x lipat.
