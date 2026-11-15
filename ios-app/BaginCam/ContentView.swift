@@ -208,7 +208,7 @@ struct ContentView: View {
             }
             Toggle("Jumlah frame otomatis (6-15)", isOn: $cam.autoFrames)
             Toggle("Fusi detail 48MP", isOn: $cam.fusion48)
-            if showsZoom { Menu("Zoom: \(zoomText)") { zoomMenuItems } }
+            if showsZoom { zoomMenuItems }
             Button("Pengaturan lain...") { showSettings = true }
         } label: {
             let forced = (cam.livePhoto || cam.flash == .on) && cam.photoProcess != .apple
@@ -1271,9 +1271,12 @@ struct ContentView: View {
                     .padding(.vertical, 1)
                 }
                 .environment(\.colorScheme, .dark)
-                Text(String(format: "%.1fx", displayZoom)).fixedSize()
-                    .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
-                if cam.videoKind != .dual && (cam.autoLensAvailable || cam.shootMode != .video) { zoomMenu }
+                if cam.videoKind != .dual && (cam.autoLensAvailable || cam.shootMode != .video) {
+                    zoomMenu
+                } else {
+                    Text(String(format: "%.1fx", displayZoom)).fixedSize()
+                        .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
+                }
             }
             if proOn { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
             if cam.videoKind == .dual { dualLensRow }
@@ -1294,13 +1297,22 @@ struct ContentView: View {
             if cam.shootMode != .video { zoomMenuItems }
         } label: {
             let locked = cam.aiLensLock != nil && cam.aiLensLock != .front
-            Image(systemName: locked ? "lock.fill" : "ellipsis")
-                .font(.caption.bold())
-                .frame(width: 34, height: 28)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(locked ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
-                .foregroundStyle(locked ? Color.yellow : Color.white)
-                .environment(\.colorScheme, .dark)
+            let lit = locked || (cam.shootMode != .video && cam.zoomAIEnabled)
+            HStack(spacing: 4) {
+                if locked { Image(systemName: "lock.fill") }
+                if cam.shootMode != .video { Text(zoomText) } else if !locked { Image(systemName: "lock.open") }
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .font(.caption.bold())
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .frame(minHeight: 30)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(lit ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
+            .foregroundStyle(lit ? Color.yellow : Color.white)
+            .contentShape(Capsule())
+            .environment(\.colorScheme, .dark)
         }
     }
 

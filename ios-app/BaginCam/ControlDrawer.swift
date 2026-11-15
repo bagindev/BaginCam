@@ -181,6 +181,22 @@ struct ControlDrawer: View {
             }
             toggleTile("square.stack.3d.up", "Frame DNG", cam.saveFrames) { cam.saveFrames.toggle() }
         }
+        menuTile(cam.zoomMethod.rawValue, "Cara zoom") {
+            ForEach(CameraManager.ZoomMethod.allCases) { z in
+                pick(z.rawValue, cam.zoomMethod == z) { cam.zoomMethod = z }
+            }
+            Text("Dipakai saat zoom melewati lensa optik")
+        }
+        menuTile(cam.zoomAIEnabled ? cam.srModel.rawValue : "Mati", "AI zoom", on: cam.zoomAIEnabled) {
+            pick("Mati", !cam.zoomAIEnabled) { cam.zoomAIEnabled = false }
+            ForEach(SRModel.allCases) { m in
+                pick("Model \(m.rawValue)", cam.zoomAIEnabled && cam.srModel == m) {
+                    cam.zoomAIEnabled = true
+                    cam.srModel = m
+                }
+            }
+            Toggle("Fokus tulisan (OCR)", isOn: $cam.textFocus)
+        }
         menuTile(cam.colorStyle.rawValue, "Gaya warna", on: cam.colorStyle != .natural) {
             ForEach(ColorStyle.allCases) { st in
                 pick(st.rawValue, cam.colorStyle == st) { cam.colorStyle = st }
