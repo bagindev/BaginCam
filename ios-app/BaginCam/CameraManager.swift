@@ -140,6 +140,7 @@ final class CameraManager: NSObject, ObservableObject {
     enum ZoomMethod: String, CaseIterable, Identifiable {
         case auto = "Auto"
         case apple = "Apple"
+        case appleStack = "Apple x5"
         case superRes = "Super Res"
         case fullCrop = "Crop penuh"
         var id: String { rawValue }
@@ -147,6 +148,7 @@ final class CameraManager: NSObject, ObservableObject {
             switch self {
             case .auto: return "Zoom Apple di tele atau crop >= 3x (paling tajam untuk zoom jauh), Crop penuh di bawahnya"
             case .apple: return "Zoom digital Apple seperti kamera bawaan (1 jepretan, Deep Fusion). + AI: diperkecil ke detail aslinya lalu diperbesar AI"
+            case .appleStack: return "Percobaan: 5 foto zoom Apple disejajarkan & ditumpuk (noise turun, tepi lebih halus), lalu AI. Tahan HP ~3 detik"
             case .superRes: return "Multi-frame: burst RAW lensa fisik digabung (HDR+), lalu crop & perbesar - noise rendah, detail asli"
             case .fullCrop: return "1 foto resolusi penuh sensor (48MP utama / 12MP tele) di-crop lalu diperbesar"
             }
@@ -559,6 +561,9 @@ final class CameraManager: NSObject, ObservableObject {
     private var debugFusionS = true            // sessionQueue
     private var burstTextFocus = true
     private var burstAppleZoomAI = false          // zoom Apple + AI: perkecil ke detail asli lalu AI
+    private var burstAppleStack = false           // v0.31: beberapa foto zoom Apple ditumpuk
+    private var appleStack: [CGImage] = []
+    private var appleStackMeta: [String: Any] = [:]
     private var burstRealLong = 4032              // sisi panjang detail asli pada zoom Apple
     private var burstNight = false
     private var burstFaceBeauty = false
@@ -2191,6 +2196,9 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstAIMultiFrame = false
             self.burstAIFull = false
             self.burstAppleZoomAI = false
+            self.burstAppleStack = false
+            self.appleStack = []
+            self.appleStackMeta = [:]
             self.burstNight = night
             self.burstFaceBeauty = self.faceBeauty
             self.burstBeautyLevel = self.beautyLevel
@@ -2242,6 +2250,8 @@ final class CameraManager: NSObject, ObservableObject {
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 || self.photoOutput.isAppleProRAWEnabled
             var zm = night ? ZoomMethod.superRes : method
+            let stack = zm == .appleStack
+            if stack { zm = .apple }
             // v0.29.4: Auto di tele / crop >= 3x = zoom Apple (kamera virtual pada zoom sebenarnya: fokus & eksposur
             // dinilai di bidang yang terlihat, sumber 2x lebih besar). Uji 15 Nov: lampu 75x Apple jauh lebih tajam
             // dari burst RAW + drizzle (IMG_7162 vs IMG_7166).
@@ -2270,7 +2280,9 @@ final class CameraManager: NSObject, ObservableObject {
                 // v0.10.0: sensor/crop (621 px di 13x utama) terlalu kecil - Apple (remosaic + multi-frame)
                 // menyimpan ~2x lebih banyak detail; diperkecil sejauh itu AI mengubah huruf jadi balok
                 self.burstRealLong = max(512, Int(2 * Double(nativeLong) / Double(crop)))
-                frames = 1
+                frames = stack ? 5 : 1
+                self.burstAppleStack = stack
+                if stack { hint = "Zoom Apple x5: tahan HP ~3 detik" }
             } else if bayerBurst || singleFull {
                 self.burstMode = bayerBurst ? .hdrplus : .heif
                 self.burstZoomed = zoomed
@@ -2542,7 +2554,12 @@ final class CameraManager: NSObject, ObservableObject {
         }
         DispatchQueue.main.async { self.previewFrozen = false }
         Log.camera.info("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
-        if collectsBayer {
+        if burstAppleStack {
+            let imgs = appleStack, md = appleStackMeta
+            appleStack = []
+            appleStackMeta = [:]
+            processQueue.async { self.processAppleStack(imgs, metadata: md, dir: dir) }
+        } else if collectsBayer {
             let frames = hdrFrames, ref = hdrRef, nr = burstNR, ai = burstMode == .aiZoom
             let fusion = fusionData
             hdrFrames = []
@@ -3203,6 +3220,80 @@ final class CameraManager: NSObject, ObservableObject {
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0, cropOverride: 1)
     }
 
+    // MARK: zoom Apple bertumpuk (percobaan v0.31)
+    private static let stackContext = CIContext(options: [.workingColorSpace: NSNull(), .cacheIntermediates: false])
+
+    /// Beberapa foto zoom Apple disejajarkan ke foto pertama (geseran, Vision) lalu dirata-rata.
+    /// Piksel yang berbeda jauh dari foto pertama (benda bergerak / salah sejajar) memakai foto pertama.
+    private func processAppleStack(_ images: [CGImage], metadata: [String: Any], dir: URL?) {
+        guard let ref = images.first else {
+            finish("Zoom Apple x5 gagal: foto kosong")
+            return
+        }
+        setStatus("Zoom Apple x\(images.count): menyejajarkan...")
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let opts: [CIImageOption: Any] = [.colorSpace: NSNull()]
+        let refCI = CIImage(cgImage: ref, options: opts)
+        let ext = refCI.extent
+        let share = CGFloat(1.0 / Double(images.count))
+        // bobot 1/N lewat alpha (gambar CI premultiplied) -> penjumlahan = rata-rata
+        func part(_ im: CIImage) -> CIImage {
+            im.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: share)])
+        }
+        // ambang beda (nilai gamma 0..1): di bawah 0,05 dipakai penuh, di atas 0,12 ditolak
+        let lo = 0.05, hi = 0.12
+        let a = CGFloat(-1 / (hi - lo)), b = CGFloat(hi / (hi - lo))
+        var sum = part(refCI)
+        var notes: [String] = []
+        let handler = VNImageRequestHandler(cgImage: ref, options: [:])
+        for img in images.dropFirst() {
+            let req = VNTranslationalImageRegistrationRequest(targetedCGImage: img, options: [:])
+            guard img.width == ref.width, img.height == ref.height, (try? handler.perform([req])) != nil,
+                  let obs = req.results?.first else {
+                sum = part(refCI).applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: sum])
+                notes.append("gagal")
+                continue
+            }
+            let tr = obs.alignmentTransform
+            let moved = CIImage(cgImage: img, options: opts).transformed(by: tr).clampedToExtent().cropped(to: ext)
+            let diff = moved.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: refCI])
+                .applyingFilter("CIMaximumComponent")
+                .clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 3.0])
+                .cropped(to: ext)
+            let mask = diff.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: b, y: b, z: b, w: 0)])
+                .applyingFilter("CIColorClamp", parameters: [
+                    "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 1),
+                    "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
+            let blended = moved.applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: refCI, kCIInputMaskImageKey: mask]).cropped(to: ext)
+            sum = part(blended).applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: sum])
+            // bagian foto ini yang benar-benar terpakai (rata-rata masker)
+            var px = [Float](repeating: 0, count: 4)
+            let avg = mask.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: ext)])
+            Self.stackContext.render(avg, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                     format: .RGBAf, colorSpace: nil)
+            notes.append(String(format: "%.1f,%.1f:%.0f%%", tr.tx, tr.ty, px[0] * 100))
+        }
+        guard let out = Self.stackContext.createCGImage(sum.cropped(to: ext), from: ext, format: .RGBA8,
+                                                         colorSpace: ref.colorSpace ?? CGColorSpaceCreateDeviceRGB()) else {
+            finish("Zoom Apple x5 gagal: render")
+            return
+        }
+        let dt = CFAbsoluteTimeGetCurrent() - t0
+        // tumpukan membawa sampel sub-piksel -> diperkecil hanya sampai 2x "detail asli" foto tunggal
+        let long = max(out.width, out.height)
+        let real = min(long, burstRealLong * 2)
+        let cg = real < long ? (SRUpscaler.resize(out, longSide: real) ?? out) : out
+        Log.sr.info("Zoom Apple x\(images.count, privacy: .public): \(out.width, privacy: .public)x\(out.height, privacy: .public), geseran px:terpakai [\(notes.joined(separator: " "), privacy: .public)], \(dt, format: .fixed(precision: 2), privacy: .public) s, sumber AI \(real, privacy: .public) px")
+        processAIZoomImage(cg, properties: metadata, dir: dir, multiFrame: images.count, cropOverride: 1)
+    }
+
     // MARK: simpan
     private static func makeBurstDir(prefix: String) -> URL {
         let f = DateFormatter()
@@ -3302,11 +3393,17 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         if collectsBayer, photo.isRawPhoto, let pb = photo.pixelBuffer {
             frame = merger?.makeFrame(from: pb)
         }
+        let stackImage: CGImage? = burstAppleStack && !photo.isRawPhoto ? photo.cgImageRepresentation() : nil
         sessionQueue.async {
             self.savedCount += 1
             let idx = self.savedCount
             let total = self.burstIndex + self.burstRemaining
-            if self.collectsBayer {
+            if self.burstAppleStack && !photo.isRawPhoto {
+                if let stackImage {
+                    if self.appleStack.isEmpty { self.appleStackMeta = photo.metadata }
+                    self.appleStack.append(stackImage)
+                }
+            } else if self.collectsBayer {
                 if !photo.isRawPhoto {
                     // v0.18: foto Apple 48MP untuk fusi detail
                     self.fusionData = photo.fileDataRepresentation()
