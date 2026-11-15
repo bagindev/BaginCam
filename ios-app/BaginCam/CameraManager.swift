@@ -2282,9 +2282,6 @@ final class CameraManager: NSObject, ObservableObject {
                     if d.maxWhiteBalanceGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 {
                         tt = d.temperatureAndTintValues(for: Self.clamp(g, d.maxWhiteBalanceGain))
                     }
-                    // fokus yang sudah dikunci lewat ketukan di preview (lensa sama) dipakai apa adanya
-                    let keepFocus: Float? = (!self.manualS.focus && d.focusMode == .locked && !d.isAdjustingFocus)
-                        ? d.lensPosition : nil
                     self.install(p, mirrored: false)
                     self.isVirtual = false
                     self.applyRawMode(.aiZoom)
@@ -2349,10 +2346,7 @@ final class CameraManager: NSObject, ObservableObject {
                                                         completionHandler: nil)
                         }
                         if !self.manualS.focus {
-                            if let kf = keepFocus, zoomed, kf.isFinite, p.isLockingFocusWithCustomLensPositionSupported {
-                                p.setFocusModeLocked(lensPosition: min(max(kf, 0), 1), completionHandler: nil)
-                                Log.camera.info("Fokus zoom: memakai fokus ketukan di preview, posisi lensa \(Double(kf), format: .fixed(precision: 3), privacy: .public)")
-                            } else if zoomed && crop >= 2 && p.isFocusModeSupported(.autoFocus) {
+                            if zoomed && crop >= 2 && p.isFocusModeSupported(.autoFocus) {
                                 // zoom jauh: hasil hanya bagian tengah sensor -> fokus sekali di tengah, lalu ditunggu
                                 // sampai selesai (AF kontinu + jeda 0,5 s sering terkunci saat masih mencari, IMG_7108)
                                 if p.isFocusPointOfInterestSupported { p.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
@@ -2676,6 +2670,10 @@ final class CameraManager: NSObject, ObservableObject {
         if need <= 1.001 { return (SRUpscaler.resize(plain0, longSide: target) ?? plain0, "crop") }
         guard let plain = SRUpscaler.resize(plain0, longSide: target) else { return (plain0, "resize gagal") }
         guard need >= minAIFactor, strength > 0.01 else { return (plain, "Lanczos") }
+        if need < 2, L >= 2500 {
+            Log.sr.info("AI dilewati: sumber \(Int(L), privacy: .public) px hanya perlu x\(need, format: .fixed(precision: 2), privacy: .public)")
+            return (plain, "Lanczos (sumber besar)")
+        }
         guard let sr = upscaler(for: model) else { return (plain, "AI gagal: model \(model.rawValue) tidak bisa dimuat") }
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let up = sr.upscale(src, crop: crop, outScale: min(need, Double(SRUpscaler.scale)), progress: { d, n in
