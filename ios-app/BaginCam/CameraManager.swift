@@ -2237,6 +2237,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             let crop = max(1, tz * virtualWide / base)
             var focusWait = false
+            var focusZoom: CGFloat = 1
             let canZoom = m == .hdrplus || m == .heif
             let zoomed = canZoom && Self.usesVirtual(m) && crop > 1.05
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
@@ -2355,6 +2356,7 @@ final class CameraManager: NSObject, ObservableObject {
                                 if p.isFocusPointOfInterestSupported { p.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
                                 p.focusMode = .autoFocus
                                 focusWait = true
+                                focusZoom = crop
                             } else if p.isFocusModeSupported(.continuousAutoFocus) {
                                 p.focusMode = .continuousAutoFocus
                             }
@@ -2455,14 +2457,52 @@ final class CameraManager: NSObject, ObservableObject {
                 Log.camera.info("Lampu isi: \(screenFill ? "layar (kamera depan)" : "senter", privacy: .public), senter nyala \(self.burstTorch, privacy: .public)")
             }
             // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
-            let fw = focusWait
+            let fw = focusWait, fz = focusZoom
             self.sessionQueue.asyncAfter(deadline: .now() + delay) {
                 self.afterFocus(wait: fw) {
-                    if isMulti { self.lockCurrent() }
-                    self.sessionQueue.asyncAfter(deadline: .now() + (isMulti ? 0.15 : 0)) { self.captureNext() }
+                    self.zoomedRefocus(fw ? fz : 1) {
+                        if isMulti { self.lockCurrent() }
+                        self.sessionQueue.asyncAfter(deadline: .now() + (isMulti ? 0.15 : 0)) { self.captureNext() }
+                    }
                 }
             }
         }
+    }
+
+    /// Percobaan v0.30 ("fokus cara Apple, burst RAW cara kita"): setelah fokus pertama di zoom 1x, lensa fisik
+    /// di-zoom ke perbesaran sebenarnya dan difokuskan lagi, supaya AF menilai bidang yang terlihat saja.
+    /// Fokus lalu dikunci dan zoom dikembalikan ke 1x (RAW harus dijepret di 1x). Log mencatat posisi lensa
+    /// sebelum & sesudah: kalau selalu sama, iOS tidak mempersempit area AF saat di-zoom.
+    private func zoomedRefocus(_ zoom: CGFloat, _ done: @escaping () -> Void) {
+        guard zoom > 1.5, !manualS.focus, let d = device, !d.isVirtualDevice, d.isFocusModeSupported(.autoFocus),
+              (try? d.lockForConfiguration()) != nil else { done(); return }
+        let before = d.lensPosition
+        let z = max(1, min(zoom, d.maxAvailableVideoZoomFactor, d.activeFormat.videoMaxZoomFactor))
+        d.videoZoomFactor = z
+        if d.isFocusPointOfInterestSupported { d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
+        d.focusMode = .autoFocus
+        d.unlockForConfiguration()
+        pollZoomedRefocus(d, started: CFAbsoluteTimeGetCurrent(), before: before, zoom: z, done)
+    }
+
+    private func pollZoomedRefocus(_ d: AVCaptureDevice, started: CFAbsoluteTime, before: Float, zoom: CGFloat,
+                                   _ done: @escaping () -> Void) {
+        let dt = CFAbsoluteTimeGetCurrent() - started
+        if dt < 0.3 || (d.isAdjustingFocus && dt < 1.8) {
+            sessionQueue.asyncAfter(deadline: .now() + 0.05) {
+                self.pollZoomedRefocus(d, started: started, before: before, zoom: zoom, done)
+            }
+            return
+        }
+        let after = d.lensPosition, finished = !d.isAdjustingFocus
+        if (try? d.lockForConfiguration()) != nil {
+            if d.isFocusModeSupported(.locked) { d.focusMode = .locked }
+            d.videoZoomFactor = 1
+            d.unlockForConfiguration()
+        }
+        Log.camera.info("Fokus zoom (di-zoom \(Double(zoom), format: .fixed(precision: 1), privacy: .public)x): posisi lensa \(Double(before), format: .fixed(precision: 3), privacy: .public) -> \(Double(after), format: .fixed(precision: 3), privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s, selesai \(finished, privacy: .public)")
+        // beri waktu zoom kembali ke 1x sebelum RAW dijepret
+        sessionQueue.asyncAfter(deadline: .now() + 0.15) { done() }
     }
 
     /// Tunggu AF selesai (maks 1,5 s) sebelum fokus dikunci untuk burst zoom jauh.
