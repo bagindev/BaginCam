@@ -1443,3 +1443,25 @@ Permintaan pengguna: metode untuk zoom ekstrem. Disetujui: lebih banyak frame + 
 - Risiko belum diuji: memori 20 frame RAW (~24 MB per frame), waktu proses lebih lama.
 - Push sempat gagal 4x (github.com tidak terjangkau dari PC, situs lain normal), berhasil setelah diulang.
 - Build: run 43674438227 sukses. IPA: `data/ipa-v0.29.0/BaginCam-unsigned.ipa`. IPA v0.28.4 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - v0.29.1 build 72 + v0.29.2 build 73: cek build 71, cabut fokus ketukan, zoom jauh 12MP
+
+Laporan pengguna: hasil "begitu semua", AI terasa tidak membantu; usul: zoom ekstrem otomatis 12MP.
+
+Cek build 71 (11:02-11:12, 14 foto, 10x-100x):
+- Burst 20 frame jalan (merge 0,9-1,9 s, drizzle 0,3-2,6 s), tidak ada error / aplikasi tertutup.
+- `pickSharp` tidak pernah membuang frame: skor 84-100 % di semua jepretan. Siang hari shutter ~1/800 s, jadi
+  tidak ada blur goyang untuk dibuang -> pemilihan frame tidak memberi manfaat di kondisi ini.
+- Tidak terlihat tambahan detail dari 6 -> 20 frame (75x build 69 vs build 71 serupa). BELUM diukur A/B.
+- Fokus ketukan yang dibawa ke jepretan (v0.28.4): posisi lensa 0,72-0,74, sedangkan AF lensa fisik untuk objek
+  jauh 0,77-0,81. Tandon IMG_7153 / IMG_7157 (fokus bawaan) buram; tandon build 69 (AF) tajam. -> dicabut.
+- 10x (crop 2x): drizzle menghasilkan 3024x4032 lalu AI Detail x1,42 = 252 tile, 108 detik.
+- 100x: sumber 296x400 px, hasil berkotak / bergerigi.
+
+Perubahan:
+- Build 72: cabut fokus ketukan (kembali AF sekali di tengah + tunggu). AI dilewati bila sumber >= 2500 px dan
+  hanya perlu diperbesar < 2x (pakai Lanczos).
+- Build 73: zoom jauh (crop >= 3x dari lensa) selalu keluar 12MP, apa pun setelan resolusi.
+- Tetap: burst 20 frame, setelan Jarak fokus Auto/Jauh/Dekat.
+- Build: run 43676224986 (72) dan 43676375462 (73) sukses. IPA: `data/ipa-v0.29.2/BaginCam-unsigned.ipa`
+  (build 72 tidak diunduh; IPA v0.29.0 dihapus). Belum diuji di HP.
