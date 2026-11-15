@@ -1562,3 +1562,22 @@ Selisihnya ada di olahan / jumlah piksel sumber. `zoomedRefocus` dihapus.
 Belum diketahui: di tahap mana jalur RAW kita kehilangan ketajaman (frame RAW itu sendiri, merge, drizzle, atau
 develop). Perlu satu burst dengan "Frame DNG" nyala untuk dianalisis di PC.
 Build: run 43680254491 sukses. IPA: `data/ipa-v0.30.1/BaginCam-unsigned.ipa`. IPA v0.30.0 dihapus. Belum diuji di HP.
+
+## 2026-11-15 - Bedah burst RAW 75x di PC (tanpa perubahan kode)
+
+Sampel: burst `HDRPLUS_20261115-122337` (20 DNG, 215 MB, ditarik ke C:\...\Temp\claude\burst77, tidak disimpan di D:),
+hasil app IMG_7245, pembanding Apple IMG_7246. Adegan: lampu jalan + genteng, 75x, dipegang tangan.
+Skrip: `burst_analyze.py` (rawpy AHD -> crop tengah -> phase correlation -> geser + rata-rata di 8x).
+Gambar: `data/output/zoom75_bedah_burst_1115.jpg` (6 panel).
+
+Temuan:
+- 1 frame RAW: lunak tapi jujur - genteng, tekstur lampu, kabel terlihat.
+- 20 frame geser + rata-rata (penyejajaran global): noise turun, ketajaman setara 1 frame, tidak ada detail baru.
+- Hasil app (merge + drizzle + develop + AI): LEBIH BURUK dari 1 frame RAW - pucat / terlalu terang, tekstur hilang,
+  garis sisir tegak di tepi lampu, genteng kiri atas bergeser. Jadi jalur kita merusak, bukan sekadar kalah bahan.
+- Apple: detail jauh lebih banyak dari 1 frame RAW kita (nat genteng, karat tiang).
+- Geseran tangan selama burst 2 detik: sampai 22 px mendatar dan 31 px tegak (di 12MP tele). Besar untuk
+  penyejajaran per tile dan tidak ada koreksi putaran.
+- Efek samping "Frame DNG": 60 file DNG (3 burst x 20, ~640 MB) ikut masuk galeri Foto iPhone (IMG_7185-7244).
+
+Pengguna akan mengambil ulang sampel dengan tripod. Belum ada keputusan perubahan kode.
