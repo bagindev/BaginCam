@@ -1376,3 +1376,16 @@ tersembunyi di submenu.
   400x536 / 600x800 px -> hasil lunak, sebagian tidak fokus. Tidak ada error.
 - Terbukti dari log: perbaikan ultra wide bekerja ("Zoom dipasang ulang setelah keluar VIDEO: faktor 1.00 -> 2.00").
 - Build: run 43669824425 sukses. IPA: `data/ipa-v0.28.1/BaginCam-unsigned.ipa`. IPA v0.28.0 dihapus (digantikan).
+
+## 2026-11-15 - v0.28.2 build 68: fokus untuk burst zoom jauh
+
+Dari cek build 66: 4 dari 8 foto 50x/75x buram karena fokus, bukan batas zoom.
+Koreksi catatan sebelumnya: foto itu sudah lewat jalur multi-frame (6 frame RAW tele + drizzle 2x + deconv + AI),
+label "Crop penuh" hanya nama cara zoom; memilih Super Res tidak mengubah banyak di 50x/75x.
+
+- Saat pindah ke lensa fisik untuk burst zoom (crop >= 2x): fokus sekali di tengah (`.autoFocus`, titik 0.5/0.5),
+  bukan AF kontinu. Hasil zoom jauh hanya memakai bagian tengah sensor.
+- `afterFocus`: setelah jeda 0,5 s, tunggu sampai `isAdjustingFocus` selesai (maks 1,5 s) baru fokus dikunci.
+  Log baru: `Fokus zoom: tunggu tambahan x s, selesai true/false, posisi lensa y`.
+- Belum dibuat: ulang fokus bila frame pertama terdeteksi buram.
+- Build: run 43670326108 sukses. IPA: `data/ipa-v0.28.2/BaginCam-unsigned.ipa`. IPA v0.28.1 dihapus (digantikan). Belum diuji di HP.
