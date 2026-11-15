@@ -1766,3 +1766,16 @@ Temuan:
 - pickSharp: tetap memakai 20 dari 20 frame (skor 93-100 %).
 Usul (menunggu pengguna): cara zoom Auto memilih menurut cahaya (terang -> Apple, redup -> RAW burst) memakai
 ukuran ISO x t yang sudah ada (lampu 2,0; tandon ~4,5); Apple x5 dipensiunkan atau diberi batas geseran.
+
+## 2026-11-15 - Hasil uji Colab burst TRIPOD (super-res Google, 75x)
+
+Pengguna menyimpan `data/output/tengah_75x-tripod.png` (+ `_besar`). Cocok dengan burst tripod
+HDRPLUS_20261115-123257 (korelasi 0,961). Pembanding: `data/output/zoom75_colab_superres_tripod_1115.jpg` dan
+`..._detail.jpg` (1 frame RAW | Colab 20 frame 2x | Apple zoom + AI Detail 50%). Tidak ada foto baru di iPhone.
+Temuan:
+- Sama seperti burst genggam: lebih tajam dari 1 frame RAW (nat genteng, rantai lampu, kawat), jadi goyangan
+  tripod + OIS sudah cukup memberi sampel sub-piksel; dugaan "tripod lebih lemah" tidak terbukti.
+- Garis patah di genteng lebih sedikit daripada burst genggam; pinggiran warna hijau/merah dan bintik tetap ada.
+- Masih di bawah Apple + AI 50% di siang hari (tepi lebih bersih, kawat lebih jelas).
+Kesimpulan tetap: siang -> jalur Apple; algoritma ini belum layak dipindahkan ke app. Uji yang masih bernilai:
+burst RAW malam/senja di Colab (di situ jalur RAW app sudah menang atas Apple, lihat cek build 81).
