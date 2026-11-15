@@ -3,6 +3,7 @@ name: Convert SR model (Core ML)
 # Konversi Real-ESRGAN -> Core ML (.mlpackage) lalu compile -> .mlmodelc.
 #   Cepat : realesr-general-x4v3 (SRVGGNetCompact, 1.2 M param)
 #   Detail: RealESRGAN_x4plus    (RRDBNet, 16.7 M param)
+#   Tajam : 4xNomos8kSC          (RRDBNet, 16.7 M param, CC BY 4.0, Philip Hofmann)
 # Hasil .mlmodelc di-commit ke ios-app/BaginCam/Models/.
 
 on:
@@ -26,7 +27,7 @@ jobs:
       - name: Install torch + coremltools
         run: |
           python -m pip install --upgrade pip
-          pip install "torch==2.5.1" "coremltools==8.3.0" "numpy==1.26.4" pillow
+          pip install "torch==2.5.1" "coremltools==8.3.0" "numpy==1.26.4" pillow "safetensors==0.4.5"
 
       - name: Download weights (Real-ESRGAN, BSD-3-Clause) + cek SHA-256
         run: |
@@ -34,9 +35,11 @@ jobs:
             https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
           curl -fsSL -o RealESRGAN_x4plus.pth \
             https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+          curl -fsSL -o 4xNomos8kSC.safetensors             https://huggingface.co/Phips/4xNomos8kSC/resolve/main/4xNomos8kSC.safetensors
           cat > sums.txt <<'EOF'
           8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  realesr-general-x4v3.pth
           4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1  RealESRGAN_x4plus.pth
+          9e158a603ceb1a21de7159cbdf32c402d1d68d03397f3d6d473d0152fc12122c  4xNomos8kSC.safetensors
           EOF
           sed -i '' 's/^ *//' sums.txt
           shasum -a 256 -c sums.txt
@@ -47,11 +50,18 @@ jobs:
       - name: Convert + verify (Detail)
         run: python tools/sr_model/convert_sr.py RealESRGAN_x4plus.pth --arch rrdb --out BaginCamSRplus_x4_256.mlpackage
 
+      - name: Convert + verify (Tajam)
+        run: >
+          python tools/sr_model/convert_sr.py 4xNomos8kSC.safetensors --arch rrdb
+          --out BaginCamSRnomos_x4_256.mlpackage --src 4xNomos8kSC
+          --author "4xNomos8kSC by Philip Hofmann (Phhofm), converted for BaginCam" --license "CC-BY-4.0"
+
       - name: Compile mlmodelc
         run: |
           mkdir -p out
           xcrun coremlcompiler compile BaginCamSR_x4_256.mlpackage out/
           xcrun coremlcompiler compile BaginCamSRplus_x4_256.mlpackage out/
+          xcrun coremlcompiler compile BaginCamSRnomos_x4_256.mlpackage out/
           du -sh out/*
 
       - name: Upload

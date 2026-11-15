@@ -105,8 +105,35 @@ class Wrapper(nn.Module):
         return torch.clamp(self.net(x) * 255.0, 0.0, 255.0)
 
 
+def old_esrgan_to_new(sd):
+    """kunci format ESRGAN lama ("model.1.sub.0.RDB1.conv1.0.weight") -> nama basicsr RRDBNet"""
+    import re
+    fixed = {"model.0": "conv_first", "model.3": "conv_up1", "model.6": "conv_up2",
+             "model.8": "conv_hr", "model.10": "conv_last"}
+    out = {}
+    for k, v in sd.items():
+        base, kind = k.rsplit(".", 1)
+        m = re.fullmatch(r"model\.1\.sub\.(\d+)\.RDB(\d)\.conv(\d)\.0", base)
+        if m:
+            name = f"body.{m.group(1)}.rdb{m.group(2)}.conv{m.group(3)}"
+        elif re.fullmatch(r"model\.1\.sub\.\d+", base):
+            name = "conv_body"
+        elif base in fixed:
+            name = fixed[base]
+        else:
+            raise SystemExit(f"kunci tidak dikenal: {k}")
+        out[f"{name}.{kind}"] = v
+    return out
+
+
 def load(path, arch="compact"):
-    sd = torch.load(path, map_location="cpu", weights_only=True)
+    if path.endswith(".safetensors"):
+        from safetensors.torch import load_file
+        sd = {k: v.float() for k, v in load_file(path).items()}
+        if any(k.startswith("model.") for k in sd):
+            sd = old_esrgan_to_new(sd)
+    else:
+        sd = torch.load(path, map_location="cpu", weights_only=True)
     for key in ("params_ema", "params"):
         if isinstance(sd, dict) and key in sd:
             sd = sd[key]
@@ -123,6 +150,9 @@ def main():
                     help="compact = realesr-general-x4v3 (Cepat), rrdb = RealESRGAN_x4plus (Detail)")
     ap.add_argument("--check", action="store_true", help="hanya cek load + forward (tanpa coremltools)")
     ap.add_argument("--out", default="BaginCamSR_x4_256.mlpackage")
+    ap.add_argument("--src", default="", help="nama model sumber untuk keterangan (default menurut --arch)")
+    ap.add_argument("--author", default="Real-ESRGAN (Xintao Wang et al.), converted for BaginCam")
+    ap.add_argument("--license", default="BSD-3-Clause")
     args = ap.parse_args()
 
     net = load(args.weights, args.arch)
@@ -147,10 +177,10 @@ def main():
         compute_precision=ct.precision.FLOAT16,
         minimum_deployment_target=ct.target.iOS17,
     )
-    src = "RealESRGAN_x4plus" if args.arch == "rrdb" else "realesr-general-x4v3"
-    mlmodel.short_description = f"BaginCam AI Zoom: Real-ESRGAN {src} (BSD-3-Clause), tile 256 -> 1024"
-    mlmodel.author = "Real-ESRGAN (Xintao Wang et al.), converted for BaginCam"
-    mlmodel.license = "BSD-3-Clause"
+    src = args.src or ("RealESRGAN_x4plus" if args.arch == "rrdb" else "realesr-general-x4v3")
+    mlmodel.short_description = f"BaginCam AI Zoom: {src} ({args.license}), tile 256 -> 1024"
+    mlmodel.author = args.author
+    mlmodel.license = args.license
     mlmodel.save(args.out)
     print("tersimpan:", args.out)
 
