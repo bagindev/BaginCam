@@ -1730,3 +1730,19 @@ Perubahan `tools/BaginCam_uji_superres_burst.ipynb` (+ salinan di `data/bursts/c
 - sel baru "1b. Uji GPU": versi python/torch/numba, driver, daftar paket CUDA, kernel numba kecil (BERHASIL/GAGAL);
 - sel jalankan: keluaran ke `/content/log.txt`, cetak kode keluar + 40 baris terakhir.
 Notebook v2 BELUM DIUJI.
+
+## 2026-11-15 - Hasil uji Colab: super-res burst Google (Jamy-L) pada burst genggam 75x
+
+Pengguna berhasil menjalankan notebook (tidak dilaporkan perbaikan mana yang membuatnya jalan) dan menyimpan
+`data/output/tengah_75x.png` (504x672) + `tengah_75x_besar.png`. Dicocokkan lewat korelasi: burst GENGGAM
+(HDRPLUS_20261115-122337, `burst_tangan.zip`), korelasi 0,954 dengan frame RAW-nya. Burst tripod belum diuji.
+Pembanding (`tools/colab_cmp.py`): `data/output/zoom75_colab_superres_1115.jpg` (ringkas) dan `..._detail.jpg`:
+1 frame RAW | Colab 20 frame skala 2x | Apple zoom + AI Detail 50% (IMG 12:24:03).
+Temuan:
+- Colab lebih tajam dari 1 frame RAW: garis nat genteng lebih tegas, celah di antara kabel terpisah. Ini pertama
+  kalinya gabungan frame RAW memberi detail lebih dari satu frame (geser+rata sederhana & drizzle app tidak).
+- Cacat: garis patah bertingkat di batas ubin perataan (pola genteng berulang -> salah sejajar), pinggiran warna
+  hijau/merah, noise warna berbintik (koreksi noise dimatikan, tanpa tabel noise kamera).
+- Masih di bawah jalur Apple + AI 50%: serat kabel dan tepi genteng lebih jelas di Apple, tanpa garis patah.
+Kesimpulan: algoritmanya terbukti bekerja pada burst genggam, tetapi belum mengalahkan jalur Apple di siang hari;
+belum layak dipindahkan ke app. Belum diuji: burst tripod, koreksi noise aktif, zoom malam.
