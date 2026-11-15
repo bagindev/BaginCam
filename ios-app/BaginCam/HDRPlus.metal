@@ -410,22 +410,29 @@ struct DrizzleParams {
     float noiseS, noiseO;  // model noise ternormalisasi: var = S*x + O
 };
 
-// rata-rata bilinear 4 superpixel (R, G1, G2, B) di posisi plane (px, py)
-static inline float4 drizzle_sample(device const ushort* raw, uint W, int pw, int ph, float px, float py)
+// satu kanal Bayer (c: 0=R, 1=G1, 2=G2, 3=B) diinterpolasi bilinear di posisi plane (px, py) pada grid kanal itu
+static inline float drizzle_channel(device const ushort* raw, uint W, int pw, int ph, float px, float py, uint c)
 {
     const int ix = clamp(int(floor(px)), 0, pw - 2);
     const int iy = clamp(int(floor(py)), 0, ph - 2);
     const float fx = clamp(px - float(ix), 0.0f, 1.0f), fy = clamp(py - float(iy), 0.0f, 1.0f);
-    const uint x0 = uint(ix)*2, y0 = uint(iy)*2, x1 = x0+2, y1 = y0+2;
-    float4 v00 = float4(float(raw[y0*W+x0]),   float(raw[y0*W+x0+1]),
-                         float(raw[(y0+1)*W+x0]), float(raw[(y0+1)*W+x0+1]));
-    float4 v10 = float4(float(raw[y0*W+x1]),   float(raw[y0*W+x1+1]),
-                         float(raw[(y0+1)*W+x1]), float(raw[(y0+1)*W+x1+1]));
-    float4 v01 = float4(float(raw[y1*W+x0]),   float(raw[y1*W+x0+1]),
-                         float(raw[(y1+1)*W+x0]), float(raw[(y1+1)*W+x0+1]));
-    float4 v11 = float4(float(raw[y1*W+x1]),   float(raw[y1*W+x1+1]),
-                         float(raw[(y1+1)*W+x1]), float(raw[(y1+1)*W+x1+1]));
+    const uint x0 = uint(ix) * 2 + (c & 1u), y0 = uint(iy) * 2 + (c >> 1);
+    const float v00 = float(raw[y0 * W + x0]),       v10 = float(raw[y0 * W + x0 + 2]);
+    const float v01 = float(raw[(y0 + 2) * W + x0]), v11 = float(raw[(y0 + 2) * W + x0 + 2]);
     return mix(mix(v00, v10, fx), mix(v01, v11, fx), fy);
+}
+
+// v0.31.1: R, G1, G2, B untuk SATU sel keluaran, masing-masing di posisi Bayer-nya sendiri.
+// Di sensor G1 berada +0,5 superpixel mendatar dari R, G2 +0,5 tegak, B keduanya; di sel keluaran (grid 2x)
+// posisi Bayer hanya +0,25. Jadi grid G1 dibaca di px - 0,25 (0,25 - 0,5), dst. Semua kanal diinterpolasi
+// dengan cara yang sama -> tidak ada sisir (v0.30.1) dan tidak ada pinggiran warna (v0.30.2 merata-rata
+// kanal dengan jumlah tap berbeda, IMG_7302).
+static inline float4 drizzle_sample(device const ushort* raw, uint W, int pw, int ph, float px, float py)
+{
+    return float4(drizzle_channel(raw, W, pw, ph, px,          py,          0u),
+                  drizzle_channel(raw, W, pw, ph, px - 0.25f, py,          1u),
+                  drizzle_channel(raw, W, pw, ph, px,          py - 0.25f, 2u),
+                  drizzle_channel(raw, W, pw, ph, px - 0.25f, py - 0.25f, 3u));
 }
 
 // v0.28.3: (1) geseran tile diinterpolasi antar-tile (dulu tile terdekat -> batas kotak terlihat),
@@ -474,10 +481,7 @@ kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
 }
 
 // ---------- normalisasi akumulator -> Bayer uint16 ----------
-// v0.30.2: tiap kanal ditaruh di posisi Bayer-nya yang benar. Sampel drizzle memperlakukan R, G1, G2, B satu
-// superpixel seolah di titik yang sama, padahal G1 bergeser +0,5 superpixel mendatar, G2 +0,5 tegak, B keduanya.
-// Di grid keluaran (0,5 superpixel per sel) itu = 1 sel; posisi Bayer yang dituju hanya setengah sel.
-// Tanpa koreksi G1 != G2 di setiap tepi -> demosaic membuat garis sisir (IMG_7289, tripod).
+// (posisi tiap kanal sudah dibetulkan saat pengambilan sampel, lihat drizzle_sample)
 kernel void drizzle_to_bayer(device const float4* acc     [[buffer(0)]],
                              device ushort*       raw     [[buffer(1)]],
                              constant uint2&      outSize [[buffer(2)]],
@@ -485,14 +489,7 @@ kernel void drizzle_to_bayer(device const float4* acc     [[buffer(0)]],
                              uint2 gid [[thread_position_in_grid]])
 {
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
-    const uint W0 = outSize.x;
-    const uint xm = gid.x > 0 ? gid.x - 1 : 0, ym = gid.y > 0 ? gid.y - 1 : 0;
-    const float4 a   = acc[gid.y * W0 + gid.x];
-    const float4 ax  = acc[gid.y * W0 + xm];
-    const float4 ay  = acc[ym * W0 + gid.x];
-    const float4 axy = acc[ym * W0 + xm];
-    const float4 s = float4(a.x, 0.5f * (a.y + ax.y), 0.5f * (a.z + ay.z), 0.25f * (a.w + ax.w + ay.w + axy.w));
-    const float4 v = clamp(round(s * invN), 0.0f, 65535.0f);
+    const float4 v = clamp(round(acc[gid.y * outSize.x + gid.x] * invN), 0.0f, 65535.0f);
     const uint W = outSize.x * 2, x = gid.x * 2, y = gid.y * 2;
     raw[y*W+x]         = ushort(v.x);
     raw[y*W+x+1]       = ushort(v.y);

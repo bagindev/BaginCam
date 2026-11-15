@@ -3286,9 +3286,10 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        // tumpukan membawa sampel sub-piksel -> diperkecil hanya sampai 2x "detail asli" foto tunggal
+        // v0.31.0 memakai sumber AI 2x lebih besar: tangga hasil pembesaran Apple ikut terbawa dan dianggap tepi
+        // oleh AI (IMG_7298) -> kembali ke ukuran yang sama dengan foto tunggal
         let long = max(out.width, out.height)
-        let real = min(long, burstRealLong * 2)
+        let real = min(long, burstRealLong)
         let cg = real < long ? (SRUpscaler.resize(out, longSide: real) ?? out) : out
         Log.sr.info("Zoom Apple x\(images.count, privacy: .public): \(out.width, privacy: .public)x\(out.height, privacy: .public), geseran px:terpakai [\(notes.joined(separator: " "), privacy: .public)], \(dt, format: .fixed(precision: 2), privacy: .public) s, sumber AI \(real, privacy: .public) px")
         processAIZoomImage(cg, properties: metadata, dir: dir, multiFrame: images.count, cropOverride: 1)
