@@ -1361,3 +1361,18 @@ Pengguna memilih UI B dari `docs/ui-mockup-gabungan.html`.
 - Angka eksposur dan lencana bantu di sudut preview hilang (hanya tampil lewat PRO).
 - Kode lama yang tidak terpakai (assistChip, AssistPanel, lockRow, zoomChip, readout) belum dihapus.
 - Build: run 43666564769 sukses. IPA: `data/ipa-v0.28.0/BaginCam-unsigned.ipa` (36,9 MB). Belum diuji di HP.
+
+## 2026-11-15 - v0.28.1 build 67: tombol cara zoom diperjelas + cek build 66
+
+Laporan pengguna: "super res + ai nya ga bisa dibuka". Penyebab pasti tidak terlihat dari log (log tidak
+merekam sentuhan); dugaan: tombol "..." kecil di baris zoom tidak dikenali, dan di pil atas pilihannya
+tersembunyi di submenu.
+
+- Baris zoom: tombol "..." diganti chip bertulisan cara zoom aktif (mis. "Crop penuh + AI ▾"); angka zoom
+  di sebelahnya dihapus (sudah ada di lencana lensa). Di VIDEO chip ini = gembok lensa.
+- Pil atas FOTO: pilihan cara zoom + AI langsung di menu utama, bukan submenu.
+- Laci > Hasil & warna: ubin baru "Cara zoom" dan "AI zoom" (model + fokus tulisan).
+- Cek log build 66 (09:17-09:21): 8 foto 50x/75x, semuanya "cara zoom Crop penuh" + AI Detail, sumber hanya
+  400x536 / 600x800 px -> hasil lunak, sebagian tidak fokus. Tidak ada error.
+- Terbukti dari log: perbaikan ultra wide bekerja ("Zoom dipasang ulang setelah keluar VIDEO: faktor 1.00 -> 2.00").
+- Build: run 43669824425 sukses. IPA: `data/ipa-v0.28.1/BaginCam-unsigned.ipa`. IPA v0.28.0 dihapus (digantikan).
