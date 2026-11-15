@@ -2960,9 +2960,9 @@ final class CameraManager: NSObject, ObservableObject {
             Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(self.burstCrop), lens: self.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
         }
 
-        // v0.29.2: zoom jauh (crop >= 3x dari lensa) selalu 12MP - sumbernya hanya ratusan piksel,
+        // v0.29.3: zoom di atas 50x selalu 12MP - sumbernya hanya ratusan piksel,
         // memperbesar ke 24/48MP tidak menambah detail, hanya file & waktu proses
-        let farZoom = burstZoomed && burstCrop >= 3
+        let farZoom = burstZoomed && burstTotalZoom > 50.5
         let res: OutputMP = farZoom ? .mp12 : burstOutputMP
         if farZoom && burstOutputMP != .mp12 {
             Log.sr.info("Zoom jauh: hasil 12MP (setelan \(self.burstOutputMP.label, privacy: .public))")
