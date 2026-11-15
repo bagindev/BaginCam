@@ -1746,3 +1746,23 @@ Temuan:
 - Masih di bawah jalur Apple + AI 50%: serat kabel dan tepi genteng lebih jelas di Apple, tanpa garis patah.
 Kesimpulan: algoritmanya terbukti bekerja pada burst genggam, tetapi belum mengalahkan jalur Apple di siang hari;
 belum layak dipindahkan ke app. Belum diuji: burst tripod, koreksi noise aktif, zoom malam.
+
+## 2026-11-15 - Cek build 81: model "Tajam" + Apple x5 saat senja (75x, genggam)
+
+Ditarik dari iPhone: log + IMG_7304-7316 (17:22-17:26, senja). Semua AI 50%. Foto ke `%TEMP%\claude\cek81`
+(tidak disalin ke D:). Pembanding: `data/output/zoom75_senja_tandon_1115.jpg`, `zoom75_senja_lampu_1115.jpg`.
+Pemetaan (dari log): 7304 RAW+Cepat | 7305 Apple x5+Cepat | 7306 Apple+Cepat | 7307 Apple+Tajam | 7308 Apple x5+Tajam
+(lampu, ISO 200-250, 1/100-1/121) ; 7309/7310 Apple x5+Tajam | 7311 Apple+Tajam | 7312 RAW+Tajam | 7313 RAW+Detail |
+7314 RAW+Cepat | 7315 Apple x5+Cepat | 7316 Apple x5+Detail (tandon, ISO 400-640, ~1/90).
+Temuan:
+- SENJA MEMBALIK HASIL SIANG: jalur RAW 20 frame (HDR+ drizzle) bersih, tutup tandon/pipa/panel terbaca; jalur Apple
+  berbintik dan belang seperti cat air (noise Apple + penajaman diperbesar). RAW+Detail (7313) terbaik.
+- Apple x5 tidak menolong di cahaya redup: bagian terpakai hanya 15-58 % (ambang penolakan 0,05-0,12 kalah oleh
+  noise) dan Vision memberi geseran ngawur (-3024, 2121, -975 px) pada 4 dari 6 burst senja. Di lampu (ISO 200)
+  terpakai 72-95 %, hasil sedikit lebih halus dari Apple tunggal, tanpa detail baru.
+- Model Tajam: di sumber ber-noise ikut menajamkan noise (RAW+Tajam berbutir, Apple+Tajam belang); tidak lebih baik
+  dari Detail. Waktu 1,3 s (sekali 3,35 s), muat model 3,2 s. Catatan: tiap model = jepretan berbeda (fokus 0,76-0,79).
+- Build 80 (sampling per kanal drizzle): tidak terlihat garis sisir atau pinggiran teal/oranye di 7312-7314.
+- pickSharp: tetap memakai 20 dari 20 frame (skor 93-100 %).
+Usul (menunggu pengguna): cara zoom Auto memilih menurut cahaya (terang -> Apple, redup -> RAW burst) memakai
+ukuran ISO x t yang sudah ada (lampu 2,0; tandon ~4,5); Apple x5 dipensiunkan atau diberi batas geseran.
