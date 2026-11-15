@@ -1581,3 +1581,24 @@ Temuan:
 - Efek samping "Frame DNG": 60 file DNG (3 burst x 20, ~640 MB) ikut masuk galeri Foto iPhone (IMG_7185-7244).
 
 Pengguna akan mengambil ulang sampel dengan tripod. Belum ada keputusan perubahan kode.
+
+## 2026-11-15 - v0.30.2 build 78: bedah burst tripod + perbaikan posisi kanal drizzle
+
+Sampel tripod: burst `HDRPLUS_20261115-123257` (20 DNG), hasil app IMG_7289, Apple IMG_7290, lampu jalan 75x.
+Gambar: `data/output/zoom75_bedah_burst_tripod_1115.jpg`.
+
+Temuan:
+- Geseran antar frame di tripod <= 0,35 px mendatar, <= 1,4 px tegak (dipegang tangan: 22 / 31 px).
+- Hasil app di tripod TETAP cacat: garis sisir di tepi lampu & tiang, tekstur genteng hilang, pola aneh di tepi
+  bawah. Jadi cacatnya bukan dari goyangan.
+- 1 frame RAW tetap lunak-tapi-jujur; 20 frame geser+rata tidak menambah detail; Apple tetap paling detail.
+- Terang / kontras: app sRGB rata 150, kontras 44,5, saturasi 71,6; Apple 140 / 50,1 / 80,7. Bedanya sedang
+  (~10 %), bukan penyebab utama.
+
+Penyebab garis sisir (dari kode): `drizzle_warp_acc` mengambil R, G1, G2, B satu superpixel seolah di titik yang
+sama, padahal G1 bergeser +0,5 superpixel mendatar, G2 tegak, B keduanya. `drizzle_to_bayer` lalu menaruhnya di
+sel Bayer 2x2 yang jaraknya hanya setengah itu -> G1 != G2 di setiap tepi -> demosaic membuat pola sisir.
+Perbaikan: G1 = rata-rata sel ini + sel kiri, G2 = sel ini + sel atas, B = rata-rata 4 sel (kiri, atas, kiri-atas).
+
+Belum diperbaiki: tekstur hilang (deconv + AI di sumber kecil), kontras/saturasi lebih rendah dari Apple.
+Build: run 43682015151 sukses. IPA: `data/ipa-v0.30.2/BaginCam-unsigned.ipa`. IPA v0.30.1 dihapus. Belum diuji di HP.
