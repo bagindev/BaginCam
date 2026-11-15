@@ -1342,3 +1342,22 @@ lokasi lama), C: kosong 95 GB, D: sisa 6 GB. Semua pekerjaan selanjutnya di D:\p
   sampai 1 s x 32 frame bila gelap sekali dan HP di tripod; penghalusan minimal (noise sedikit dibiarkan);
   tone mapping lokal ringan; Long Exposure = frame dijumlah biasa tanpa robust merge.
 - Menunggu pilihan UI dari pengguna dan persetujuan sebelum mengubah mode MALAM.
+
+## 2026-11-15 - v0.28.0 build 66: UI B (layar bidik bersih + saklar PRO + laci pengaturan)
+
+Pengguna memilih UI B dari `docs/ui-mockup-gabungan.html`.
+
+- **Bar atas** kini 3 hal: flash (senter di video) · pil proses · saklar PRO. Baris chip lama dan tombol gerigi hilang.
+- **Pil proses** mengikuti mode: FOTO = proses Auto/HDR+/Apple + jumlah frame + fusi 48MP + cara zoom
+  (label berubah jadi "Super Res + AI" saat zoom di luar titik lensa optik); MALAM = rencana frame;
+  POTRET = chip bokeh + percantik; VIDEO/SINEMA/DUAL = format video (SINEMA + chip bokeh).
+- **Saklar PRO** (`@AppStorage proLayer`): baris angka ISO / shutter / WB / EV / fokus yang bisa diketuk
+  (penggaris nilai muncul di atas shutter), histogram, slider zoom, dan alat bantu di kiri preview
+  (grid, waterpass, peaking, zebra). Tab laci Pro lama dan tombol slider di baris mode dihapus.
+- **Laci pengaturan** (file baru `ControlDrawer.swift`, tombol "pengaturan" di atas shutter, ketuk / geser ke atas):
+  ubin 4 kolom - khusus mode, Hasil & warna, Tampilan, Lainnya. Menggantikan chip Hasil/Warna/Bantu/AI/Live/lampu layar.
+- **Baris zoom**: tombol menu di kanan = kunci lensa + cara zoom + AI (baris kunci lensa lama hilang).
+- Mode PRO di baris mode diganti nama **RAW** (isinya tetap: HDR+ / ProRAW / Bayer + lensa fisik).
+- Angka eksposur dan lencana bantu di sudut preview hilang (hanya tampil lewat PRO).
+- Kode lama yang tidak terpakai (assistChip, AssistPanel, lockRow, zoomChip, readout) belum dihapus.
+- Build: run 43666564769 sukses. IPA: `data/ipa-v0.28.0/BaginCam-unsigned.ipa` (36,9 MB). Belum diuji di HP.
