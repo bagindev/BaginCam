@@ -474,6 +474,10 @@ kernel void drizzle_warp_acc(device const ushort*   raw   [[buffer(0)]],
 }
 
 // ---------- normalisasi akumulator -> Bayer uint16 ----------
+// v0.30.2: tiap kanal ditaruh di posisi Bayer-nya yang benar. Sampel drizzle memperlakukan R, G1, G2, B satu
+// superpixel seolah di titik yang sama, padahal G1 bergeser +0,5 superpixel mendatar, G2 +0,5 tegak, B keduanya.
+// Di grid keluaran (0,5 superpixel per sel) itu = 1 sel; posisi Bayer yang dituju hanya setengah sel.
+// Tanpa koreksi G1 != G2 di setiap tepi -> demosaic membuat garis sisir (IMG_7289, tripod).
 kernel void drizzle_to_bayer(device const float4* acc     [[buffer(0)]],
                              device ushort*       raw     [[buffer(1)]],
                              constant uint2&      outSize [[buffer(2)]],
@@ -481,7 +485,14 @@ kernel void drizzle_to_bayer(device const float4* acc     [[buffer(0)]],
                              uint2 gid [[thread_position_in_grid]])
 {
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
-    const float4 v = clamp(round(acc[gid.y * outSize.x + gid.x] * invN), 0.0f, 65535.0f);
+    const uint W0 = outSize.x;
+    const uint xm = gid.x > 0 ? gid.x - 1 : 0, ym = gid.y > 0 ? gid.y - 1 : 0;
+    const float4 a   = acc[gid.y * W0 + gid.x];
+    const float4 ax  = acc[gid.y * W0 + xm];
+    const float4 ay  = acc[ym * W0 + gid.x];
+    const float4 axy = acc[ym * W0 + xm];
+    const float4 s = float4(a.x, 0.5f * (a.y + ax.y), 0.5f * (a.z + ay.z), 0.25f * (a.w + ax.w + ay.w + axy.w));
+    const float4 v = clamp(round(s * invN), 0.0f, 65535.0f);
     const uint W = outSize.x * 2, x = gid.x * 2, y = gid.y * 2;
     raw[y*W+x]         = ushort(v.x);
     raw[y*W+x+1]       = ushort(v.y);
