@@ -1389,3 +1389,22 @@ label "Crop penuh" hanya nama cara zoom; memilih Super Res tidak mengubah banyak
   Log baru: `Fokus zoom: tunggu tambahan x s, selesai true/false, posisi lensa y`.
 - Belum dibuat: ulang fokus bila frame pertama terdeteksi buram.
 - Build: run 43670326108 sukses. IPA: `data/ipa-v0.28.2/BaginCam-unsigned.ipa`. IPA v0.28.1 dihapus (digantikan). Belum diuji di HP.
+
+## 2026-11-15 - v0.28.3 build 69: cek build 68 + perbaikan drizzle (kotak tempelan di zoom jauh)
+
+Cek build 68 (10:14-10:19, 11 foto: 9 zoom 50x/75x, 2 foto 1x):
+- Fokus zoom: 9 dari 9 kena. Log `Fokus zoom: tunggu tambahan 0.00 s, selesai true` di semua jepretan
+  (AF sekali di tengah selesai dalam jeda 0,5 s). Sampel kecil.
+- Menu cara zoom bisa dibuka: pengguna mengganti model AI Detail -> Cepat di tengah sesi.
+- Cacat baru terlihat (IMG_7116, 7118, 7123): kotak persegi bertepi tajam dengan isi bergaris / beda terang
+  di langit polos, kabel listrik, dan tandon. Lebar kotak = kelipatan ~341 px = 1 tile alignment drizzle.
+  Penyebab: `drizzle_warp_acc` memakai geseran tile terdekat tanpa interpolasi dan tanpa penolakan; di area
+  tanpa tekstur / garis lurus geserannya salah, lalu frame ditempel apa adanya.
+- Catatan: ISO x shutter antar frame burst masih bergeser ~8 % (mis. ISO 50 -> 40) walau AE dikunci. Belum diselidiki.
+
+Perbaikan (HDRPlus.metal, HDRPlusMerger.swift):
+- Geseran tile diinterpolasi bilinear antar pusat tile.
+- Tiap sampel dibandingkan dengan frame acuan di posisi yang sama; beda di atas ambang
+  (12 % sinyal + 3 sigma noise + 0,4 % rentang) diganti nilai acuan secara bertahap.
+- `DrizzleParams` ditambah black/range/noiseS/noiseO (dari `FreqConfig`); frame acuan diikat di buffer 4.
+- Build: run 43672179932 sukses. IPA: `data/ipa-v0.28.3/BaginCam-unsigned.ipa`. IPA v0.28.2 dihapus. Belum diuji di HP.
