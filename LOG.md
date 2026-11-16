@@ -1891,3 +1891,27 @@ memilih/menjelaskan saat tahap pindai. Belum ada data kualitas penilaian model; 
 - Lain: ReLIC, model CADB (ResNet-18), NIMA (estetika umum, MIT); VLM kecil Autoportrait 0,8B (kartunya sendiri
   menyebut belum teruji di frame HP nyata). CVPR 2025 "Smart Point-and-Shoot": belum jelas terbuka.
 Saran: mulai dari skor estetika Apple untuk mengurutkan 3 kandidat; GAIC/CSNet diuji dulu di PC dengan foto pengguna.
+
+## 2026-11-16 - Uji model komposisi GAIC di PC (saran 2)
+
+Permintaan pengguna: "oke kita lanjut saran 2" (uji GAIC dan CSNet di PC dengan foto sendiri).
+- Lisensi: GAIC kode MIT (HuiZeng asli; bo-zhang-cs/GAIC-Pytorch tak resmi, MIT). CSNet-Pytorch dan Photo Coach
+  TIDAK berlisensi -> tidak bisa dipakai di app -> CSNet tidak diuji.
+- Bobot: Google Drive dari README bo-zhang-cs (zip 103 MB: mobilenetv2 15,9 MB / shufflenetv2 19,7 MB / vgg16
+  75,4 MB), ke `%TEMP%\claude\comp\weights`. Tidak ada checksum resmi; dimuat dengan `weights_only=True`.
+  Lisensi bobot dan dataset latih (GAICD) untuk pemakaian komersial BELUM dipastikan.
+- Baru `tools/comp_gaic.py`: model ditulis ulang untuk CPU; RoIAlign/RoDAlign (aslinya ekstensi C++/CUDA) dengan
+  torch murni, dicocokkan dengan terjemahan harfiah kode C: selisih maks 2e-6. Kandidat crop rasio foto (3:4/4:3),
+  ~200 kandidat, bingkai asli ikut dinilai.
+- Bahan: 36 foto acak dari galeri iPhone (Jul 2025 - Nov 2026, `vidchk/sample.py`) ke `%TEMP%\claude\comp\pool`
+  (tidak disalin ke repo). Hasil per foto di `%TEMP%\claude\comp\out`; contoh 6 foto di
+  `data/output/komposisi_gaic_uji_1116_a.jpg` dan `_b.jpg`.
+Temuan:
+- Jalan cepat: 0,05-0,3 s per foto di CPU PC untuk ~200 kandidat. MobileNetV2 = 3,9 juta parameter.
+- Pilihan umumnya masuk akal: merapatkan ke subjek dan membuang ruang kosong (potret di tepi danau: langit
+  berlebih dibuang, kaki tetap utuh; orang di atas motor roda tiga: latar kiri dibuang). Foto yang sudah rapi
+  (makan malam) dinilai tinggi dan hampir tidak dipotong. MobileNetV2 dan ShuffleNetV2 paling konsisten; VGG16
+  sekali memotong kaki. Foto jalan raya: pilihan tiga model berbeda-beda (kurang meyakinkan).
+- Bingkai asli masuk 10 % teratas hanya di 7 dari 36 foto (MobileNetV2) - model cenderung menyukai crop lebih rapat.
+- Batas: hanya memilih crop dari bingkai yang ada; tidak bisa menyarankan geser kamera ke luar bingkai.
+Menunggu penilaian pengguna atas gambar contoh sebelum dipindahkan ke iPhone.
