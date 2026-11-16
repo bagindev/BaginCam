@@ -1947,3 +1947,28 @@ Batas yang diketahui: kandidat "Dekat" bisa lebih kecil dari crop yang dipakai s
 kandidat aturan yang keluar bingkai dipotong dulu sebelum dinilai -> skornya kurang dapat dipercaya; lisensi bobot /
 dataset GAICD untuk rilis komersial belum dipastikan. BELUM DIUJI DI HP.
 Build: run 43842134484 sukses. IPA: `data/ipa-v0.36.0/BaginCam-unsigned.ipa`. IPA v0.35.0 dihapus (isinya tercakup).
+
+## 2026-11-16 - Cek build 85: layar mati saat rekam + potret buram -> v0.36.1 build 86
+
+Laporan pengguna: saat rekam video layar bisa mati; hasil mode potret blur. Ditarik: log + IMG_7330-7345.
+1. Layar mati saat rekam. Log: rekam 17:14:14, tanpa sentuhan, `selesai ... 61.33 s`, `jeda suara diisi hening 4.65 s`.
+   App kamera tidak pernah memasang `isIdleTimerDisabled` (hanya layar pembesar video) -> kunci layar otomatis iOS
+   (~1 menit) mengunci HP dan rekaman terhenti. Perbaikan: `updateIdleTimer()` - layar ditahan nyala selama
+   `isRecording || isCapturing`, log `Layar tetap nyala: ..`.
+2. Potret buram (IMG_7339, 7340: dedaunan, 2x, hanya 700 KB). Dua sebab:
+   a. `subjectMatte`: tidak ada objek menonjol, lalu mask ORANG dipakai walau kosong -> seluruh foto diblur cakram
+      radius 53 px. Perbaikan: mask orang hanya dipakai bila menutup >= 1 % gambar; kalau tidak, foto dibiarkan
+      tajam dan status diberi keterangan "potret: subjek tidak ditemukan, tanpa bokeh".
+   b. Commit 73864a8 (15 Nov, sesi lain) memaksa burst Bayer 12MP untuk SEMUA "Crop penuh" di mode HDR+ (pesannya
+      menyebut hanya saat gelap, kodenya tanpa syarat cahaya). Potret 2x: crop Bayer 2016x1512 diperbesar ke
+      4284x5712. Perbaikan: lensa 48MP, crop < 3x, ISO x t < 2 -> 1 foto sensor 48MP di-crop (detail 2x lipat);
+      burst Bayer tetap dipakai saat redup, di tele, dan di crop >= 3x (jalur uji zoom jauh tidak berubah).
+   Pembanding: `data/output/potret_buram_1116.jpg`.
+3. Model komposisi: pindai pertama build 85 = 10,82 s memuat 3 model + ShuffleNet 3,35 s. Perbaikan: model
+   dimuat saat diperlukan (`scorer(_:)` + kunci), varian lain dinilai di antrean latar hanya untuk log.
+   Satu-satunya pindai di log: MobileNet bingkai 3,00 / Sepertiga 2,99 / AI 3,84; ShuffleNet 2,62 / 2,92 / 3,30;
+   VGG 2,59 / 2,96 / 3,72; penilaian 0,18 / (3,35 pertama) / 0,34 s.
+Data memori (16 PM): sisa ~3,0-3,3 GB sebelum burst; 8 frame = ~190 MB; proses menurunkan lagi 240-670 MB
+(terbesar di jalur zoom) -> cadangan 700 MB di `DeviceCaps` sesuai.
+Build: run 43850571102 sukses (run 43850396856 dibatalkan, digantikan). IPA: `data/ipa-v0.36.1/BaginCam-unsigned.ipa`.
+IPA v0.36.0 dihapus. BELUM DIUJI DI HP.
