@@ -1972,3 +1972,32 @@ Data memori (16 PM): sisa ~3,0-3,3 GB sebelum burst; 8 frame = ~190 MB; proses m
 (terbesar di jalur zoom) -> cadangan 700 MB di `DeviceCaps` sesuai.
 Build: run 43850571102 sukses (run 43850396856 dibatalkan, digantikan). IPA: `data/ipa-v0.36.1/BaginCam-unsigned.ipa`.
 IPA v0.36.0 dihapus. BELUM DIUJI DI HP.
+
+## 2026-11-16 - Cek build 86 (panas saat rekam) + v0.37.0 build 87: potret berbasis kedalaman
+
+Laporan pengguna: rekam FHD 30 fps ~3 menit sudah muncul peringatan panas; minta potret memakai mode kedalaman
+seperti iPhone. Ditarik: log + IMG_7346-7352.
+Panas - temuan dari log (tanpa perubahan besar di kode):
+- Perbaikan layar build 86 terbukti: rekam 154 s tanpa terhenti, `Layar tetap nyala: true`, frame hilang 0.
+- App dibuka 17:46:54 dengan HP SEDANG DIISI (baterai 85 % mengisi). Suhu sudah naik ke 1 (hangat) 17:48:00 di mode
+  POTRET, sebelum merekam: 6 jepretan potret redup (ISO x t 19, burst 15 frame + fusi 48MP + bokeh 5,4 s, proses
+  10-16 s tiap foto, satu peringatan memori iOS). Rekam mulai 17:49:57 (1080p30 HEVC 709, stabil Action, LUT
+  preview); suhu 2 (panas) tercatat 17:53:50, 78 s setelah rekaman selesai, saat berganti-ganti mode stabilisasi.
+- Rekaman 709 tanpa LUT bakar = pass-through (tanpa Core Image per frame), jadi beban rekam sendiri wajar.
+- Mitigasi kecil: preview 20 fps saat suhu >= 2 kini juga ketika merekam (MTKView saja; file video tidak berubah).
+  Belum diukur: beban preview LUT + stabilisasi Action; perlu uji terkontrol (HP dingin, tidak diisi).
+Potret kedalaman (baru):
+- `CameraManager`: `portraitDepth` (bawaan nyala), `depthReady`, `applyDepth()` (sessionQueue) menyalakan
+  `isDepthDataDeliveryEnabled` + matte potret di photo output saat mode POTRET di kamera virtual belakang / depan;
+  bila tidak didukung pada resolusi penuh, batas foto diturunkan ke ~12MP selama POTRET lalu dikembalikan.
+  `baseMode()`: potret kedalaman = mesin Apple (HEIF) di kamera virtual; zoom dipaksa cara Apple (tidak pindah ke
+  lensa fisik). Setelan foto: kedalaman + matte ditanam di file, resolusi standar.
+- `processDepthPortrait`: `RawDeveloper.depthBlur` = `CIContext.depthBlurEffectFilter(forImageData:)`
+  (CIDepthBlurEffect) dengan `inputAperture` dari kekuatan Bokeh: f = 16 * (1,4/16)^t (25 % f/8,7; 50 % f/4,7;
+  75 % f/2,6; 100 % f/1,4). Tanpa data kedalaman -> cara lama (segmentasi) pada foto yang sama. LUT / rasio lewat
+  `reprocess`. Log: `Kedalaman potret: ..`, `Potret: kedalaman | cara lama`, `Potret kedalaman: foto WxH, ..`.
+- UI: saklar "Kedalaman (seperti iPhone)" di menu chip Bokeh; chip bertanda "· 3D" saat aktif.
+- Batas yang diketahui: tanpa HDR+ (1 foto Apple 12MP), tanpa percantik wajah, hasil tidak bisa diedit ulang
+  kedalamannya (file akhir sudah diratakan), rentang zoom bisa dibatasi iOS saat kedalaman aktif.
+BELUM DIUJI DI HP - jalur kedalaman belum pernah dijalankan sama sekali.
+Build: run 43853977722 sukses. IPA: `data/ipa-v0.37.0/BaginCam-unsigned.ipa`. IPA v0.36.1 dihapus.
