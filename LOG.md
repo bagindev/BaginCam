@@ -1838,3 +1838,23 @@ yang terikat perangkat keras tidak (tele 3x vs 5x, ultra wide 12MP, pemrosesan c
 16 Pro Max di iOS 26). Catatan penting: app saat ini belum memakai satu pun API iOS 26 (hanya ada gerbang iOS 27
 untuk aperture), jadi build sekarang di iOS 26 tidak akan menunjukkan hal baru. Usul: tambahkan dulu area
 fokus/eksposur iOS 26 untuk zoom jauh (bergerbang, HP iOS 18 tidak terpengaruh) + log kemampuan iOS 26.
+
+## 2026-11-16 - v0.35.0 build 84: iOS 26 - area fokus sempit untuk burst RAW zoom jauh + log kemampuan iOS 26
+
+Permintaan pengguna: "bolehh" untuk dua tambahan (area fokus/eksposur iOS 26 + log), supaya bisa dicoba di 15 Pro.
+Nama API dipastikan dari dokumentasi Apple (JSON developer.apple.com): `isFocusRectOfInterestSupported`,
+`minFocusRectOfInterestSize`, `focusRectOfInterest`, `defaultRectForFocusPoint(ofInterest:)`, padanan eksposur,
+`AVCaptureDeviceInput.isCinematicVideoCaptureSupported`. Semua bergerbang `#available(iOS 26.0, *)`.
+- `applyZoomFocusRect(_:crop:)`: burst RAW zoom (crop >= 2, lensa fisik zoom 1): area fokus tengah ~1,5/crop sisi,
+  dijepit ke ukuran minimum HP (lebih kecil = exception), hanya bila lebih sempit dari bawaan. Dipasang sebelum
+  `focusMode = .autoFocus` di jalur kamera virtual -> lensa fisik dan jalur lensa dikunci.
+- `resetFocusRect(_:)`: area kembali ke bawaan untuk burst tanpa zoom dan setelah burst (lensa dikunci).
+- Log baru: `iOS 26 <lensa>: area fokus ... area eksposur ... sinematik Apple ...` (tiap lensa dipasang),
+  `iOS 26: area fokus preview ...` (saat jepret zoom, untuk mempelajari koordinat saat zoom),
+  `iOS 26: area fokus zoom crop ...` (keputusan penyempitan).
+- Area EKSPOSUR belum dipakai, baru dicatat: eksposur burst RAW disalin dari preview, dan arti koordinat area saat
+  preview di-zoom belum diketahui - menunggu data log dari HP iOS 26.
+- `LogFile.swift`: nama model 15 Pro / 15 Pro Max ditambahkan.
+Di iOS 18 (HP pengguna) tidak ada jalur kode baru yang jalan. BELUM DIUJI di HP mana pun; jalur iOS 26 belum pernah
+dijalankan sama sekali.
+Build: run 43834732261 sukses. IPA: `data/ipa-v0.35.0/BaginCam-unsigned.ipa`. IPA v0.34.0 dihapus.
