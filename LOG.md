@@ -1796,3 +1796,12 @@ Build: run 43705930708 sukses. IPA: `data/ipa-v0.33.0/BaginCam-unsigned.ipa` (36
 BELUM DIUJI DI HP.
 Kebersihan: `data/bursts/colab/` (2 zip burst 430 MB + salinan notebook) dihapus; DNG sumbernya masih ada di
 `%TEMP%\claude\burst77` (genggam) dan `burst78` (tripod). D: 2,5 GB kosong sebelum IPA baru.
+
+## 2026-11-16 - Tanya: kompatibilitas iPhone lama untuk rilis App Store (belum ada perubahan kode)
+
+Survei singkat kode: target iOS 17.0 (= iPhone XS/XR 2018 ke atas), khusus iPhone (TARGETED_DEVICE_FAMILY 1).
+Lensa, resolusi sensor dan ketersediaan Bayer sudah dideteksi saat jalan (lensBase, maxDimensions, bayerOK),
+bukan dipatok ke 16 Pro Max. Yang belum: pembatasan memori burst 20 frame, kecepatan AI di chip lama, angka
+tuning (noise, deconv) yang disetel di sensor 16 PM, menyembunyikan fitur yang tak didukung, dan uji di HP lain.
+Catatan di luar perangkat: perlu Apple Developer Program berbayar; kode hdr-plus-swift berlisensi GPL-3.0, yang
+umumnya dianggap tidak cocok dengan syarat App Store - harus diselesaikan sebelum rilis.
