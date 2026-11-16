@@ -1871,3 +1871,11 @@ Pertanyaan pengguna: apakah Siri AI yang terintegrasi bisa dimanfaatkan ke depan
   terbuka, belum terverifikasi). Butuh iPhone 15 Pro ke atas.
 - Tidak membantu kualitas gambar / zoom. Saran: prioritas rendah; langkah termurah = App Intents dasar (jalan juga
   di iOS 17/18 lewat Pintasan dan tombol Aksi, tanpa AI).
+
+## 2026-11-16 - Tanya: AI komposisi di iOS 27 (belum ada perubahan kode)
+
+AI komposisi sekarang (`CompositionAI.swift`): detektor Vision (wajah, badan, saliency, klasifikasi, horizon) +
+aturan tetap (Sepertiga / Dekat / Lebar). Jawaban: model multimodal iOS 27 berpotensi memperbaiki PEMILIHAN
+(subjek mana, pengganggu di latar, saran dalam kalimat, memilih di antara kandidat), bukan presisi bingkai atau
+panduan real-time. Rancangan yang masuk akal: Vision tetap membuat kandidat + panduan langsung, model hanya
+memilih/menjelaskan saat tahap pindai. Belum ada data kualitas penilaian model; API gambar belum diverifikasi di SDK.
