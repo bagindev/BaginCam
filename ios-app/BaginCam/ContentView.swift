@@ -207,7 +207,7 @@ struct ContentView: View {
                 }
             }
             Toggle("Jumlah frame otomatis (6-15)", isOn: $cam.autoFrames)
-            Toggle("Fusi detail 48MP", isOn: $cam.fusion48)
+            if DeviceCaps.has48MP { Toggle("Fusi detail 48MP", isOn: $cam.fusion48) }
             if showsZoom { zoomMenuItems }
             Button("Pengaturan lain...") { showSettings = true }
         } label: {
@@ -617,7 +617,7 @@ struct ContentView: View {
             }
             if SettingsSheet.showsResolution(cam) {
                 Menu("Resolusi: \(cam.outputMP.label)") {
-                    ForEach(OutputMP.allCases) { r in
+                    ForEach(OutputMP.available) { r in
                         Button { cam.outputMP = r } label: { check(r.label, cam.outputMP == r) }
                     }
                 }
@@ -691,7 +691,7 @@ struct ContentView: View {
             }
             if SettingsSheet.showsResolution(cam) {
                 Section("Resolusi") {
-                    ForEach(OutputMP.allCases) { r in
+                    ForEach(OutputMP.available) { r in
                         Button { cam.outputMP = r } label: { check(r.label, cam.outputMP == r) }
                     }
                 }

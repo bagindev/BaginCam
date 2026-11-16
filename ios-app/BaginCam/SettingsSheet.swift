@@ -50,7 +50,7 @@ struct SettingsSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Resolusi")
                             Picker("Resolusi", selection: $cam.outputMP) {
-                                ForEach(OutputMP.allCases) { Text($0.label).tag($0) }
+                                ForEach(OutputMP.available) { Text($0.label).tag($0) }
                             }
                             .pickerStyle(.segmented)
                         }
@@ -119,8 +119,10 @@ struct SettingsSheet: View {
                             }
                             Slider(value: $cam.hdrNoiseReduction, in: 1...23, step: 1)
                         }
-                        Toggle("Fusi detail 48MP (cahaya cukup, 0.5x / 1x)", isOn: $cam.fusion48)
-                        if cam.fusion48 { Toggle("Simpan foto 48MP mentah (debug)", isOn: $cam.debugFusion) }
+                        if DeviceCaps.has48MP {
+                            Toggle("Fusi detail 48MP (cahaya cukup, 0.5x / 1x)", isOn: $cam.fusion48)
+                            if cam.fusion48 { Toggle("Simpan foto 48MP mentah (debug)", isOn: $cam.debugFusion) }
+                        }
                     } header: {
                         Text("HDR+")
                     } footer: {

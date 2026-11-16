@@ -50,6 +50,11 @@ final class LogFile {
         cleanup()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.flush() }
         let nc = NotificationCenter.default
+        // v0.34: kemampuan HP (untuk membaca log dari iPhone lain) + peringatan memori iOS
+        DispatchQueue.global(qos: .utility).async { Log.camera.info("Kemampuan HP: \(DeviceCaps.summary, privacy: .public)") }
+        observers.append(nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+            Log.camera.info("! Peringatan memori iOS: sisa \(DeviceCaps.availableMB, privacy: .public) MB")
+        })
         for n in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification,
                   UIApplication.willTerminateNotification] {
             observers.append(nc.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in self?.flush(wait: true) })

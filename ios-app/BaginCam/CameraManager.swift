@@ -576,6 +576,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var savedCount = 0
     private var hdrFrames: [BayerFrame] = []
+    private var lastBayerBytes = 4032 * 3024 * 2      // v0.34: ukuran frame Bayer terakhir (untuk batas memori)
     private var hdrRef: AVCapturePhoto?
 
     // engine
@@ -2433,6 +2434,15 @@ final class CameraManager: NSObject, ObservableObject {
                 self.fusionPending = ok
                 Log.camera.info("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
             }
+            // v0.34: burst RAW disimpan di memori sampai digabung -> jumlah frame dibatasi sisa memori HP
+            if bayerBurst && frames > 1 {
+                let lim = DeviceCaps.frameLimit(wanted: frames, frameBytes: self.lastBayerBytes)
+                Log.camera.info("Memori: sisa \(lim.roomMB, privacy: .public) MB sebelum burst \(frames, privacy: .public) frame (\(self.lastBayerBytes / 1_048_576, privacy: .public) MB/frame) -> \(lim.frames, privacy: .public) frame")
+                if lim.frames < frames {
+                    frames = lim.frames
+                    hint = "Memori terbatas: \(frames) frame"
+                }
+            }
             let hintText = hint
             DispatchQueue.main.async { self.captureHint = hintText }
             self.burstRemaining = frames
@@ -2552,6 +2562,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         DispatchQueue.main.async { self.previewFrozen = false }
         Log.camera.info("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
+        if collectsBayer { Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah capture (\(self.hdrFrames.count, privacy: .public) frame di memori)") }
         if collectsBayer {
             let frames = hdrFrames, ref = hdrRef, nr = burstNR, ai = burstMode == .aiZoom
             let fusion = fusionData
@@ -2565,6 +2576,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func finish(_ message: String) {
+        Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah proses")
         DispatchQueue.main.async {
             self.isCapturing = false
             self.previewFrozen = false
@@ -3327,6 +3339,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                     Log.camera.info("Fusi 48MP: foto Apple \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \((self.fusionData?.count ?? 0) / 1024, privacy: .public) KB")
                 } else {
                     if let frame {
+                        self.lastBayerBytes = frame.buffer.length
                         self.hdrFrames.append(frame)
                         if self.hdrRef == nil { self.hdrRef = photo }
                     }

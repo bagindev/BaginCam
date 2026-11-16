@@ -179,7 +179,7 @@ struct ControlDrawer: View {
     @ViewBuilder private var photoResultTiles: some View {
         if SettingsSheet.showsResolution(cam) {
             menuTile(cam.outputMP.label, "Resolusi") {
-                ForEach(OutputMP.allCases) { r in
+                ForEach(OutputMP.available) { r in
                     pick(r.label, cam.outputMP == r) { cam.outputMP = r }
                 }
             }

@@ -29,6 +29,8 @@ enum OutputMP: Int, CaseIterable, Identifiable {
     case mp12 = 12, mp24 = 24, mp48 = 48
     var id: Int { rawValue }
     var label: String { "\(rawValue)MP" }
+    /// v0.34: 48MP hanya ditawarkan di HP yang punya sensor 48MP
+    static var available: [OutputMP] { DeviceCaps.has48MP ? allCases : [.mp12, .mp24] }
     var longSide: Int {
         switch self {
         case .mp12: return 4032
