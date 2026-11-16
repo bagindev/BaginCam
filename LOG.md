@@ -1879,3 +1879,15 @@ aturan tetap (Sepertiga / Dekat / Lebar). Jawaban: model multimodal iOS 27 berpo
 (subjek mana, pengganggu di latar, saran dalam kalimat, memilih di antara kandidat), bukan presisi bingkai atau
 panduan real-time. Rancangan yang masuk akal: Vision tetap membuat kandidat + panduan langsung, model hanya
 memilih/menjelaskan saat tahap pindai. Belum ada data kualitas penilaian model; API gambar belum diverifikasi di SDK.
+
+## 2026-11-16 - Riset: model AI komposisi yang sudah ada (belum ada perubahan kode)
+
+- Bawaan Apple, iOS 18+: `CalculateImageAestheticsScoresRequest` (Vision) - skor estetika -1..1 + tanda "utility".
+  Tanpa unduhan, tanpa lisensi, jalan di HP pengguna sekarang. Tidak jalan di simulator.
+- GAIC (Grid Anchor based Image Cropping): menilai banyak kandidat crop, backbone MobileNetV2/ShuffleNetV2, kode
+  MIT (HuiZeng asli, bo-zhang-cs tak resmi). Ketersediaan/lisensi bobot terlatih BELUM dicek.
+- Camera View Adjustment Prediction (Google 2021): CSNet-Pytorch (skor komposisi 0-1, bobot ada, lisensi belum
+  dicek); Photo Coach (app iOS sumber terbuka, model Core ML untuk saran geser/zoom/ratakan; lisensi belum dicek).
+- Lain: ReLIC, model CADB (ResNet-18), NIMA (estetika umum, MIT); VLM kecil Autoportrait 0,8B (kartunya sendiri
+  menyebut belum teruji di frame HP nyata). CVPR 2025 "Smart Point-and-Shoot": belum jelas terbuka.
+Saran: mulai dari skor estetika Apple untuk mengurutkan 3 kandidat; GAIC/CSNet diuji dulu di PC dengan foto pengguna.
