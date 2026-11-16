@@ -69,8 +69,10 @@ final class CompositionAI: ObservableObject {
     private var lastKind = ""                 // queue
     private var missing = 0                   // queue
     private var last: CompGuide?              // queue
-    private var scorers: [CompModel: CompScorer] = [:]             // queue
-    private var triedScorers = false                               // queue
+    private var scorers: [CompModel: CompScorer] = [:]             // dijaga scorerLock
+    private var failedScorers = Set<CompModel>()                   // dijaga scorerLock
+    private let scorerLock = NSLock()
+    private let logQueue = DispatchQueue(label: "bagincam.comp.log", qos: .utility)   // varian lain, hanya untuk log
     private var aiRel: (dx: CGFloat, dy: CGFloat, k: CGFloat)?     // queue: letak crop AI relatif terhadap subjek
 
     // MARK: kontrol (main)
@@ -197,58 +199,72 @@ final class CompositionAI: ObservableObject {
     /// grid). Ketiga varian model dihitung dan dicatat di log untuk dibandingkan; `model` yang dipakai di layar.
     private func rate(_ cg: CGImage, subject s: Subject, rects: [(Variant, CGRect)], cands: inout [Candidate],
                       model: CompModel, maxZoom: CGFloat) -> String {
-        if !triedScorers {
-            triedScorers = true
-            let t0 = CFAbsoluteTimeGetCurrent()
-            for m in CompModel.allCases { if let sc = CompScorer.bundled(m) { scorers[m] = sc } }
-            Log.camera.info("Komposisi: \(self.scorers.count, privacy: .public) model GAIC dimuat (\(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s)")
-        }
         aiRel = nil
-        guard !scorers.isEmpty else { return "" }
         let ruleRects = rects.map { $0.1.intersection(Self.unit) }
         let grid = CompScorer.gridCandidates(minSide: max(0.65, 1 / max(maxZoom, 1)))
         let all = [Self.unit] + ruleRects + grid
+        let names = rects.map { $0.0.name }
+        // v0.36.1: varian lain dinilai di antrean latar hanya untuk log (build 85 memuat ketiganya dulu: pindai
+        // pertama 10,8 s muat + 3,4 s ShuffleNet)
+        let others = CompModel.allCases.filter { $0 != model }
+        defer { logQueue.async { for m in others { _ = self.evaluate(m, cg: cg, names: names, all: all) } } }
+        guard let sv = evaluate(model, cg: cg, names: names, all: all) else { return "" }
         let g0 = 1 + ruleRects.count
-        var note = ""
-        for m in CompModel.allCases {
-            guard let sc = scorers[m] else { continue }
-            let t0 = CFAbsoluteTimeGetCurrent()
-            guard let f = sc.features(cg), let sv = sc.scores(f, rects: all), sv.count == all.count else {
-                Log.camera.info("Komposisi \(m.rawValue, privacy: .public): gagal menilai")
-                continue
-            }
-            let dt = CFAbsoluteTimeGetCurrent() - t0
-            let bi = grid.isEmpty ? nil : (g0..<sv.count).max { sv[$0] < sv[$1] }
-            var parts = [String(format: "bingkai %.2f", sv[0])]
-            for (i, r) in rects.enumerated() { parts.append(String(format: "%@ %.2f", r.0.name, sv[1 + i])) }
-            if let bi {
-                let r = all[bi]
-                parts.append(String(format: "AI %.2f @%.2f,%.2f sisi %.2f", sv[bi], Double(r.midX), Double(r.midY), Double(r.width)))
-            }
-            Log.camera.info("Komposisi \(m.rawValue, privacy: .public): \(parts.joined(separator: ", "), privacy: .public) | \(all.count, privacy: .public) kandidat, masukan \(f.inW, privacy: .public)x\(f.inH, privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
-            guard m == model else { continue }
-            for i in cands.indices {
-                if let k = rects.firstIndex(where: { $0.0 == cands[i].variant }) { cands[i].score = sv[1 + k] }
-            }
-            if let bi {
-                let r = all[bi]
-                let dup = ruleRects.contains { abs($0.width - r.width) < 0.1 && hypot($0.midX - r.midX, $0.midY - r.midY) < 0.08 }
-                let W = CGFloat(cg.width), H = CGFloat(cg.height)
-                let px = CGRect(x: r.minX * W, y: r.minY * H, width: r.width * W, height: r.height * H).integral
-                if !dup, let t = cg.cropping(to: px) {
-                    cands.append(Candidate(id: 9, variant: .ai, thumb: UIImage(cgImage: t), zoom: 1 / max(r.width, 0.01), score: sv[bi]))
-                    let bw = max(s.box.width, 0.02), bh = max(s.box.height, 0.02)
-                    aiRel = ((r.midX - s.box.midX) / bw, (r.midY - s.box.midY) / bh, r.width / max(bw, bh))
-                }
-            }
-            let top = cands.indices.max { (cands[$0].score ?? -9) < (cands[$1].score ?? -9) }
-            if let top, let ts = cands[top].score {
-                cands[top].best = true
-                note = sv[0] >= ts - 0.05 ? String(format: "Bingkai sekarang sudah bagus (%.1f)", sv[0])
-                                          : String(format: "Bingkai sekarang %.1f → %@ %.1f", sv[0], cands[top].variant.name, ts)
+        for i in cands.indices {
+            if let k = rects.firstIndex(where: { $0.0 == cands[i].variant }) { cands[i].score = sv[1 + k] }
+        }
+        if let bi = grid.isEmpty ? nil : (g0..<sv.count).max(by: { sv[$0] < sv[$1] }) {
+            let r = all[bi]
+            let dup = ruleRects.contains { abs($0.width - r.width) < 0.1 && hypot($0.midX - r.midX, $0.midY - r.midY) < 0.08 }
+            let W = CGFloat(cg.width), H = CGFloat(cg.height)
+            let px = CGRect(x: r.minX * W, y: r.minY * H, width: r.width * W, height: r.height * H).integral
+            if !dup, let t = cg.cropping(to: px) {
+                cands.append(Candidate(id: 9, variant: .ai, thumb: UIImage(cgImage: t), zoom: 1 / max(r.width, 0.01), score: sv[bi]))
+                let bw = max(s.box.width, 0.02), bh = max(s.box.height, 0.02)
+                aiRel = ((r.midX - s.box.midX) / bw, (r.midY - s.box.midY) / bh, r.width / max(bw, bh))
             }
         }
+        var note = ""
+        let top = cands.indices.max { (cands[$0].score ?? -9) < (cands[$1].score ?? -9) }
+        if let top, let ts = cands[top].score {
+            cands[top].best = true
+            note = sv[0] >= ts - 0.05 ? String(format: "Bingkai sekarang sudah bagus (%.1f)", sv[0])
+                                      : String(format: "Bingkai sekarang %.1f → %@ %.1f", sv[0], cands[top].variant.name, ts)
+        }
         return note
+    }
+
+    /// model dimuat saat pertama dipakai (aman dipanggil dari dua antrean)
+    private func scorer(_ m: CompModel) -> CompScorer? {
+        scorerLock.lock()
+        defer { scorerLock.unlock() }
+        if let sc = scorers[m] { return sc }
+        if failedScorers.contains(m) { return nil }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let sc = CompScorer.bundled(m)
+        if let sc { scorers[m] = sc } else { failedScorers.insert(m) }
+        Log.camera.info("Komposisi \(m.rawValue, privacy: .public): model \(sc == nil ? "TIDAK ADA" : "dimuat", privacy: .public) (\(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s)")
+        return sc
+    }
+
+    /// skor untuk [bingkai sekarang] + kandidat aturan + grid, dan satu baris log pembanding
+    private func evaluate(_ m: CompModel, cg: CGImage, names: [String], all: [CGRect]) -> [Float]? {
+        guard let sc = scorer(m) else { return nil }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let f = sc.features(cg), let sv = sc.scores(f, rects: all), sv.count == all.count else {
+            Log.camera.info("Komposisi \(m.rawValue, privacy: .public): gagal menilai")
+            return nil
+        }
+        let dt = CFAbsoluteTimeGetCurrent() - t0
+        let g0 = 1 + names.count
+        var parts = [String(format: "bingkai %.2f", sv[0])]
+        for (i, n) in names.enumerated() { parts.append(String(format: "%@ %.2f", n, sv[1 + i])) }
+        if g0 < sv.count, let bi = (g0..<sv.count).max(by: { sv[$0] < sv[$1] }) {
+            let r = all[bi]
+            parts.append(String(format: "AI %.2f @%.2f,%.2f sisi %.2f", sv[bi], Double(r.midX), Double(r.midY), Double(r.width)))
+        }
+        Log.camera.info("Komposisi \(m.rawValue, privacy: .public): \(parts.joined(separator: ", "), privacy: .public) | \(all.count, privacy: .public) kandidat, masukan \(f.inW, privacy: .public)x\(f.inH, privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        return sv
     }
 
     private func analyze(_ image: CIImage, variant: Variant, roll: Double, maxZoom: CGFloat) -> CompGuide? {
