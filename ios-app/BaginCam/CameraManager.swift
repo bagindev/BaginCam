@@ -297,7 +297,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var textFocus: Bool = Prefs.get("textFocus", true) { didSet { Prefs.set("textFocus", textFocus) } }  // area tulisan: pilih AI/asli menurut OCR
     @Published var multiFrameZoom: Bool = Prefs.get("multiFrameZoom", true) { didSet { Prefs.set("multiFrameZoom", multiFrameZoom) } }  // burst Bayer + merge sebelum AI (bila tersedia)
 
-    @Published private(set) var isCapturing = false
+    @Published private(set) var isCapturing = false { didSet { if isCapturing != oldValue { updateIdleTimer() } } }
     /// progres pemrosesan berat (0..1), nil = tidak ada
     @Published private(set) var progress: Double?
     /// zoom di FOTO/HDR+: pakai AI (true) atau pembesaran biasa Lanczos (false) - untuk membandingkan
@@ -433,7 +433,7 @@ final class CameraManager: NSObject, ObservableObject {
     /// video yang menunggu AI Upscale (dibuka otomatis setelah rekam)
     @Published var pendingUpscale: URL?
     private var autoLockedForRec = false        // main: lensa dikunci otomatis saat mulai rekam
-    @Published private(set) var isRecording = false
+    @Published private(set) var isRecording = false { didSet { if isRecording != oldValue { updateIdleTimer() } } }
     /// rekaman ini boleh ganti kamera belakang <-> depan (Rec.709, kecepatan normal)
     @Published private(set) var recCanFlip = false
     private var recPrevLock: Lens?              // main: kunci lensa sebelum pindah ke depan saat rekam
@@ -576,6 +576,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var savedCount = 0
     private var hdrFrames: [BayerFrame] = []
+    private var portraitNoSubject = false             // v0.36.1: potret tanpa subjek -> keterangan di status
     private var lastBayerBytes = 4032 * 3024 * 2      // v0.34: ukuran frame Bayer terakhir (untuk batas memori)
     private var hdrRef: AVCapturePhoto?
 
@@ -2316,7 +2317,14 @@ final class CameraManager: NSObject, ObservableObject {
                 Log.camera.info("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
             }
 
-            let darkCrop = m == .hdrplus && zoomed && zm == .fullCrop
+            // v0.36.1: commit 73864a8 memaksa burst Bayer 12MP untuk SEMUA Crop penuh di mode HDR+, padahal maksudnya
+            // hanya saat gelap. Lensa 48MP di bawah 3x saat terang: 1 foto 48MP di-crop menyimpan detail 2x lipat
+            // (potret 2x: crop Bayer hanya 2016x1512 lalu diperbesar ke 24MP, IMG_7339).
+            let sensorCrop = nativeLong >= 8000 && crop < 3 && Double(srcISO) * srcDur < 2
+            let darkCrop = m == .hdrplus && zoomed && zm == .fullCrop && !sensorCrop
+            if m == .hdrplus && zoomed && zm == .fullCrop && sensorCrop {
+                Log.camera.info("Crop penuh terang: 1 foto sensor 48MP di-crop (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 2), privacy: .public), crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x)")
+            }
             let bayerBurst = (m == .hdrplus && !zoomed) || (zoomed && zm == .superRes) || darkCrop
             let singleFull = zoomed && zm == .fullCrop && !darkCrop
             if darkCrop {
@@ -2634,8 +2642,24 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// v0.36.1: kunci layar otomatis iOS dimatikan selama merekam / memproses. Sebelumnya rekaman terhenti sendiri
+    /// begitu layar terkunci (16 Nov: video berhenti di 61 s tanpa disentuh).
+    private func updateIdleTimer() {
+        DispatchQueue.main.async {
+            let on = self.isRecording || self.isCapturing
+            guard UIApplication.shared.isIdleTimerDisabled != on else { return }
+            UIApplication.shared.isIdleTimerDisabled = on
+            Log.camera.info("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), proses \(self.isCapturing, privacy: .public))")
+        }
+    }
+
     private func finish(_ message: String) {
         Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah proses")
+        var message = message
+        if portraitNoSubject {
+            portraitNoSubject = false
+            message += " · potret: subjek tidak ditemukan, tanpa bokeh"
+        }
         DispatchQueue.main.async {
             self.isCapturing = false
             self.previewFrozen = false
@@ -2962,10 +2986,13 @@ final class CameraManager: NSObject, ObservableObject {
                 if postT.hasPost { img = postT.post(img).settingProperties(img.properties) }
                 if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
                 var final = RawDeveloper.applyLUT(img, lut)
-                if burstPortrait, let cg = RawDeveloper.cgImage(final),
-                   let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity) {
-                    final = CIImage(cgImage: b).settingProperties(final.properties)
-                    Log.sr.info("Portrait bokeh diterapkan")
+                if burstPortrait, let cg = RawDeveloper.cgImage(final) {
+                    if let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity) {
+                        final = CIImage(cgImage: b).settingProperties(final.properties)
+                        Log.sr.info("Portrait bokeh diterapkan")
+                    } else {
+                        portraitNoSubject = true
+                    }
                 }
                 if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
                    let b = Self.applyFaceBeauty(cg, level: burstBeautyLevel) {
@@ -3075,9 +3102,13 @@ final class CameraManager: NSObject, ObservableObject {
         if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
         if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
-        if burstPortrait, let b = Self.applyPortraitBokeh(result, intensity: burstBokehIntensity) {
-            result = b
-            Log.sr.info("Portrait bokeh diterapkan (zoom)")
+        if burstPortrait {
+            if let b = Self.applyPortraitBokeh(result, intensity: burstBokehIntensity) {
+                result = b
+                Log.sr.info("Portrait bokeh diterapkan (zoom)")
+            } else {
+                portraitNoSubject = true
+            }
         }
 
         var props = properties
@@ -3196,8 +3227,32 @@ final class CameraManager: NSObject, ObservableObject {
                 return (fit(pb), "subjek \(chosen.count) dari \(obs.allInstances.count)")
             }
         }
-        if let pm = personMask { return (fit(pm), "segmentasi orang") }
+        // v0.36.1: mask orang selalu ada walau tidak ada orang (kosong) -> seluruh foto ikut diblur
+        // (IMG_7339 / 7340, dedaunan). Hanya dipakai bila orangnya benar-benar terlihat.
+        if let pm = personMask {
+            let cov = coverage(pm)
+            if cov >= 0.01 { return (fit(pm), String(format: "segmentasi orang %.0f%%", cov * 100)) }
+            Log.sr.info("Bokeh: mask orang kosong (\(cov * 100, format: .fixed(precision: 2), privacy: .public)%), tidak ada objek menonjol")
+        }
         return nil
+    }
+
+    /// bagian mask 8-bit yang bernilai > 0,5 (0..1)
+    private static func coverage(_ pb: CVPixelBuffer) -> Double {
+        guard CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_OneComponent8 else { return 1 }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pb) else { return 1 }
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), row = CVPixelBufferGetBytesPerRow(pb)
+        let px = base.assumingMemoryBound(to: UInt8.self)
+        var n = 0, hit = 0
+        for y in stride(from: 0, to: h, by: 4) {
+            for x in stride(from: 0, to: w, by: 4) {
+                n += 1
+                if px[y * row + x] > 128 { hit += 1 }
+            }
+        }
+        return n > 0 ? Double(hit) / Double(n) : 0
     }
 
     /// label objek (1...) yang minimal 25 % areanya tertutup mask orang
