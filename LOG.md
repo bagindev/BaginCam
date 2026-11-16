@@ -1858,3 +1858,16 @@ Nama API dipastikan dari dokumentasi Apple (JSON developer.apple.com): `isFocusR
 Di iOS 18 (HP pengguna) tidak ada jalur kode baru yang jalan. BELUM DIUJI di HP mana pun; jalur iOS 26 belum pernah
 dijalankan sama sekali.
 Build: run 43834732261 sukses. IPA: `data/ipa-v0.35.0/BaginCam-unsigned.ipa`. IPA v0.34.0 dihapus.
+
+## 2026-11-16 - Riset singkat: memanfaatkan Siri AI / Apple Intelligence (belum ada perubahan kode)
+
+Pertanyaan pengguna: apakah Siri AI yang terintegrasi bisa dimanfaatkan ke depannya.
+- Perintah Siri ke app: App Intents, domain skema `.camera` (dok. Apple): `openInCaptureMode`, `switchDevice`,
+  `setDevice`, `startCapture`, `stopCapture` + enum `captureMode` / `captureDevice` / `captureDuration`.
+- Model di perangkat: Foundation Models (iOS 26 teks saja; panduan iOS 27 Apple menyebut prompt multimodal dengan
+  gambar - detail API dari sumber sekunder, belum diverifikasi di SDK).
+- Siri AI yang baru diumumkan WWDC 8 Juni 2026 (iOS 27), bukan iOS 26. Bahasa: Inggris, lalu Okt 2026 Prancis,
+  Jepang, Korea, Portugis, Spanyol; Bahasa Indonesia tidak ditemukan di daftar mana pun (halaman resmi Apple tidak
+  terbuka, belum terverifikasi). Butuh iPhone 15 Pro ke atas.
+- Tidak membantu kualitas gambar / zoom. Saran: prioritas rendah; langkah termurah = App Intents dasar (jalan juga
+  di iOS 17/18 lewat Pintasan dan tombol Aksi, tanpa AI).
