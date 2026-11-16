@@ -1805,3 +1805,21 @@ bukan dipatok ke 16 Pro Max. Yang belum: pembatasan memori burst 20 frame, kecep
 tuning (noise, deconv) yang disetel di sensor 16 PM, menyembunyikan fitur yang tak didukung, dan uji di HP lain.
 Catatan di luar perangkat: perlu Apple Developer Program berbayar; kode hdr-plus-swift berlisensi GPL-3.0, yang
 umumnya dianggap tidak cocok dengan syarat App Store - harus diselesaikan sebelum rilis.
+
+## 2026-11-16 - v0.34.0 build 83: kemampuan HP (langkah awal multi-device)
+
+Permintaan pengguna: "oke kerjakan" untuk langkah 2 (app membatasi diri menurut kemampuan HP + mencatatnya di log).
+- Baru `ios-app/BaginCam/DeviceCaps.swift`: RAM, jumlah inti, lensa belakang + resolusi foto terbesar, ada 48MP /
+  tele / ultra wide, multi-kamera, sisa memori (`os_proc_available_memory`), `frameLimit(wanted:frameBytes:)`.
+- `LogFile.swift`: baris `Kemampuan HP: ...` tiap app dibuka; `! Peringatan memori iOS: sisa X MB`.
+- `CameraManager.swift`: burst RAW dibatasi sisa memori nyata saat shutter ditekan: (sisa - cadangan 700 MB) /
+  ukuran frame, minimal 4 frame. Ukuran frame = frame Bayer terakhir (awal 12MP = 23 MB). Log `Memori: sisa ...`
+  di tiga titik (sebelum burst, setelah capture, setelah proses) untuk mengkalibrasi angka cadangan.
+- UI: pilihan resolusi 48MP dan saklar "Fusi detail 48MP" hanya tampil bila HP punya sensor 48MP
+  (`OutputMP.available`, 4 tempat + 2 saklar).
+Di 16 Pro Max seharusnya tidak ada perubahan perilaku (memori longgar, sensor 48MP ada) - BELUM DIUJI DI HP.
+Koreksi perkiraan sebelumnya: 20 frame 12MP hanya ~465 MB, jadi di HP 4 GB kemungkinan masih muat; pembatas ini
+jaring pengaman, bukan sesuatu yang pasti aktif. Belum dikerjakan: menyembunyikan fitur lain (mode video Log/ProRes,
+SINEMA, preset tele di HP tanpa tele), kecepatan AI di chip lama, tuning noise per sensor, uji di HP lain.
+Build: run 43831513530 sukses. IPA: `data/ipa-v0.34.0/BaginCam-unsigned.ipa`. IPA v0.33.0 dihapus (belum sempat
+diuji; isinya tercakup di build ini).
