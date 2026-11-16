@@ -17,6 +17,15 @@ from PIL import Image
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import comp_gaic as G
 
+
+def channel_shuffle(x, groups):
+    """pengganti torchvision channel_shuffle: indeks kanal tetap, tanpa reshape yang bergantung pada tinggi/lebar
+    (reshape hasil trace salah bentuk saat ukuran masukan berganti - konversi pertama: selisih 0,20 di 352x256)."""
+    c = x.shape[1]
+    idx = torch.arange(c).view(groups, c // groups).t().reshape(-1)
+    return x.index_select(1, idx)
+
+
 SHAPES = [(352, 256), (256, 352), (448, 256), (256, 448), (256, 256), (320, 256), (256, 320)]   # (tinggi, lebar)
 BATCH = 32
 NAMES = {'mobilenetv2': 'MobileNetV2', 'shufflenetv2': 'ShuffleNetV2', 'vgg16': 'VGG16'}
@@ -83,6 +92,11 @@ def main():
         net = G.GAIC(name).eval()
         sd = torch.load(os.path.join(wdir, 'GAIC-%s-reddim%d.pth' % (name, G.GAIC.DIMS[name][1])), map_location='cpu', weights_only=True)
         net.load_state_dict(sd)
+        if name == 'shufflenetv2':
+            import torchvision.models.shufflenetv2 as snv2
+            xs = torch.randn(2, 116, 7, 5)
+            assert torch.equal(snv2.channel_shuffle(xs, 2), channel_shuffle(xs, 2))
+            snv2.channel_shuffle = channel_shuffle
         feat, head = Feat(net).eval(), Head(net).eval()
         red = G.GAIC.DIMS[name][1]
 
@@ -102,10 +116,26 @@ def main():
         ex = torch.rand(1, 3, th, tw) * 255
         traced = torch.jit.trace(feat, ex)
         shapes = ct.EnumeratedShapes(shapes=[(1, 3, h, w) for h, w in SHAPES], default=(1, 3, th, tw))
-        mf = ct.convert(traced, convert_to='mlprogram', minimum_deployment_target=ct.target.iOS17,
-                        inputs=[ct.ImageType(name='image', shape=shapes, color_layout=ct.colorlayout.RGB, scale=1.0)],
-                        outputs=[ct.TensorType(name='features', dtype=np.float32)],
-                        compute_precision=ct.precision.FLOAT16)
+        mf = None
+        for prec in (ct.precision.FLOAT16, ct.precision.FLOAT32):       # fp16 dulu; bila meleset, pakai fp32
+            mf = ct.convert(traced, convert_to='mlprogram', minimum_deployment_target=ct.target.iOS17,
+                            inputs=[ct.ImageType(name='image', shape=shapes, color_layout=ct.colorlayout.RGB, scale=1.0)],
+                            outputs=[ct.TensorType(name='features', dtype=np.float32)],
+                            compute_precision=prec)
+            worst = 0.0
+            for h, w in SHAPES:
+                arr = test_image(h, w)
+                out = mf.predict({'image': Image.fromarray(arr)})['features']
+                with torch.no_grad():
+                    want = feat(torch.from_numpy(arr.astype(np.float32)).permute(2, 0, 1).unsqueeze(0)).numpy()
+                assert out.shape == want.shape, (out.shape, want.shape)
+                err, rng = float(np.abs(out - want).max()), float(np.abs(want).max())
+                worst = max(worst, err / (0.03 * rng + 0.02))
+                print('  fitur %s %dx%d -> %s selisih maks %.4f (rentang %.2f)' % (prec.name, w, h, out.shape, err, rng))
+            if worst < 1:
+                break
+            print('  ! presisi %s meleset (%.1fx batas)' % (prec.name, worst))
+        assert worst < 1, worst
         mf.short_description = 'BaginCam AI Komposisi: fitur GAIC %s (MIT), sisi pendek 256' % NAMES[name]
         mf.author = 'GAIC (Zeng dkk.) - bobot bo-zhang-cs/GAIC-Pytorch, dikonversi untuk BaginCam'
         mf.license = 'MIT'
@@ -125,15 +155,6 @@ def main():
         mh.save(ph)
 
         # --- cek Core ML vs PyTorch (di macOS) ---
-        for h, w in SHAPES:
-            arr = (np.random.RandomState(h * 7 + w).rand(h, w, 3) * 255).astype(np.uint8) if (h, w) != (th, tw) else img
-            out = mf.predict({'image': Image.fromarray(arr)})['features']
-            with torch.no_grad():
-                want = feat(torch.from_numpy(arr.astype(np.float32)).permute(2, 0, 1).unsqueeze(0)).numpy()
-            assert out.shape == want.shape, (out.shape, want.shape)
-            err = float(np.abs(out - want).max())
-            print('  fitur %dx%d -> %s selisih maks %.4f (rentang %.2f)' % (w, h, out.shape, err, float(np.abs(want).max())))
-            assert err < 0.05 * max(1.0, float(np.abs(want).max())), err
         with torch.no_grad():
             roi = G.roi_align_avg(f_ref, torch.tensor(boxes, dtype=torch.float32), 9, 1 / 16)
             rod = G.rod_align_avg(f_ref, torch.tensor(boxes, dtype=torch.float32), 9, 1 / 16)

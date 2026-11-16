@@ -55,8 +55,11 @@ final class CompScorer {
     }
 
     static func bundled(_ kind: CompModel) -> CompScorer? {
-        guard let f = Bundle.main.url(forResource: kind.fileBase + "_feat", withExtension: "mlmodelc"),
-              let h = Bundle.main.url(forResource: kind.fileBase + "_head", withExtension: "mlmodelc") else { return nil }
+        func url(_ name: String) -> URL? {
+            Bundle.main.url(forResource: name, withExtension: "mlmodelc", subdirectory: "Models")
+                ?? Bundle.main.url(forResource: name, withExtension: "mlmodelc")
+        }
+        guard let f = url(kind.fileBase + "_feat"), let h = url(kind.fileBase + "_head") else { return nil }
         return CompScorer(kind: kind, featURL: f, headURL: h)
     }
 

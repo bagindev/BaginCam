@@ -25,13 +25,16 @@ final class CompositionAI: ObservableObject {
     enum Phase { case idle, scanning, guiding }
     enum Variant: Int {
         case neat, close, wide
-        var name: String { ["Sepertiga", "Dekat", "Lebar"][rawValue] }
+        case ai                      // v0.36: crop pilihan model GAIC
+        var name: String { ["Sepertiga", "Dekat", "Lebar", "AI"][rawValue] }
     }
     struct Candidate: Identifiable {
         let id: Int
         let variant: Variant
         let thumb: UIImage
         let zoom: CGFloat
+        var score: Float?            // v0.36: skor komposisi GAIC (kira-kira 1-5)
+        var best = false
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -41,6 +44,11 @@ final class CompositionAI: ObservableObject {
     @Published private(set) var caption = ""
     @Published private(set) var idleHint: String?
     @Published private(set) var message = ""
+    /// v0.36: model penilai komposisi (GAIC) - tiga varian dipasang untuk dibandingkan
+    @Published var model: CompModel = CompModel(rawValue: UserDefaults.standard.string(forKey: "compModel") ?? "") ?? .mobile {
+        didSet { UserDefaults.standard.set(model.rawValue, forKey: "compModel") }
+    }
+    @Published private(set) var frameNote = ""
 
     /// kemiringan HP (derajat) dari waterpass - di-set dari main
     var roll: Double = 0
@@ -61,11 +69,14 @@ final class CompositionAI: ObservableObject {
     private var lastKind = ""                 // queue
     private var missing = 0                   // queue
     private var last: CompGuide?              // queue
+    private var scorers: [CompModel: CompScorer] = [:]             // queue
+    private var triedScorers = false                               // queue
+    private var aiRel: (dx: CGFloat, dy: CGFloat, k: CGFloat)?     // queue: letak crop AI relatif terhadap subjek
 
     // MARK: kontrol (main)
 
     func startScan() {
-        guide = nil; candidates = []; caption = ""; message = ""; idleHint = nil
+        guide = nil; candidates = []; caption = ""; message = ""; idleHint = nil; frameNote = ""
         selected = 0
         scanStart = Date()
         scanTaken = false
@@ -94,7 +105,7 @@ final class CompositionAI: ObservableObject {
         if busy { lock.unlock(); return }
         busy = true
         lock.unlock()
-        let ph = phase, r = roll, mz = maxZoom
+        let ph = phase, r = roll, mz = maxZoom, md = model
         let variant = candidates.indices.contains(selected) ? candidates[selected].variant : .neat
         if ph == .scanning { scanTaken = true }
         queue.async {
@@ -104,7 +115,7 @@ final class CompositionAI: ObservableObject {
                 let h = self.idleAnalyze(image)
                 DispatchQueue.main.async { if self.phase == .idle, h != self.idleHint { self.idleHint = h } }
             case .scanning:
-                let res = self.scan(image, maxZoom: mz)
+                let res = self.scan(image, maxZoom: mz, model: md)
                 DispatchQueue.main.async { self.finishScan(res) }
             case .guiding:
                 let g = self.analyze(image, variant: variant, roll: r, maxZoom: mz)
@@ -118,7 +129,7 @@ final class CompositionAI: ObservableObject {
         }
     }
 
-    private func finishScan(_ res: (cands: [Candidate], caption: String)) {
+    private func finishScan(_ res: (cands: [Candidate], caption: String, note: String)) {
         let wait = max(0, 1.2 - Date().timeIntervalSince(scanStart))      // animasi pindai minimal ~1 detik
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
             guard self.phase == .scanning else { return }
@@ -130,6 +141,7 @@ final class CompositionAI: ObservableObject {
             }
             self.candidates = res.cands
             self.caption = res.caption
+            self.frameNote = res.note
             self.selected = 0
             self.lastAutoZoom = Date()
             self.phase = .guiding
@@ -160,8 +172,8 @@ final class CompositionAI: ObservableObject {
         return nil
     }
 
-    private func scan(_ image: CIImage, maxZoom: CGFloat) -> (cands: [Candidate], caption: String) {
-        guard let cg = Self.small(image, 640, ctx), let s = Self.detect(cg, lenient: true) else { return ([], "") }
+    private func scan(_ image: CIImage, maxZoom: CGFloat, model: CompModel) -> (cands: [Candidate], caption: String, note: String) {
+        guard let cg = Self.small(image, 640, ctx), let s = Self.detect(cg, lenient: true) else { return ([], "", "") }
         var rects: [(Variant, CGRect)] = []
         for v in [Variant.neat, .close, .wide] {
             let r = Self.compose(s, variant: v, maxZoom: v == .wide ? 1 : maxZoom, allowMove: true)
@@ -176,8 +188,67 @@ final class CompositionAI: ObservableObject {
             guard let t = cg.cropping(to: px) else { continue }
             cands.append(Candidate(id: i, variant: v, thumb: UIImage(cgImage: t), zoom: 1 / max(r.width, 0.01)))
         }
+        let note = rate(cg, subject: s, rects: rects, cands: &cands, model: model, maxZoom: maxZoom)
         let words = [s.kind] + Self.classify(cg)
-        return (cands, words.joined(separator: " · "))
+        return (cands, words.joined(separator: " · "), note)
+    }
+
+    /// v0.36: nilai bingkai sekarang + kandidat aturan dengan model GAIC, tambah kandidat "AI" (crop terbaik dari
+    /// grid). Ketiga varian model dihitung dan dicatat di log untuk dibandingkan; `model` yang dipakai di layar.
+    private func rate(_ cg: CGImage, subject s: Subject, rects: [(Variant, CGRect)], cands: inout [Candidate],
+                      model: CompModel, maxZoom: CGFloat) -> String {
+        if !triedScorers {
+            triedScorers = true
+            let t0 = CFAbsoluteTimeGetCurrent()
+            for m in CompModel.allCases { if let sc = CompScorer.bundled(m) { scorers[m] = sc } }
+            Log.camera.info("Komposisi: \(self.scorers.count, privacy: .public) model GAIC dimuat (\(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s)")
+        }
+        aiRel = nil
+        guard !scorers.isEmpty else { return "" }
+        let ruleRects = rects.map { $0.1.intersection(Self.unit) }
+        let grid = CompScorer.gridCandidates(minSide: max(0.65, 1 / max(maxZoom, 1)))
+        let all = [Self.unit] + ruleRects + grid
+        let g0 = 1 + ruleRects.count
+        var note = ""
+        for m in CompModel.allCases {
+            guard let sc = scorers[m] else { continue }
+            let t0 = CFAbsoluteTimeGetCurrent()
+            guard let f = sc.features(cg), let sv = sc.scores(f, rects: all), sv.count == all.count else {
+                Log.camera.info("Komposisi \(m.rawValue, privacy: .public): gagal menilai")
+                continue
+            }
+            let dt = CFAbsoluteTimeGetCurrent() - t0
+            let bi = grid.isEmpty ? nil : (g0..<sv.count).max { sv[$0] < sv[$1] }
+            var parts = [String(format: "bingkai %.2f", sv[0])]
+            for (i, r) in rects.enumerated() { parts.append(String(format: "%@ %.2f", r.0.name, sv[1 + i])) }
+            if let bi {
+                let r = all[bi]
+                parts.append(String(format: "AI %.2f @%.2f,%.2f sisi %.2f", sv[bi], Double(r.midX), Double(r.midY), Double(r.width)))
+            }
+            Log.camera.info("Komposisi \(m.rawValue, privacy: .public): \(parts.joined(separator: ", "), privacy: .public) | \(all.count, privacy: .public) kandidat, masukan \(f.inW, privacy: .public)x\(f.inH, privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
+            guard m == model else { continue }
+            for i in cands.indices {
+                if let k = rects.firstIndex(where: { $0.0 == cands[i].variant }) { cands[i].score = sv[1 + k] }
+            }
+            if let bi {
+                let r = all[bi]
+                let dup = ruleRects.contains { abs($0.width - r.width) < 0.1 && hypot($0.midX - r.midX, $0.midY - r.midY) < 0.08 }
+                let W = CGFloat(cg.width), H = CGFloat(cg.height)
+                let px = CGRect(x: r.minX * W, y: r.minY * H, width: r.width * W, height: r.height * H).integral
+                if !dup, let t = cg.cropping(to: px) {
+                    cands.append(Candidate(id: 9, variant: .ai, thumb: UIImage(cgImage: t), zoom: 1 / max(r.width, 0.01), score: sv[bi]))
+                    let bw = max(s.box.width, 0.02), bh = max(s.box.height, 0.02)
+                    aiRel = ((r.midX - s.box.midX) / bw, (r.midY - s.box.midY) / bh, r.width / max(bw, bh))
+                }
+            }
+            let top = cands.indices.max { (cands[$0].score ?? -9) < (cands[$1].score ?? -9) }
+            if let top, let ts = cands[top].score {
+                cands[top].best = true
+                note = sv[0] >= ts - 0.05 ? String(format: "Bingkai sekarang sudah bagus (%.1f)", sv[0])
+                                          : String(format: "Bingkai sekarang %.1f → %@ %.1f", sv[0], cands[top].variant.name, ts)
+            }
+        }
+        return note
     }
 
     private func analyze(_ image: CIImage, variant: Variant, roll: Double, maxZoom: CGFloat) -> CompGuide? {
@@ -188,7 +259,17 @@ final class CompositionAI: ObservableObject {
             return last
         }
         missing = 0
-        var r = Self.compose(s, variant: variant, maxZoom: variant == .wide ? 1 : maxZoom, allowMove: true)
+        var r: CGRect
+        if variant == .ai, let a = aiRel {
+            // crop AI mengikuti subjek: letak & ukuran relatif terhadap kotak subjek saat dipindai
+            let c = min(1, max(1 / max(maxZoom, 1), a.k * max(s.box.width, s.box.height)))
+            let cx = min(max(s.box.midX + a.dx * s.box.width, 0.2), 0.8)
+            let cy = min(max(s.box.midY + a.dy * s.box.height, 0.2), 0.8)
+            r = CGRect(x: cx - c / 2, y: cy - c / 2, width: c, height: c)
+        } else {
+            let v: Variant = variant == .ai ? .neat : variant
+            r = Self.compose(s, variant: v, maxZoom: v == .wide ? 1 : maxZoom, allowMove: true)
+        }
         if let p = smooth, s.kind == lastKind, hypot(p.midX - r.midX, p.midY - r.midY) < 0.25 {
             let a: CGFloat = 0.35
             r = CGRect(x: p.minX + (r.minX - p.minX) * a, y: p.minY + (r.minY - p.minY) * a,
@@ -331,7 +412,7 @@ final class CompositionAI: ObservableObject {
         switch variant {
         case .wide: c = 1
         case .close: c = s.isPerson ? max(b.height / 0.85, b.width / 0.85) : big / 0.75
-        case .neat: c = s.isPerson ? max(b.height / 0.8, b.width / 0.8) : big / 0.55
+        case .neat, .ai: c = s.isPerson ? max(b.height / 0.8, b.width / 0.8) : big / 0.55
         }
         c = min(1, max(minC, c))
         let centerPenalty: CGFloat
@@ -538,6 +619,11 @@ struct CompositionOverlay: View {
                 } else {
                     pill("Mencari subjek...", icon: "viewfinder", color: .white)
                 }
+                if !comp.frameNote.isEmpty {
+                    Text(comp.frameNote).font(.caption2).lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.5), in: Capsule()).foregroundStyle(.yellow)
+                }
                 Spacer()
             }
             .padding(.top, 44)
@@ -557,10 +643,31 @@ struct CompositionOverlay: View {
                                 Text(c.variant.name + (c.zoom > 1.1 ? String(format: " %.1fx", Double(c.zoom)) : ""))
                                     .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                                     .shadow(radius: 2)
+                                if let sc = c.score {
+                                    Text((c.best ? "★ " : "") + String(format: "%.1f", sc))
+                                        .font(.system(size: 9, weight: .bold)).foregroundStyle(c.best ? .yellow : .white.opacity(0.85))
+                                        .shadow(radius: 2)
+                                }
                             }
                         }
                     }
                     Spacer()
+                }
+                .overlay(alignment: .bottomLeading) {
+                    // v0.36: varian model penilai; ganti = pindai ulang
+                    Menu {
+                        ForEach(CompModel.allCases) { m in
+                            Button { comp.model = m; comp.startScan() } label: {
+                                if comp.model == m { Label(m.rawValue, systemImage: "checkmark") } else { Text(m.rawValue) }
+                            }
+                        }
+                    } label: {
+                        Text(comp.model.rawValue).font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 8).frame(height: 32)
+                            .background(.black.opacity(0.55), in: Capsule())
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.leading, 8)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     Button { comp.close() } label: {
