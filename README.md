@@ -24,4 +24,4 @@ Riwayat & hasil kerja: **[LOG.md](LOG.md)**
 
 ## Lisensi
 Kode dari hdr-plus-swift = GPL-3.0: aman untuk pemakaian pribadi; kalau app dibagikan, seluruh kode wajib GPL.
-Model AI Zoom: Real-ESRGAN (BSD-3-Clause) - lihat `ios-app/BaginCam/Models/`.
+Model AI Zoom: Real-ESRGAN (BSD-3-Clause); model AI Komposisi: GAIC (MIT) - lihat `ios-app/BaginCam/Models/`.

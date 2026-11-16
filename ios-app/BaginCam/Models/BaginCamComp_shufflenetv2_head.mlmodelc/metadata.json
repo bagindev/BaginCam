@@ -1,0 +1,66 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "BaginCam AI Komposisi: penilai GAIC ShuffleNetV2 (MIT), 32 kandidat per panggilan",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 32)",
+        "shortDescription" : "",
+        "shape" : "[32]",
+        "name" : "scores",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Float16",
+    "modelParameters" : [
+
+    ],
+    "author" : "GAIC (Zeng dkk.) - bobot bo-zhang-cs\/GAIC-Pytorch, dikonversi untuk BaginCam",
+    "specificationVersion" : 8,
+    "license" : "MIT",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.cast" : 2,
+      "Ios17.conv" : 3,
+      "Ios17.reshape" : 1,
+      "Ios16.relu" : 2
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 32 × 64 × 9 × 9)",
+        "shortDescription" : "",
+        "shape" : "[32, 64, 9, 9]",
+        "name" : "aligned",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.source_dialect" : "TorchScript",
+      "com.github.apple.coremltools.source" : "torch==2.5.1",
+      "com.github.apple.coremltools.version" : "8.3.0"
+    },
+    "generatedClassName" : "BaginCamComp_shufflenetv2_head",
+    "method" : "predict"
+  }
+]

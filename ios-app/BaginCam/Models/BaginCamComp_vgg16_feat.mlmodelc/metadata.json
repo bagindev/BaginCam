@@ -1,0 +1,74 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "BaginCam AI Komposisi: fitur GAIC VGG16 (MIT), sisi pendek 256",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "features",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Float16",
+    "modelParameters" : [
+
+    ],
+    "author" : "GAIC (Zeng dkk.) - bobot bo-zhang-cs\/GAIC-Pytorch, dikonversi untuk BaginCam",
+    "specificationVersion" : 8,
+    "license" : "MIT",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios16.upsampleBilinear" : 2,
+      "Ios17.cast" : 2,
+      "Ios17.conv" : 14,
+      "Ios17.mul" : 2,
+      "Ios16.relu" : 13,
+      "Ios17.concat" : 1,
+      "Ios16.maxPool" : 5,
+      "Ios17.sub" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "formattedType" : "Image (Color 256 × 352)",
+        "hasSizeFlexibility" : "1",
+        "shortDescription" : "",
+        "enumeratedSizes" : "[[256, 352], [352, 256], [256, 448], [448, 256], [256, 256], [256, 320], [320, 256]]",
+        "width" : "256",
+        "type" : "Image",
+        "isColor" : "1",
+        "height" : "352",
+        "sizeFlexibility" : "256 × 352 | 352 × 256 | 256 × 448 | 448 × 256 | 256 × 256 | 256 × 320 | 320 × 256",
+        "colorspace" : "RGB",
+        "name" : "image",
+        "isOptional" : "0"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.source_dialect" : "TorchScript",
+      "com.github.apple.coremltools.source" : "torch==2.5.1",
+      "com.github.apple.coremltools.version" : "8.3.0"
+    },
+    "generatedClassName" : "BaginCamComp_vgg16_feat",
+    "method" : "predict"
+  }
+]
