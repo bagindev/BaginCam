@@ -995,6 +995,43 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: area fokus iOS 26 (v0.35)
+    private static var narrowedFocus = Set<String>()      // lensa yang area fokusnya sedang dipersempit (sessionQueue)
+
+    private static func sizeText(_ z: CGSize) -> String { String(format: "%.3fx%.3f", Double(z.width), Double(z.height)) }
+
+    /// iOS 26+: area fokus dipersempit ke bidang yang benar-benar jadi foto (tengah, ~1,5/crop sisi), supaya AF tidak
+    /// menilai benda di luar hasil zoom. Ukuran dijepit ke batas terkecil HP (lebih kecil = exception). Device sudah
+    /// di-lock; area baru berlaku saat focusMode dipasang sesudahnya.
+    @discardableResult
+    private static func applyZoomFocusRect(_ d: AVCaptureDevice, crop: CGFloat) -> Bool {
+        guard #available(iOS 26.0, *), d.isFocusRectOfInterestSupported, crop >= 1 else { return false }
+        let mn = d.minFocusRectOfInterestSize
+        let def = d.defaultRectForFocusPoint(ofInterest: CGPoint(x: 0.5, y: 0.5))
+        guard mn.width > 0, mn.height > 0, mn.width <= 1, mn.height <= 1 else { return false }
+        let side = 1.5 / crop
+        let w = min(1, max(side, mn.width * 1.02)), h = min(1, max(side, mn.height * 1.02))
+        let narrower = w < def.width - 0.001 || h < def.height - 0.001
+        if narrower {
+            let w2 = min(w, max(def.width, mn.width * 1.02)), h2 = min(h, max(def.height, mn.height * 1.02))
+            d.focusRectOfInterest = CGRect(x: 0.5 - w2 / 2, y: 0.5 - h2 / 2, width: w2, height: h2)
+            narrowedFocus.insert(d.uniqueID)
+        }
+        Log.camera.info("iOS 26: area fokus zoom crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x: bawaan \(sizeText(def.size), privacy: .public), min \(sizeText(mn), privacy: .public), ingin \(sizeText(CGSize(width: side, height: side)), privacy: .public) -> \(narrower ? "dipersempit ke " + sizeText(d.focusRectOfInterest.size) : "bawaan dipertahankan", privacy: .public)")
+        return narrower
+    }
+
+    /// kembalikan area fokus bawaan bila sebelumnya dipersempit (device sudah di-lock)
+    @discardableResult
+    private static func resetFocusRect(_ d: AVCaptureDevice) -> Bool {
+        guard narrowedFocus.remove(d.uniqueID) != nil else { return false }
+        if #available(iOS 26.0, *), d.isFocusRectOfInterestSupported {
+            d.focusRectOfInterest = d.defaultRectForFocusPoint(ofInterest: d.focusPointOfInterest)
+            return true
+        }
+        return false
+    }
+
     private func publishCapabilities(_ d: AVCaptureDevice, label: String, mode: Mode) {
         let fmt = d.activeFormat
         let minS = max(fmt.minExposureDuration.seconds, 1.0 / 8000)
@@ -1017,6 +1054,14 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         Log.camera.info("Lensa \(label, privacy: .public): ISO \(fmt.minISO, privacy: .public)-\(fmt.maxISO, privacy: .public), shutter \(minS, privacy: .public)-\(maxS, privacy: .public)s, Bayer \(bayer, privacy: .public), ProRAW \(pro, privacy: .public), maks \(mp, privacy: .public)MP")
+        if #available(iOS 26.0, *) {
+            let c = CGPoint(x: 0.5, y: 0.5)
+            let f = d.isFocusRectOfInterestSupported, e = d.isExposureRectOfInterestSupported
+            let fs = f ? "bawaan \(Self.sizeText(d.defaultRectForFocusPoint(ofInterest: c).size)) min \(Self.sizeText(d.minFocusRectOfInterestSize))" : "-"
+            let es = e ? "bawaan \(Self.sizeText(d.defaultRectForExposurePoint(ofInterest: c).size)) min \(Self.sizeText(d.minExposureRectOfInterestSize))" : "-"
+            let cine = currentInput?.isCinematicVideoCaptureSupported ?? false
+            Log.camera.info("iOS 26 \(label, privacy: .public): area fokus \(f, privacy: .public) [\(fs, privacy: .public)], area eksposur \(e, privacy: .public) [\(es, privacy: .public)], sinematik Apple \(cine, privacy: .public)")
+        }
         DispatchQueue.main.async {
             self.isoRange = fmt.minISO...fmt.maxISO
             self.apertureStops = stops
@@ -2240,6 +2285,10 @@ final class CameraManager: NSObject, ObservableObject {
             var focusWait = false
             let canZoom = m == .hdrplus || m == .heif
             let zoomed = canZoom && Self.usesVirtual(m) && crop > 1.05
+            if zoomed, #available(iOS 26.0, *), let d = self.device, d.isFocusRectOfInterestSupported {
+                let r = d.focusRectOfInterest
+                Log.camera.info("iOS 26: area fokus preview \(Self.sizeText(r.size), privacy: .public) di \(Double(r.midX), format: .fixed(precision: 2), privacy: .public),\(Double(r.midY), format: .fixed(precision: 2), privacy: .public), zoom perangkat \(Double(d.videoZoomFactor), format: .fixed(precision: 1), privacy: .public)x, crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x")
+            }
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 || self.photoOutput.isAppleProRAWEnabled
             var zm = night ? ZoomMethod.superRes : method
@@ -2364,9 +2413,11 @@ final class CameraManager: NSObject, ObservableObject {
                                 // zoom jauh: hasil hanya bagian tengah sensor -> fokus sekali di tengah, lalu ditunggu
                                 // sampai selesai (AF kontinu + jeda 0,5 s sering terkunci saat masih mencari, IMG_7108)
                                 if p.isFocusPointOfInterestSupported { p.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
+                                Self.applyZoomFocusRect(p, crop: crop)
                                 p.focusMode = .autoFocus
                                 focusWait = true
                             } else if p.isFocusModeSupported(.continuousAutoFocus) {
+                                Self.resetFocusRect(p)
                                 p.focusMode = .continuousAutoFocus
                             }
                         }
@@ -2382,6 +2433,11 @@ final class CameraManager: NSObject, ObservableObject {
                     if !self.manualS.focus, d.isFocusModeSupported(.autoFocus) {
                         if self.shootMode != .portrait, d.isFocusPointOfInterestSupported {
                             d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                        }
+                        if zoomed && crop >= 2 && self.shootMode != .portrait {
+                            Self.applyZoomFocusRect(d, crop: crop)
+                        } else {
+                            Self.resetFocusRect(d)
                         }
                         d.focusMode = self.shootMode == .portrait ? .continuousAutoFocus : .autoFocus
                     }
@@ -2547,6 +2603,9 @@ final class CameraManager: NSObject, ObservableObject {
             d.videoZoomFactor = min(max(burstTotalZoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             if d.isVirtualDevice {
                 d.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
+            }
+            if Self.resetFocusRect(d), !manualS.focus, d.isFocusModeSupported(.continuousAutoFocus) {
+                d.focusMode = .continuousAutoFocus
             }
             d.unlockForConfiguration()
         }

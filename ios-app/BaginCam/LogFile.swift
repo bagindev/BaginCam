@@ -32,7 +32,7 @@ final class LogFile {
         var u = utsname()
         uname(&u)
         let id = withUnsafeBytes(of: &u.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-        let names = ["iPhone17,1": "16 Pro", "iPhone17,2": "16 Pro Max", "iPhone18,1": "17 Pro", "iPhone18,2": "17 Pro Max"]
+        let names = ["iPhone16,1": "15 Pro", "iPhone16,2": "15 Pro Max", "iPhone17,1": "16 Pro", "iPhone17,2": "16 Pro Max", "iPhone18,1": "17 Pro", "iPhone18,2": "17 Pro Max"]
         return names[id].map { "\(id) (\($0))" } ?? id
     }()
 
