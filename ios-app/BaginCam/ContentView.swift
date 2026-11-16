@@ -836,9 +836,13 @@ struct ContentView: View {
             ForEach([(25.0, "Tipis"), (50.0, "Natural"), (75.0, "Kuat"), (100.0, "Maksimal")], id: \.0) { v, name in
                 Button { cam.bokehIntensity = v } label: { check("\(name) \(Int(v))%", abs(cam.bokehIntensity - v) < 2.5) }
             }
+            Toggle("Kedalaman (seperti iPhone)", isOn: $cam.portraitDepth)
+            if cam.portraitDepth && !cam.depthReady {
+                Text("Data kedalaman tidak tersedia di kamera ini - memakai cara lama")
+            }
             Text("Atur lebih halus: laci pengaturan")
         } label: {
-            chip("Bokeh \(Int(cam.bokehIntensity))%", icon: "camera.aperture", on: true)
+            chip("Bokeh \(Int(cam.bokehIntensity))%" + (cam.portraitDepth && cam.depthReady ? " · 3D" : ""), icon: "camera.aperture", on: true)
         }
     }
 
@@ -987,7 +991,7 @@ struct ContentView: View {
             }
         }, onVolumeEvent: { isPrimary, phase in
             Log.camera.info("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
-        }, fps: cam.thermal >= 2 && !cam.isRecording ? 20 : 30)
+        }, fps: cam.thermal >= 2 ? 20 : 30)      // v0.37: saat panas preview 20 fps juga ketika merekam (file video tidak terpengaruh)
             .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
             .overlay { ratioMask }

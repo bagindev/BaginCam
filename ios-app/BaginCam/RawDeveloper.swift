@@ -157,6 +157,16 @@ enum RawDeveloper {
                                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])
     }
 
+    /// v0.37: blur kedalaman Apple (CIDepthBlurEffect, mesin yang sama dengan app Foto) dari HEIC yang membawa peta
+    /// kedalaman (+ matte potret). Piksel tidak diputar, metadata dipertahankan. nil = file tanpa data kedalaman.
+    static func depthBlur(_ encoded: Data, aperture: Float) -> Data? {
+        guard let src = CIImage(data: encoded, options: [.applyOrientationProperty: false]),
+              let f = context.depthBlurEffectFilter(forImageData: encoded, options: nil) else { return nil }
+        f.setValue(aperture, forKey: "inputAperture")
+        guard let out = f.outputImage?.cropped(to: src.extent) else { return nil }
+        return encodeHEIF(out.settingProperties(src.properties))
+    }
+
     static func encodeJPEG(_ image: CIImage, quality: Double = 0.92) -> Data? {
         context.jpegRepresentation(of: image, colorSpace: p3,
                                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])

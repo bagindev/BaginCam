@@ -321,7 +321,9 @@ final class CameraManager: NSObject, ObservableObject {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     // susunan UI ala GCam (v0.10): MALAM · FOTO · PRO
-    @Published private(set) var shootMode: ShootMode = Prefs.raw("shootMode", .photo) { didSet { Prefs.set("shootMode", shootMode.rawValue) } }
+    @Published private(set) var shootMode: ShootMode = Prefs.raw("shootMode", .photo) {
+        didSet { Prefs.set("shootMode", shootMode.rawValue); if shootMode != oldValue { applyDepthSoon() } }
+    }
     @Published private(set) var photoProcess: PhotoProcess = Prefs.raw("photoProcess", .hdrplus) { didSet { Prefs.set("photoProcess", photoProcess.rawValue) } }
     @Published private(set) var proFormat: ProFormat = Prefs.raw("proFormat", .proraw) { didSet { Prefs.set("proFormat", proFormat.rawValue) } }
     @Published var aspect: AspectRatio = Prefs.raw("aspect", .r43) { didSet { Prefs.set("aspect", aspect.rawValue) } }
@@ -407,6 +409,68 @@ final class CameraManager: NSObject, ObservableObject {
         d.unlockForConfiguration()
     }
     var faceBeauty: Bool { beautyLevel.active }
+    /// v0.37: POTRET memakai data kedalaman kamera + blur Apple (seperti kamera bawaan). Mati / tidak tersedia =
+    /// cara lama (HDR+ lalu latar dikaburkan menurut segmentasi subjek).
+    @Published var portraitDepth: Bool = Prefs.get("portraitDepth", true) {
+        didSet { Prefs.set("portraitDepth", portraitDepth); applyDepthSoon() }
+    }
+    @Published private(set) var depthReady = false
+    private var depthLoweredDims = false              // sessionQueue: batas foto diturunkan ke ~12MP demi kedalaman
+
+    private func applyDepthSoon() { sessionQueue.async { self.applyDepth() } }
+
+    /// mesin dasar mode sekarang (potret kedalaman = proses Apple di kamera virtual)
+    private func baseMode() -> Mode {
+        shootMode == .portrait && portraitDepth && depthReady ? .heif : Self.internalMode(shootMode, photoProcess, proFormat)
+    }
+
+    /// sessionQueue: nyalakan / matikan pengiriman data kedalaman di photo output. Hanya kamera virtual belakang
+    /// (dua lensa) atau kamera depan; lensa fisik tunggal tidak punya kedalaman.
+    private func applyDepth() {
+        guard configured, !inVideo, session.outputs.contains(photoOutput), let d = device else { return }
+        let capable = d.isVirtualDevice || d.position == .front
+        let want = shootMode == .portrait && portraitDepth && capable
+        if !want && !photoOutput.isDepthDataDeliveryEnabled && !depthLoweredDims {
+            if depthReady { DispatchQueue.main.async { self.depthReady = false } }
+            return
+        }
+        var note = ""
+        if want && !photoOutput.isDepthDataDeliverySupported, let std = standardDimensions(of: d) {
+            // kedalaman tidak tersedia pada batas resolusi penuh -> turunkan ke ~12MP selama POTRET
+            session.beginConfiguration()
+            photoOutput.maxPhotoDimensions = std
+            session.commitConfiguration()
+            depthLoweredDims = true
+            note = ", batas foto diturunkan ke \(std.width)x\(std.height)"
+        }
+        let on = want && photoOutput.isDepthDataDeliverySupported
+        if photoOutput.isDepthDataDeliveryEnabled != on {
+            session.beginConfiguration()
+            if !on && photoOutput.isPortraitEffectsMatteDeliveryEnabled { photoOutput.isPortraitEffectsMatteDeliveryEnabled = false }
+            photoOutput.isDepthDataDeliveryEnabled = on
+            if on && photoOutput.isPortraitEffectsMatteDeliverySupported { photoOutput.isPortraitEffectsMatteDeliveryEnabled = true }
+            session.commitConfiguration()
+        }
+        if !on && depthLoweredDims {
+            if capable, let full = maxDimensions(of: d) {
+                session.beginConfiguration()
+                photoOutput.maxPhotoDimensions = full
+                session.commitConfiguration()
+            }
+            depthLoweredDims = false
+            note += ", batas foto dikembalikan"
+        }
+        let matte = photoOutput.isPortraitEffectsMatteDeliveryEnabled
+        Log.camera.info("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(want, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(self.photoOutput.isDepthDataDeliverySupported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
+        DispatchQueue.main.async {
+            self.depthReady = on
+            if self.shootMode == .portrait && !self.isCapturing {
+                let b = self.baseMode()
+                if self.mode != b && Self.usesVirtual(self.mode) && Self.usesVirtual(b) { self.mode = b }
+            }
+        }
+    }
+
     @Published var bokehIntensity: Double = Prefs.get("bokehIntensity", 50.0) {
         didSet { Prefs.set("bokehIntensity", bokehIntensity); let v = bokehIntensity; videoQueue.async { self.cineIntensity = v } }
     }
@@ -564,6 +628,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstFaceBeauty = false
     private var burstBeautyLevel: BeautyLevel = .off
     private var burstPortrait = false
+    private var burstDepthPortrait = false            // v0.37: jepretan ini memakai data kedalaman
     private var burstBokehIntensity: Double = 50
     private var burstAspect: AspectRatio = .r43
     private var burstAngle: CGFloat = 90           // v0.18.3: sudut foto jepretan ini (dipasang ulang tiap capture)
@@ -2177,6 +2242,11 @@ final class CameraManager: NSObject, ObservableObject {
         let front = Self.usesVirtual(mode) ? aiLensLock == .front : lens == .front
         // flash kamera sungguhan hanya ada di proses Apple lensa belakang
         let realFlash = flash == .on && !front
+        if shootMode == .portrait {
+            // v0.37: potret kedalaman memakai proses Apple (kamera virtual); tanpa kedalaman = HDR+ seperti dulu
+            let want = baseMode()
+            if mode != want && Self.usesVirtual(mode) && Self.usesVirtual(want) { mode = want }
+        }
         if shootMode == .photo && (photoProcess == .auto || livePhoto || realFlash) {
             let gain = Double(liveISO) * liveShutter
             let apple = livePhoto || realFlash || photoProcess == .apple || gain < 2
@@ -2242,6 +2312,10 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstFaceBeauty = self.faceBeauty
             self.burstBeautyLevel = self.beautyLevel
             self.burstPortrait = self.shootMode == .portrait
+            self.burstDepthPortrait = self.shootMode == .portrait && m == .heif && self.photoOutput.isDepthDataDeliveryEnabled
+            if self.shootMode == .portrait {
+                Log.camera.info("Potret: \(self.burstDepthPortrait ? "kedalaman (proses Apple)" : "cara lama (HDR+ + segmentasi)", privacy: .public), mesin \(m.rawValue, privacy: .public)")
+            }
             self.burstBokehIntensity = self.bokehIntensity
             self.burstAspect = asp
             self.burstFlash = flashSet
@@ -2293,6 +2367,7 @@ final class CameraManager: NSObject, ObservableObject {
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 || self.photoOutput.isAppleProRAWEnabled
             var zm = night ? ZoomMethod.superRes : method
+            if self.burstDepthPortrait { zm = .apple }      // kedalaman hanya ada di kamera virtual (tidak pindah lensa)
             // v0.29.4: Auto di tele / crop >= 3x = zoom Apple (kamera virtual pada zoom sebenarnya: fokus & eksposur
             // dinilai di bidang yang terlihat, sumber 2x lebih besar). Uji 15 Nov: lampu 75x Apple jauh lebih tajam
             // dari burst RAW + drizzle (IMG_7162 vs IMG_7166).
@@ -2637,7 +2712,7 @@ final class CameraManager: NSObject, ObservableObject {
             hdrRef = nil
             fusionData = nil
             processQueue.async { self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai, fusion: fusion) }
-        } else if !burstZoomed && !burstAppleZoomAI {
+        } else if !burstZoomed && !burstAppleZoomAI && !burstDepthPortrait {
             finish("Tersimpan \(n) frame (\(dir?.lastPathComponent ?? "-"))")
         }
     }
@@ -2668,7 +2743,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.progressText = ""
             self.captureHint = ""
             // Auto / Live / flash mengganti mesin untuk satu jepretan -> kembali ke pilihan pengguna
-            let base = Self.internalMode(self.shootMode, self.photoProcess, self.proFormat)
+            let base = self.baseMode()
             if self.mode != base && Self.usesVirtual(self.mode) && Self.usesVirtual(base) { self.mode = base }
             self.endBackgroundTask()
         }
@@ -2742,6 +2817,15 @@ final class CameraManager: NSObject, ObservableObject {
                 live = true
             }
         }
+        // v0.37: potret kedalaman - peta kedalaman + matte potret ditanam di file untuk CIDepthBlurEffect
+        if burstDepthPortrait, s == nil, photoOutput.isDepthDataDeliveryEnabled {
+            settings.isDepthDataDeliveryEnabled = true
+            settings.embedsDepthDataInPhoto = true
+            if photoOutput.isPortraitEffectsMatteDeliveryEnabled {
+                settings.isPortraitEffectsMatteDeliveryEnabled = true
+                settings.embedsPortraitEffectsMatteInPhoto = true
+            }
+        }
         // burst: hanya frame pertama yang berbunyi (bila iOS / wilayah mengizinkan)
         if #available(iOS 18.0, *), burstIndex > 1 || fusionTaken, photoOutput.isShutterSoundSuppressionSupported {
             settings.isShutterSoundSuppressionEnabled = true
@@ -2750,7 +2834,7 @@ final class CameraManager: NSObject, ObservableObject {
         // resolusi: HEIF/ProRAW 24/48MP -> sensor penuh; AI Zoom lensa utama -> penuh; Bayer ~12MP
         if let d = device {
             let full = maxDimensions(of: d), std = standardDimensions(of: d)
-            let wantFull = !wantBayer && ((m == .aiZoom && burstAIFull) || (m == .heif && burstZoomed)
+            let wantFull = !wantBayer && !burstDepthPortrait && ((m == .aiZoom && burstAIFull) || (m == .heif && burstZoomed)
                                           || (burstOutputMP != .mp12 && (m == .heif || m == .proraw)))
             if let dims = (wantFull && !live) ? full : std,
                Int(dims.width) * Int(dims.height) <= Int(photoOutput.maxPhotoDimensions.width) * Int(photoOutput.maxPhotoDimensions.height) {
@@ -3339,6 +3423,38 @@ final class CameraManager: NSObject, ObservableObject {
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0, cropOverride: 1)
     }
 
+    // MARK: potret kedalaman (v0.37)
+
+    /// Foto Apple dengan peta kedalaman tertanam -> blur kedalaman Apple (CIDepthBlurEffect). Kekuatan Bokeh
+    /// diterjemahkan ke bukaan simulasi f/16 (0 %) .. f/1.4 (100 %); 50 % = f/4,7.
+    /// Tanpa data kedalaman: cara lama (segmentasi subjek) pada foto yang sama.
+    private func processDepthPortrait(_ data: Data?, hasDepth: Bool, dir: URL?, index: Int) {
+        guard var out = data else {
+            finish("Potret gagal: foto kosong")
+            return
+        }
+        setStatus("Potret: mengaburkan latar...")
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let t = max(0, min(100, burstBokehIntensity)) / 100
+        let aperture = Float(16 * pow(1.4 / 16, t))
+        var how = "tanpa bokeh"
+        if hasDepth, let d = RawDeveloper.depthBlur(out, aperture: aperture) {
+            out = d
+            how = String(format: "kedalaman f/%.1f", aperture)
+        } else if let src = CIImage(data: out, options: [.applyOrientationProperty: false]), let cg = RawDeveloper.cgImage(src),
+                  let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity),
+                  let enc = RawDeveloper.encodeHEIF(CIImage(cgImage: b).settingProperties(src.properties)) {
+            out = enc
+            how = "segmentasi subjek (data kedalaman tidak ada)"
+        } else {
+            portraitNoSubject = true
+        }
+        if let re = RawDeveloper.reprocess(out, longSide: nil, lut: burstLUT, aspect: burstAspect) { out = re }
+        Log.sr.info("Potret kedalaman: \(how, privacy: .public), \(out.count / 1024, privacy: .public) KB, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+        save(out, fileName: String(format: "IMG_%04d.heic", index), dir: dir)
+        finish("Potret tersimpan (\(how))")
+    }
+
     // MARK: simpan
     private static func makeBurstDir(prefix: String) -> URL {
         let f = DateFormatter()
@@ -3461,6 +3577,19 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                         self.save(data, fileName: String(format: "IMG_%04d.dng", idx), dir: self.burstDir)
                     }
                 }
+            } else if self.burstDepthPortrait && !photo.isRawPhoto {
+                // v0.37: potret kedalaman (zoom atau tidak) - satu jalur
+                let dir = self.burstDir
+                let data = photo.fileDataRepresentation()
+                var info = "tanpa data kedalaman"
+                if let dd = photo.depthData {
+                    let map = dd.depthDataMap
+                    info = "kedalaman \(CVPixelBufferGetWidth(map))x\(CVPixelBufferGetHeight(map)) kualitas \(dd.depthDataQuality == .high ? "tinggi" : "rendah") akurasi \(dd.depthDataAccuracy == .absolute ? "absolut" : "relatif")"
+                }
+                let hasDepth = photo.depthData != nil, hasMatte = photo.portraitEffectsMatte != nil
+                let dims = photo.resolvedSettings.photoDimensions
+                Log.camera.info("Potret kedalaman: foto \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \(info, privacy: .public), matte potret \(hasMatte, privacy: .public)")
+                self.processQueue.async { self.processDepthPortrait(data, hasDepth: hasDepth, dir: dir, index: idx) }
             } else if self.burstMode == .aiZoom || (self.burstZoomed && !photo.isRawPhoto) {
                 let dir = self.burstDir
                 self.processQueue.async { self.processAIZoom(photo, dir: dir) }
