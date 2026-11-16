@@ -1823,3 +1823,10 @@ jaring pengaman, bukan sesuatu yang pasti aktif. Belum dikerjakan: menyembunyika
 SINEMA, preset tele di HP tanpa tele), kecepatan AI di chip lama, tuning noise per sensor, uji di HP lain.
 Build: run 43831513530 sukses. IPA: `data/ipa-v0.34.0/BaginCam-unsigned.ipa`. IPA v0.33.0 dihapus (belum sempat
 diuji; isinya tercakup di build ini).
+
+## 2026-11-16 - Tanya: pasang ke iPhone 15 Pro (belum ada perubahan kode)
+
+Jawaban: bisa dicoba, HP terdekat dengan 16 Pro Max (8 GB, utama 48MP, iOS 17+). Beda: tele 3x 12MP, ultra wide
+12MP, tanpa Camera Control. Kode sudah membaca faktor tele dan resolusi sensor saat jalan; fps video 120 punya
+cadangan ke 60. Log bisa diambil tanpa PC lewat app File (UIFileSharingEnabled aktif): BaginCam > Logs.
+Belum diuji; nama model 15 Pro belum ada di daftar LogFile (hanya tampil kode iPhone16,1).
