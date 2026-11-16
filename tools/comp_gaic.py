@@ -6,14 +6,21 @@ Model & bobot: implementasi bo-zhang-cs/GAIC-Pytorch (MIT). RoIAlign / RoDAlign 
 Pakai: python comp_gaic.py <folder_bobot> <folder_foto> <folder_hasil> [backbone ...]
 """
 import os, sys, time
-import numpy as np, cv2, torch
+import numpy as np, torch
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-import pillow_heif
 from PIL import Image, ImageOps
 
-pillow_heif.register_heif_opener()
+try:                                   # HEIC hanya perlu untuk uji di PC (tidak dipasang di CI konversi)
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 

@@ -1,0 +1,59 @@
+name: Convert composition model (Core ML)
+
+# Konversi model komposisi GAIC (Grid Anchor based Image Cropping, kode & bobot MIT) -> Core ML, lalu uji
+# CompScorer.swift terhadap acuan PyTorch. Hasil .mlmodelc di-commit ke ios-app/BaginCam/Models/.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/comp_model/**"
+      - "tools/comp_gaic.py"
+      - "ios-app/BaginCam/CompScorer.swift"
+      - ".github/workflows/convert-comp-model.yml"
+
+jobs:
+  convert:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install torch + coremltools
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch==2.5.1" "torchvision==0.20.1" "coremltools==8.3.0" "numpy==1.26.4" pillow "gdown==5.2.0"
+
+      - name: Download weights (GAIC-Pytorch, MIT) + cek SHA-256
+        run: |
+          python -m gdown "https://drive.google.com/uc?id=1U_8C9oWOBT64LHtxZP1_0Uo9Ndw0QLsJ" -O gaic_models.zip
+          echo "a71686a13ca229f42501833bf3ab0d91b1f19df88f244a380d1406ce7968d639  gaic_models.zip" | shasum -a 256 -c -
+          unzip -q gaic_models.zip
+          ls -la pretrained_models
+
+      - name: Convert + verify (Core ML vs PyTorch)
+        run: python tools/comp_model/convert_gaic.py pretrained_models pkg
+
+      - name: Compile mlmodelc
+        run: |
+          mkdir -p out
+          for p in pkg/*.mlpackage; do xcrun coremlcompiler compile "$p" out/; done
+          cp pkg/uji_256x352.png pkg/acuan.json out/
+          du -sh out/*
+
+      - name: Uji CompScorer.swift terhadap acuan PyTorch
+        run: |
+          swiftc -O ios-app/BaginCam/CompScorer.swift tools/comp_model/swift_test/main.swift -o comp_test
+          ./comp_test out out/uji_256x352.png out/acuan.json
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaginCamComp-coreml
+          path: out/
+          retention-days: 30
