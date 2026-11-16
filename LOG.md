@@ -1830,3 +1830,11 @@ Jawaban: bisa dicoba, HP terdekat dengan 16 Pro Max (8 GB, utama 48MP, iOS 17+).
 12MP, tanpa Camera Control. Kode sudah membaca faktor tele dan resolusi sensor saat jalan; fps video 120 punya
 cadangan ke 60. Log bisa diambil tanpa PC lewat app File (UIFileSharingEnabled aktif): BaginCam > Logs.
 Belum diuji; nama model 15 Pro belum ada di daftar LogFile (hanya tampil kode iPhone16,1).
+
+## 2026-11-16 - Tanya: 15 Pro sebagai pengganti untuk mencoba iOS 26 (belum ada perubahan kode)
+
+Jawaban: sebagian. API iOS 26 (area fokus/eksposur, capture sinematik, mikrofon AirPods) sama di kedua HP;
+yang terikat perangkat keras tidak (tele 3x vs 5x, ultra wide 12MP, pemrosesan chip, laporan masalah khusus
+16 Pro Max di iOS 26). Catatan penting: app saat ini belum memakai satu pun API iOS 26 (hanya ada gerbang iOS 27
+untuk aperture), jadi build sekarang di iOS 26 tidak akan menunjukkan hal baru. Usul: tambahkan dulu area
+fokus/eksposur iOS 26 untuk zoom jauh (bergerbang, HP iOS 18 tidak terpengaruh) + log kemampuan iOS 26.
