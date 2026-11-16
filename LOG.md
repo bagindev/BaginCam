@@ -1915,3 +1915,35 @@ Temuan:
 - Bingkai asli masuk 10 % teratas hanya di 7 dari 36 foto (MobileNetV2) - model cenderung menyukai crop lebih rapat.
 - Batas: hanya memilih crop dari bingkai yang ada; tidak bisa menyarankan geser kamera ke luar bingkai.
 Menunggu penilaian pengguna atas gambar contoh sebelum dipindahkan ke iPhone.
+
+## 2026-11-16 - v0.36.0 build 85: AI komposisi GAIC di "Susun ulang" (3 varian model)
+
+Permintaan pengguna: "oke boleh, mungkin pasang 2 ketiganya untuk bisa dicek" -> ketiga varian dipasang.
+Konversi (workflow baru `.github/workflows/convert-comp-model.yml`, macOS):
+- `tools/comp_model/convert_gaic.py`: tiap backbone jadi 2 model Core ML fp16 - `_feat` (gambar RGB sisi pendek 256,
+  7 bentuk masukan: 256x352, 352x256, 256x448, 448x256, 256x256, 256x320, 320x256 -> peta fitur) dan `_head`
+  (32 kandidat x [2C, 9, 9] -> skor). Normalisasi ImageNet dibakar ke model. Bobot: zip Google Drive dari README
+  bo-zhang-cs/GAIC-Pytorch, SHA-256 a71686a1...68d639 dipatok di workflow.
+- Run 43841018259 GAGAL di verifikasi ShuffleNetV2 (selisih 0,20 pada 352x256). Perbaikan: `channel_shuffle` diganti
+  indeks kanal tetap (tanpa reshape bergantung tinggi/lebar), gambar uji terstruktur untuk semua bentuk, cadangan
+  fp32 bila fp16 meleset. Catatan: di PyTorch trace lama sebenarnya sudah benar; selisih kemungkinan dari konversi
+  reshape dinamis atau fp16 pada masukan acak - tidak ditelusuri lebih jauh.
+- Run 43841436409 SUKSES: Core ML vs PyTorch fitur selisih <= 0,06 (rentang ~8), skor kepala <= 0,006; semua fp16.
+  Ukuran: mobilenetv2 3,6+4,1 MB, shufflenetv2 1,7+7,8 MB, vgg16 29+7,8 MB.
+- Uji Swift di runner (`tools/comp_model/swift_test/main.swift` + `CompScorer.swift`): skor vs acuan PyTorch selisih
+  maks 0,0077 / 0,0096 / 0,0089; kandidat terbaik sama; 0,06 / 0,05 / 0,30 s (CPU Mac) untuk 37 kotak.
+App:
+- Baru `ios-app/BaginCam/CompScorer.swift`: `CompModel` (MobileNet / ShuffleNet / VGG), fitur lewat Core ML,
+  RoIAlign + RoDAlign di Swift (terjemahan kode C GAIC), kepala per 32 kandidat, `gridCandidates()` (150 crop
+  rasio bingkai, sisi 0,65-0,95).
+- `CompositionAI.swift`: saat pindai, ketiga model menilai bingkai sekarang + kandidat aturan + grid dan mencatat
+  `Komposisi <model>: bingkai .., Sepertiga .., Dekat .., Lebar .., AI .. | n kandidat, masukan WxH, t s`.
+  Model terpilih (setelan `compModel`, bawaan MobileNet) dipakai di layar: skor di bawah tiap pilihan, bintang di
+  yang tertinggi, pilihan keempat "AI" (crop terbaik dari grid; mengikuti subjek lewat letak relatif), catatan
+  kuning "Bingkai sekarang ..". Tombol nama model di kiri bawah untuk ganti varian (memindai ulang).
+  Pilihan awal tetap yang pertama (tidak otomatis pindah ke yang berbintang).
+- `Models/`: 6 folder `.mlmodelc` + `LICENSE-GAIC.txt` (MIT, dua repo) + README.
+Batas yang diketahui: kandidat "Dekat" bisa lebih kecil dari crop yang dipakai saat model dilatih (luas < 40 %) dan
+kandidat aturan yang keluar bingkai dipotong dulu sebelum dinilai -> skornya kurang dapat dipercaya; lisensi bobot /
+dataset GAICD untuk rilis komersial belum dipastikan. BELUM DIUJI DI HP.
+Build: run 43842134484 sukses. IPA: `data/ipa-v0.36.0/BaginCam-unsigned.ipa`. IPA v0.35.0 dihapus (isinya tercakup).
