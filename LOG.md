@@ -2187,3 +2187,19 @@ Perubahan v0.40.1 build 96 (run 44053502287):
 Belum ditangani: preview kita tetap diolah Core Image tiap frame (LUT / penajaman / histogram), kamera bawaan memakai
 lapisan preview hardware; ganti lensa paksa = jeda preview singkat (kamera bawaan mulus).
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.1/BaginCam-unsigned.ipa`. IPA v0.40.0 dihapus.
+
+## 2026-11-17 - v0.40.2 build 97: tele tanpa jeda, preview lebih ringan
+
+Permintaan: (1) matikan penajaman di preview (yang penting hasil), LUT preview bisa dimatikan bila membuat ringan;
+(2) dulu mode Auto bisa ganti lensa tanpa jeda - kenapa sekarang ada jeda.
+- (2) Benar: build 96 mengunci ke lensa tele FISIK (ganti kamera -> preview jeda). Diganti: kamera virtual tetap
+  dipakai, `fallbackPrimaryConstituentDevices` dikosongkan di VIDEO (`applyTeleFallback`, dipanggil saat masuk / keluar
+  VIDEO, pasang kamera virtual, saklar diubah) -> pada zoom >= 5x iOS tetap memakai tele walau redup / dekat, ganti
+  lensa tetap mulus. Kunci tele fisik otomatis (`forceTeleIfNeeded`) dicabut. Saklar laci: "Tetap tele saat zoom
+  >= 5x (walau redup)". Log `Lensa cadangan kamera virtual: ..`. Konsekuensi: subjek lebih dekat dari jarak fokus
+  minimum tele bisa buram di 5x ke atas (iOS tidak lagi kembali ke lensa utama).
+- (1) Preview tidak lagi ditajamkan (penajaman zoom digital tetap ke rekaman). Saklar laci "LUT di preview" (bawaan
+  nyala; LUT tetap dibakar ke foto / video bila disetel).
+- Log baru tiap 10 s: `Preview: .. fps, CPU .. ms, GPU .. ms per frame, ukuran, aktif [LUT, histogram, ..], suhu` untuk
+  mengukur beban preview sebenarnya (LUT nyala vs mati).
+BELUM DIUJI DI HP. Build: run 44055170825 sukses. IPA: `data/ipa-v0.40.2/BaginCam-unsigned.ipa`. IPA v0.40.1 dihapus.
