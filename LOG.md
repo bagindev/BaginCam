@@ -2160,3 +2160,30 @@ v0.40.0 build 95 (run 44050031960):
 - Video "Isi layar" (bawaan nyala, laci > Jendela bidik layar penuh > Isi layar): preview mengisi seluruh layar tanpa
   bar hitam; tepi kiri-kanan rekaman 16:9 tidak terlihat di layar (rekaman tidak berubah); titik fokus dikoreksi.
 BELUM DIUJI DI HP (build 92-95). IPA: `data/ipa-v0.40.0/BaginCam-unsigned.ipa`. IPA v0.38.5 dihapus.
+
+## 2026-11-17 - Cek build 95 (layout isi layar, banding kelancaran vs kamera bawaan) -> v0.40.1 build 96
+
+Laporan: tampilan melenceng menutup Dynamic Island; rekaman layar banding kamera bawaan vs BaginCam - kurang mulus,
+ganti lensa "miss". Ditarik: IMG_7384-7389 (screenshot), IMG_7390.MP4 (rekaman layar 84 s, hanya di temp C:),
+log. Pembanding: `data/output/banding_video_bawaan_1117.jpg` (contoh tiap 3 s).
+Temuan:
+- Isi layar (build 95): baris info video (lensa / 00:00 / mikrofon) dihitung dari tepi atas preview; preview kini
+  mulai dari ujung layar -> baris info naik menutup Dynamic Island.
+- Kelancaran diukur dari rekaman layar (frame preview yang berubah per detik): kamera bawaan ~43 fps, BaginCam
+  17-19 fps. Sebab: mitigasi v0.37 menurunkan preview ke 20 fps saat suhu >= 2; HP mengisi daya, suhu 2 sejak
+  app dibuka (16:03-16:06).
+- Lensa: BaginCam di 5x-25x tetap "Utama 1x · crop 5-25x" (kamera virtual tidak pindah ke tele, mode .auto,
+  ruangan agak redup), kamera bawaan pindah ke tele -> tulisan monitor 16x jauh lebih buram di BaginCam.
+- Peta zoom tampil dan bekerja (kotak kuning, 10x / 25x). Zoom maks terekam video 61,9x. Sudut format kamera
+  virtual 106,2 derajat (tan lebar 1x 0,375).
+Perubahan v0.40.1 build 96 (run 44053502287):
+- `fillTopInset`: elemen di atas preview (baris info video, histogram, peta zoom) diturunkan sejauh tepi atas
+  preview 16:9 lama saat isi layar.
+- Preview 20 fps hanya saat suhu 3 (kritis); suhu 2 tetap 30 fps.
+- VIDEO "Pindah ke tele saat zoom >= 5x" (bawaan nyala, laci): 0,5 s setelah zoom >= tele, bila kamera virtual masih
+  memakai lensa lain -> kunci ke lensa tele fisik (`autoTele`, tanpa ikon gembok); zoom di bawah 5x -> kembali ke
+  Auto. Tidak saat merekam (ganti kamera memutus frame sebentar). Log `VIDEO: zoom ..x tapi kamera virtual tetap ..`.
+- Log `Lensa aktif kamera virtual: ..` (KVO activePrimaryConstituent) untuk melihat kapan iOS berganti lensa.
+Belum ditangani: preview kita tetap diolah Core Image tiap frame (LUT / penajaman / histogram), kamera bawaan memakai
+lapisan preview hardware; ganti lensa paksa = jeda preview singkat (kamera bawaan mulus).
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.1/BaginCam-unsigned.ipa`. IPA v0.40.0 dihapus.
