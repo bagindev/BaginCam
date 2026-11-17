@@ -2583,7 +2583,16 @@ final class CameraManager: NSObject, ObservableObject {
                 self.burstCrop = crop
                 // v0.10.0: sensor/crop (621 px di 13x utama) terlalu kecil - Apple (remosaic + multi-frame)
                 // menyimpan ~2x lebih banyak detail; diperkecil sejauh itu AI mengubah huruf jadi balok
-                self.burstRealLong = max(512, Int(2 * Double(nativeLong) / Double(crop)))
+                // v0.38.3: hanya sensor 48MP yang punya cadangan detail remosaic (x2). Sensor 12MP (kamera depan) = sisi
+                // sensor / crop (17 Nov: depan 2x dicatat "detail asli ~4032", padahal 2016).
+                let remosaic: Double = nativeLong >= 8000 ? 2 : 1
+                self.burstRealLong = max(512, Int(remosaic * Double(nativeLong) / Double(crop)))
+                // v0.38.3: potret yang di-zoom tanpa AI super-res (wajah 3x depan jadi seperti lukisan, 28 s, IMG_7375)
+                // dan 12MP bila detail aslinya kecil (24MP dari 2016 px hanya memperbesar file & waktu proses)
+                if self.burstPortrait {
+                    self.burstStrength = 0
+                    if self.burstRealLong < 3000 { self.burstOutputMP = .mp12 }
+                }
                 frames = 1
             } else if bayerBurst || singleFull {
                 self.burstMode = bayerBurst ? .hdrplus : .heif
