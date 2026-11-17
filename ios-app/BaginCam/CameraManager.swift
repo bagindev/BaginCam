@@ -283,6 +283,9 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var minAutoZoom: CGFloat = 1
 
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
+    /// v0.38.1: zoom kamera depan (sensor 12MP; 4x = 1008 px asli, lebih dari itu tidak berguna)
+    static let frontMaxZoom: CGFloat = 4
+
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
     /// v0.14: tuning proses foto ala AGC (HDR+ / Super Res / MALAM / AI Zoom)
@@ -371,14 +374,14 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var compAI: Bool = Prefs.get("compAI", true) { didSet { Prefs.set("compAI", compAI) } }
     /// v0.21: Mode Gimbal (DJI Osmo Mobile): stabilisasi ringan, tekan 2x tombol rekam = jeda, panduan tracking
     @Published var gimbalMode: Bool = Prefs.get("gimbalMode", false) {
-        didSet { Prefs.set("gimbalMode", gimbalMode); Log.camera.info("Mode Gimbal: \(self.gimbalMode, privacy: .public)"); videoChanged() }
+        didSet { Prefs.set("gimbalMode", gimbalMode); Log.camera.notice("Mode Gimbal: \(self.gimbalMode, privacy: .public)"); videoChanged() }
     }
     @Published var gimbalGuideOn: Bool = Prefs.get("gimbalGuide", true) { didSet { Prefs.set("gimbalGuide", gimbalGuideOn) } }
     /// v0.22.1: auto-aktifkan mode gimbal saat controller tersambung via Bluetooth
     @Published var gimbalAuto: Bool = Prefs.get("gimbalAuto", true) { didSet { Prefs.set("gimbalAuto", gimbalAuto) } }
     /// v0.22: Face Tracking Digital (crop-follow wajah, mirip Center Stage). Bisa aktif tanpa gimbal (tripod).
     @Published var faceTrack: Bool = Prefs.get("faceTrack", false) {
-        didSet { Prefs.set("faceTrack", faceTrack); Log.camera.info("Face Track: \(self.faceTrack, privacy: .public)"); videoChanged() }
+        didSet { Prefs.set("faceTrack", faceTrack); Log.camera.notice("Face Track: \(self.faceTrack, privacy: .public)"); videoChanged() }
     }
     /// v0.21: rekaman dijeda
     @Published private(set) var recPaused = false
@@ -400,7 +403,7 @@ final class CameraManager: NSObject, ObservableObject {
                     if d.isFocusModeSupported(.continuousAutoFocus) { d.focusMode = .continuousAutoFocus }
                     d.unlockForConfiguration()
                 }
-                Log.camera.info("Jarak fokus: \(r.rawValue, privacy: .public), didukung \(d.isAutoFocusRangeRestrictionSupported, privacy: .public) (\(d.localizedName, privacy: .public))")
+                Log.camera.notice("Jarak fokus: \(r.rawValue, privacy: .public), didukung \(d.isAutoFocusRangeRestrictionSupported, privacy: .public) (\(d.localizedName, privacy: .public))")
             }
         }
     }
@@ -501,7 +504,7 @@ final class CameraManager: NSObject, ObservableObject {
         // TrueDepth tanpa kedalaman (tidak diharapkan) -> kembali ke kamera depan biasa supaya HDR+ RAW tetap jalan
         if !on && wantMode && d.deviceType == .builtInTrueDepthCamera { swapFront(.builtInWideAngleCamera) }
         let matte = photoOutput.isPortraitEffectsMatteDeliveryEnabled
-        Log.camera.info("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(wantMode, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(supported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
+        Log.camera.notice("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(wantMode, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(supported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
         DispatchQueue.main.async {
             self.depthReady = on
             if self.shootMode == .portrait && !self.isCapturing {
@@ -542,7 +545,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var recCanFlip = false
     private var recPrevLock: Lens?              // main: kunci lensa sebelum pindah ke depan saat rekam
     @Published var videoLight: VideoLight = Prefs.raw("videoLight", .off) {
-        didSet { Prefs.set("videoLight", videoLight.rawValue); Log.camera.info("Lampu video depan: \(self.videoLight.rawValue, privacy: .public)") }
+        didSet { Prefs.set("videoLight", videoLight.rawValue); Log.camera.notice("Lampu video depan: \(self.videoLight.rawValue, privacy: .public)") }
     }
     @Published private(set) var recordSeconds: Double = 0
     @Published private(set) var audioLevel: Float = -160        // dB (meter)
@@ -695,7 +698,7 @@ final class CameraManager: NSObject, ObservableObject {
         let p = procParams()
         DispatchQueue.main.async {
             self.pendingJobs += 1
-            Log.camera.info("Antrean proses: +\(what, privacy: .public) -> \(self.pendingJobs, privacy: .public) foto, sisa memori \(DeviceCaps.availableMB, privacy: .public) MB")
+            Log.camera.notice("Antrean proses: +\(what, privacy: .public) -> \(self.pendingJobs, privacy: .public) foto, sisa memori \(DeviceCaps.availableMB, privacy: .public) MB")
         }
         processQueue.async {
             self.pj = p
@@ -795,13 +798,13 @@ final class CameraManager: NSObject, ObservableObject {
                 guard let self else { return }
                 let th = ProcessInfo.processInfo.thermalState.rawValue
                 if th != self.thermal {
-                    Log.camera.info("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public)")
+                    Log.camera.notice("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public)")
                     self.thermal = th
                 }
             }
         }
         let th0 = ProcessInfo.processInfo.thermalState.rawValue
-        if th0 != thermal { thermal = th0; Log.camera.info("Suhu HP saat mulai: \(th0, privacy: .public)") }
+        if th0 != thermal { thermal = th0; Log.camera.notice("Suhu HP saat mulai: \(th0, privacy: .public)") }
     }
 
     func stop() {
@@ -815,7 +818,7 @@ final class CameraManager: NSObject, ObservableObject {
         idlePaused = true
         torch = false
         stop()
-        Log.camera.info("Kamera dijeda (tidak dipakai), suhu \(self.thermal, privacy: .public)")
+        Log.camera.notice("Kamera dijeda (tidak dipakai), suhu \(self.thermal, privacy: .public)")
         status = "Kamera dijeda untuk hemat panas - ketuk untuk lanjut"
     }
 
@@ -826,7 +829,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard idlePaused else { return }
         idlePaused = false
         start()
-        Log.camera.info("Kamera lanjut")
+        Log.camera.notice("Kamera lanjut")
     }
 
     /// sudut rotasi capture: sensor gerak (benar walau Rotation Lock nyala), cadangan RotationCoordinator
@@ -964,7 +967,7 @@ final class CameraManager: NSObject, ObservableObject {
         applyRawMode(.aiZoom)
         applyAuto()
         let baseText = cons.map { "\($0.localizedName)=\(bases[$0.deviceType] ?? 0)" }.joined(separator: ", ")
-        Log.camera.info("Kamera virtual \(vd.localizedName, privacy: .public): \(baseText, privacy: .public), maks zoom \(Double(maxZ), privacy: .public)x")
+        Log.camera.notice("Kamera virtual \(vd.localizedName, privacy: .public): \(baseText, privacy: .public), maks zoom \(Double(maxZ), privacy: .public)x")
         // v0.19: dulu dibatasi minimal 1x -> setelah jepret 0.5x (Ultra Wide) zoom kembali ke 1x
         let minZ: CGFloat = bases[.builtInUltraWideCamera] != nil ? 1 / max(bases[.builtInWideAngleCamera] ?? 1, 1) : 1
         DispatchQueue.main.async {
@@ -983,7 +986,8 @@ final class CameraManager: NSObject, ObservableObject {
         aiLensLock = l
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
-        let tz = max(totalZoom, l == nil ? 1 : native)
+        // v0.38.1: kamera depan punya zoom sendiri (1-4x), selalu mulai dari 1x = sensor penuh
+        let tz = l == .front ? 1 : max(totalZoom, l == nil ? 1 : native)
         sessionQueue.async {
             guard let l else {
                 self.enterAIZoom(zoom: tz)
@@ -1003,9 +1007,9 @@ final class CameraManager: NSObject, ObservableObject {
                 d.videoZoomFactor = min(max(tz / native, 1), d.maxAvailableVideoZoomFactor)
                 d.unlockForConfiguration()
             }
-            Log.camera.info("AI Zoom: lensa dikunci ke \(l.displayName, privacy: .public)")
+            Log.camera.notice("AI Zoom: lensa dikunci ke \(l.displayName, privacy: .public)")
             DispatchQueue.main.async {
-                self.maxTotalZoom = 100
+                self.maxTotalZoom = l == .front ? Self.frontMaxZoom : 100
                 self.totalZoom = tz
                 self.previewExtraZoom = max(1, (tz / native) / max(d.maxAvailableVideoZoomFactor, 1))
             }
@@ -1133,7 +1137,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             d.isSubjectAreaChangeMonitoringEnabled = !lock
             d.unlockForConfiguration()
-            Log.camera.info("Fokus di layar (\(Double(p.x), privacy: .public), \(Double(p.y), privacy: .public)) -> sensor (\(pt.x, privacy: .public), \(pt.y, privacy: .public)), kunci \(lock, privacy: .public)")
+            Log.camera.notice("Fokus di layar (\(Double(p.x), privacy: .public), \(Double(p.y), privacy: .public)) -> sensor (\(pt.x, privacy: .public), \(pt.y, privacy: .public)), kunci \(lock, privacy: .public)")
             if lock {
                 self.sessionQueue.asyncAfter(deadline: .now() + 0.8) {
                     guard let d2 = self.device, d2 === d, (try? d2.lockForConfiguration()) != nil else { return }
@@ -1197,7 +1201,7 @@ final class CameraManager: NSObject, ObservableObject {
             d.focusRectOfInterest = CGRect(x: 0.5 - w2 / 2, y: 0.5 - h2 / 2, width: w2, height: h2)
             narrowedFocus.insert(d.uniqueID)
         }
-        Log.camera.info("iOS 26: area fokus zoom crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x: bawaan \(sizeText(def.size), privacy: .public), min \(sizeText(mn), privacy: .public), ingin \(sizeText(CGSize(width: side, height: side)), privacy: .public) -> \(narrower ? "dipersempit ke " + sizeText(d.focusRectOfInterest.size) : "bawaan dipertahankan", privacy: .public)")
+        Log.camera.notice("iOS 26: area fokus zoom crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x: bawaan \(sizeText(def.size), privacy: .public), min \(sizeText(mn), privacy: .public), ingin \(sizeText(CGSize(width: side, height: side)), privacy: .public) -> \(narrower ? "dipersempit ke " + sizeText(d.focusRectOfInterest.size) : "bawaan dipertahankan", privacy: .public)")
         return narrower
     }
 
@@ -1230,17 +1234,17 @@ final class CameraManager: NSObject, ObservableObject {
                     stops.append(f)
                 }
                 stops.sort()
-                Log.camera.info("Lensa \(label, privacy: .public): aperture variabel f/\(lo, privacy: .public)-f/\(hi, privacy: .public)")
+                Log.camera.notice("Lensa \(label, privacy: .public): aperture variabel f/\(lo, privacy: .public)-f/\(hi, privacy: .public)")
             }
         }
-        Log.camera.info("Lensa \(label, privacy: .public): ISO \(fmt.minISO, privacy: .public)-\(fmt.maxISO, privacy: .public), shutter \(minS, privacy: .public)-\(maxS, privacy: .public)s, Bayer \(bayer, privacy: .public), ProRAW \(pro, privacy: .public), maks \(mp, privacy: .public)MP")
+        Log.camera.notice("Lensa \(label, privacy: .public): ISO \(fmt.minISO, privacy: .public)-\(fmt.maxISO, privacy: .public), shutter \(minS, privacy: .public)-\(maxS, privacy: .public)s, Bayer \(bayer, privacy: .public), ProRAW \(pro, privacy: .public), maks \(mp, privacy: .public)MP")
         if #available(iOS 26.0, *) {
             let c = CGPoint(x: 0.5, y: 0.5)
             let f = d.isFocusRectOfInterestSupported, e = d.isExposureRectOfInterestSupported
             let fs = f ? "bawaan \(Self.sizeText(d.defaultRectForFocusPoint(ofInterest: c).size)) min \(Self.sizeText(d.minFocusRectOfInterestSize))" : "-"
             let es = e ? "bawaan \(Self.sizeText(d.defaultRectForExposurePoint(ofInterest: c).size)) min \(Self.sizeText(d.minExposureRectOfInterestSize))" : "-"
             let cine = currentInput?.isCinematicVideoCaptureSupported ?? false
-            Log.camera.info("iOS 26 \(label, privacy: .public): area fokus \(f, privacy: .public) [\(fs, privacy: .public)], area eksposur \(e, privacy: .public) [\(es, privacy: .public)], sinematik Apple \(cine, privacy: .public)")
+            Log.camera.notice("iOS 26 \(label, privacy: .public): area fokus \(f, privacy: .public) [\(fs, privacy: .public)], area eksposur \(e, privacy: .public) [\(es, privacy: .public)], sinematik Apple \(cine, privacy: .public)")
         }
         DispatchQueue.main.async {
             self.isoRange = fmt.minISO...fmt.maxISO
@@ -1323,7 +1327,7 @@ final class CameraManager: NSObject, ObservableObject {
         d.videoZoomFactor = want
         d.unlockForConfiguration()
         if abs(before - want) > 0.01 {
-            Log.camera.info("Zoom dipasang ulang setelah keluar VIDEO: faktor \(Double(before), format: .fixed(precision: 2), privacy: .public) -> \(Double(want), format: .fixed(precision: 2), privacy: .public) (layar \(Double(z), format: .fixed(precision: 1), privacy: .public)x)")
+            Log.camera.notice("Zoom dipasang ulang setelah keluar VIDEO: faktor \(Double(before), format: .fixed(precision: 2), privacy: .public) -> \(Double(want), format: .fixed(precision: 2), privacy: .public) (layar \(Double(z), format: .fixed(precision: 1), privacy: .public)x)")
         }
     }
 
@@ -1365,7 +1369,7 @@ final class CameraManager: NSObject, ObservableObject {
             recPrevLock = aiLensLock
             setAILensLock(.front, whileRecording: true)
         }
-        Log.camera.info("VIDEO: ganti kamera saat rekam -> \(self.aiLensLock?.displayName ?? "Auto", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
+        Log.camera.notice("VIDEO: ganti kamera saat rekam -> \(self.aiLensLock?.displayName ?? "Auto", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
     }
 
     /// main: tukar gambar utama <-> kotak kecil (boleh saat merekam)
@@ -1388,7 +1392,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func makeDual(lens: Lens?, zoom: CGFloat) -> DualCam? {
         if !dualFormatsLogged {
             dualFormatsLogged = true
-            Log.camera.info("DUAL: format multi-kamera -> \(DualCam.describeFormats(), privacy: .public)")
+            Log.camera.notice("DUAL: format multi-kamera -> \(DualCam.describeFormats(), privacy: .public)")
         }
         var tries: [(Lens?, Bool)] = []
         for uhd in (videoSnap.res == .uhd ? [true, false] : [false]) {
@@ -1398,11 +1402,11 @@ final class CameraManager: NSObject, ObservableObject {
             let dc = DualCam()
             let name = l?.displayName ?? "Auto"
             guard dc.configure(queue: videoQueue, lens: l, uhd: uhd, zoom: zoom) else {
-                Log.camera.info("DUAL: lensa \(name, privacy: .public) (4K \(uhd, privacy: .public)) tidak bisa disiapkan")
+                Log.camera.notice("DUAL: lensa \(name, privacy: .public) (4K \(uhd, privacy: .public)) tidak bisa disiapkan")
                 continue
             }
             guard dc.session.hardwareCost <= 1 else {
-                Log.camera.info("DUAL: lensa \(name, privacy: .public) \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) terlalu berat (biaya \(dc.session.hardwareCost, privacy: .public))")
+                Log.camera.notice("DUAL: lensa \(name, privacy: .public) \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) terlalu berat (biaya \(dc.session.hardwareCost, privacy: .public))")
                 continue
             }
             return dc
@@ -1417,7 +1421,7 @@ final class CameraManager: NSObject, ObservableObject {
         let d = CMTimeSubtract(pts, CMSyncConvertTime(pts, from: clk, to: CMClockGetHostTimeClock()))
         if clk !== lastSyncClock {
             lastSyncClock = clk
-            Log.camera.info("VIDEO: jam sesi berganti, selisih ke jam host \(d.seconds * 1000, format: .fixed(precision: 1), privacy: .public) ms, rekam \(self.recorder != nil, privacy: .public)")
+            Log.camera.notice("VIDEO: jam sesi berganti, selisih ke jam host \(d.seconds * 1000, format: .fixed(precision: 1), privacy: .public) ms, rekam \(self.recorder != nil, privacy: .public)")
         }
         return d
     }
@@ -1438,7 +1442,7 @@ final class CameraManager: NSObject, ObservableObject {
         dual = dc
         dc.session.startRunning()
         let res = dc.outW >= 2160 ? "4K" : (dc.outW >= 1080 ? "1080p" : "720p")
-        Log.camera.info("DUAL: aktif \(res, privacy: .public) lensa \(dc.backName, privacy: .public), biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
+        Log.camera.notice("DUAL: aktif \(res, privacy: .public) lensa \(dc.backName, privacy: .public), biaya hardware \(dc.session.hardwareCost, privacy: .public), tekanan sistem \(dc.session.systemPressureCost, privacy: .public), mikrofon \(dc.hasAudio, privacy: .public)")
         publishDual(dc)
     }
 
@@ -1467,7 +1471,7 @@ final class CameraManager: NSObject, ObservableObject {
             }
             if want != cur, !dualBadLens.contains(want) {
                 if dc.switchBack(to: want, zoom: zz) {
-                    Log.camera.info("DUAL: lensa belakang -> \(want.displayName, privacy: .public) (zoom \(Double(zz), format: .fixed(precision: 1), privacy: .public)x), biaya hardware \(dc.session.hardwareCost, privacy: .public)")
+                    Log.camera.notice("DUAL: lensa belakang -> \(want.displayName, privacy: .public) (zoom \(Double(zz), format: .fixed(precision: 1), privacy: .public)x), biaya hardware \(dc.session.hardwareCost, privacy: .public)")
                     publishDual(dc)
                     return
                 }
@@ -1498,7 +1502,7 @@ final class CameraManager: NSObject, ObservableObject {
         } else if let dc = dual, !(dualWanted && inVideo) {
             dc.session.stopRunning()
             dual = nil
-            Log.camera.info("DUAL: keluar")
+            Log.camera.notice("DUAL: keluar")
             session.startRunning()
             if inVideo {
                 let z = videoSnap.zoom
@@ -1531,7 +1535,7 @@ final class CameraManager: NSObject, ObservableObject {
         session.beginConfiguration()
         photoOutput.isLivePhotoCaptureEnabled = w
         session.commitConfiguration()
-        Log.camera.info("Live Photo enabled = \(w, privacy: .public)")
+        Log.camera.notice("Live Photo enabled = \(w, privacy: .public)")
     }
 
     /// ProRAW harus di-enable di photo output sebelum dipakai; Bayer RAW butuh ProRAW off.
@@ -1541,7 +1545,7 @@ final class CameraManager: NSObject, ObservableObject {
         session.beginConfiguration()
         photoOutput.isAppleProRAWEnabled = wantPro
         session.commitConfiguration()
-        Log.camera.info("ProRAW enabled = \(wantPro, privacy: .public)")
+        Log.camera.notice("ProRAW enabled = \(wantPro, privacy: .public)")
     }
 
     // MARK: exposure / WB / fokus
@@ -1591,11 +1595,11 @@ final class CameraManager: NSObject, ObservableObject {
             let dur = duration ?? AVCaptureDevice.autoExposureDuration
             let i = iso ?? AVCaptureDevice.autoISO
             guard fmt.supportsExposureModeCustom(lensAperture: a, duration: dur, iso: i) else {
-                Log.camera.info("Aperture f/\(a, privacy: .public): kombinasi tidak didukung (manual \(duration != nil, privacy: .public))")
+                Log.camera.notice("Aperture f/\(a, privacy: .public): kombinasi tidak didukung (manual \(duration != nil, privacy: .public))")
                 return false
             }
             d.setExposureModeCustom(lensAperture: a, duration: dur, iso: i, completionHandler: nil)
-            Log.camera.info("Aperture f/\(a, privacy: .public) \(duration == nil ? "prioritas aperture" : "manual", privacy: .public)")
+            Log.camera.notice("Aperture f/\(a, privacy: .public) \(duration == nil ? "prioritas aperture" : "manual", privacy: .public)")
             return true
         }
         return false
@@ -1793,7 +1797,7 @@ final class CameraManager: NSObject, ObservableObject {
             audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
         }
         session.commitConfiguration()
-        Log.camera.info("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
+        Log.camera.notice("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
         applyVideoFormat()
         syncDual()
     }
@@ -1819,7 +1823,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         applyDepth()        // v0.38: VIDEO -> POTRET (photo output baru dipasang lagi di sini)
         videoQueue.async { self.previewLog = false }
-        Log.camera.info("VIDEO: keluar")
+        Log.camera.notice("VIDEO: keluar")
         DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
     }
 
@@ -1854,7 +1858,7 @@ final class CameraManager: NSObject, ObservableObject {
         clean = clean.enumerated().filter { i, v in i + 1 >= clean.count || v < clean[i + 1] * 0.85 }.map { $0.element }
         let txt = clean.map { String(format: "%.2g", Double($0)) }.joined(separator: ", ")
         let own = fmt.secondaryNativeResolutionZoomFactors.map { String(format: "%.2g", Double($0)) }.joined(separator: ",")
-        Log.camera.info("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)])")
+        Log.camera.notice("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)])")
         DispatchQueue.main.async { self.nativeZoomPoints = clean; self.updateZoomQuality() }
     }
 
@@ -1987,7 +1991,7 @@ final class CameraManager: NSObject, ObservableObject {
         videoQueue.async { self.previewLog = log }
         let fpsText = s.timelapse > 1 ? "TL \(s.timelapse)x" : (s.fps == .auto ? "Auto" : "\(fps)")
         let info = "\(res.rawValue) · \(fpsText) · \(s.codec.short) · \(color.short)"
-        Log.camera.info("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(stabUsed.rawValue, privacy: .public) (pilihan \(s.stab.rawValue, privacy: .public)) \(note, privacy: .public)")
+        Log.camera.notice("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(stabUsed.rawValue, privacy: .public) (pilihan \(s.stab.rawValue, privacy: .public)) \(note, privacy: .public)")
         DispatchQueue.main.async {
             self.videoInfo = info
             if !note.isEmpty { self.status = note }
@@ -2082,7 +2086,7 @@ final class CameraManager: NSObject, ObservableObject {
                 d.setPrimaryConstituentDeviceSwitchingBehavior(.restricted, restrictedSwitchingBehaviorConditions: [.videoZoomChanged])
                 d.unlockForConfiguration()
             }
-            Log.camera.info("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public), faceTrack \(ftActive, privacy: .public)")
+            Log.camera.notice("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public), faceTrack \(ftActive, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()
                 self.status = "Merekam \(name)"
@@ -2115,7 +2119,7 @@ final class CameraManager: NSObject, ObservableObject {
         do {
             let r = try VideoRecorder(cfg)
             videoQueue.async { self.recorder = r }
-            Log.camera.info("VIDEO: rekam \(name, privacy: .public) dual \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) lensa \(dc.backName, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(dc.hasAudio, privacy: .public)")
+            Log.camera.notice("VIDEO: rekam \(name, privacy: .public) dual \(dc.outW, privacy: .public)x\(dc.outH, privacy: .public) lensa \(dc.backName, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(dc.hasAudio, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()
                 self.status = "Merekam \(name)"
@@ -2145,14 +2149,14 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let v = recPaused
         videoQueue.async { self.recorder?.setPaused(v) }
-        Log.camera.info("VIDEO: \(v ? "dijeda" : "dilanjutkan", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
+        Log.camera.notice("VIDEO: \(v ? "dijeda" : "dilanjutkan", privacy: .public) di \(self.recordSeconds, format: .fixed(precision: 1), privacy: .public) s")
         status = v ? "Rekaman dijeda - tekan lagi untuk lanjut" : "Merekam"
     }
 
     /// v0.21: tombol fisik (volume / Camera Control / gimbal / remote). Main.
     /// Mode Gimbal saat merekam: 1x = stop (ditunggu 0.5 s), 2x cepat = jeda / lanjut.
     func hardwareShutter(source: String) {
-        Log.camera.info("Tombol: \(source, privacy: .public) (mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public), gimbal \(self.gimbalMode, privacy: .public))")
+        Log.camera.notice("Tombol: \(source, privacy: .public) (mode \(self.shootMode.rawValue, privacy: .public), rekam \(self.isRecording, privacy: .public), gimbal \(self.gimbalMode, privacy: .public))")
         guard gimbalMode, shootMode == .video, isRecording else { shutterPressed(); return }
         if let w = pendingStop {
             w.cancel()
@@ -2187,7 +2191,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.recorder = nil
             let dur = r.seconds, dropped = r.droppedFrames
             if r.silenceFilled > 0 {
-                Log.camera.info("VIDEO: jeda suara diisi hening \(r.silenceFilled, format: .fixed(precision: 2), privacy: .public) s")
+                Log.camera.notice("VIDEO: jeda suara diisi hening \(r.silenceFilled, format: .fixed(precision: 2), privacy: .public) s")
             }
             self.sessionQueue.async {
                 if let d = self.device, d.isVirtualDevice, (try? d.lockForConfiguration()) != nil {
@@ -2208,7 +2212,7 @@ final class CameraManager: NSObject, ObservableObject {
                     self.setStatus("Video gagal disimpan: \(err?.localizedDescription ?? "-")")
                     return
                 }
-                Log.camera.info("VIDEO: selesai \(url.lastPathComponent, privacy: .public), \(dur, privacy: .public) s, frame hilang \(dropped, privacy: .public)")
+                Log.camera.notice("VIDEO: selesai \(url.lastPathComponent, privacy: .public), \(dur, privacy: .public) s, frame hilang \(dropped, privacy: .public)")
                 self.saveVideo(url, to: saveTo, seconds: dur, dropped: dropped)
             }
         }
@@ -2260,7 +2264,7 @@ final class CameraManager: NSObject, ObservableObject {
             minutesLeft = Int(Double(free) * 8 / (mbps * 1_000_000) / 60) * (timelapse > 1 ? timelapse : 1)
             let th = ProcessInfo.processInfo.thermalState.rawValue
             if th != thermal {
-                Log.camera.info("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), rekam \(self.isRecording, privacy: .public)")
+                Log.camera.notice("Suhu HP: \(th, privacy: .public) (0 normal, 1 hangat, 2 panas, 3 kritis), rekam \(self.isRecording, privacy: .public)")
                 thermal = th
             }
         }
@@ -2273,7 +2277,7 @@ final class CameraManager: NSObject, ObservableObject {
                 if self.ndWarned { self.ndWarned = false; DispatchQueue.main.async { self.needND = false } }
                 if !self.shutter180Warned {
                     self.shutter180Warned = true
-                    Log.camera.info("VIDEO: 180° dilewati, \(d.localizedName, privacy: .public) tidak dukung eksposur custom")
+                    Log.camera.notice("VIDEO: 180° dilewati, \(d.localizedName, privacy: .public) tidak dukung eksposur custom")
                     self.setStatus("180° aktif hanya bila lensa dikunci (UW/Utama/Tele)")
                 }
                 return
@@ -2301,7 +2305,7 @@ final class CameraManager: NSObject, ObservableObject {
             if tooBright != self.ndWarned {
                 self.ndWarned = tooBright
                 if tooBright {
-                    Log.camera.info("VIDEO: terlalu terang untuk 180° -> shutter 1/\(Int((1 / t).rounded()), privacy: .public) (butuh ND)")
+                    Log.camera.notice("VIDEO: terlalu terang untuk 180° -> shutter 1/\(Int((1 / t).rounded()), privacy: .public) (butuh ND)")
                     self.setStatus("Terlalu terang untuk 180°: shutter dipercepat (pakai filter ND untuk gerak halus)")
                 }
                 DispatchQueue.main.async { self.needND = tooBright }
@@ -2355,10 +2359,10 @@ final class CameraManager: NSObject, ObservableObject {
         guard !isCapturing else { return }
         // v0.38: tiap burst HDR+ yang antre menahan ~190 MB sampai digabung; saat HP panas proses jauh lebih lambat
         let limit = thermal >= 2 ? min(2, DeviceCaps.queueLimit) : DeviceCaps.queueLimit
-        let lowMem = pendingJobs > 0 && DeviceCaps.availableMB > 0 && DeviceCaps.availableMB < 1000
+        let lowMem = pendingJobs > 0 && DeviceCaps.availableMB > 0 && DeviceCaps.availableMB < 1500
         if pendingJobs >= limit || lowMem {
             status = "Antrean penuh (\(pendingJobs) foto masih diproses) - tunggu sebentar"
-            Log.camera.info("Rana ditolak: antrean \(self.pendingJobs, privacy: .public) dari \(limit, privacy: .public), sisa memori \(DeviceCaps.availableMB, privacy: .public) MB, suhu \(self.thermal, privacy: .public)")
+            Log.camera.notice("Rana ditolak: antrean \(self.pendingJobs, privacy: .public) dari \(limit, privacy: .public), sisa memori \(DeviceCaps.availableMB, privacy: .public) MB, suhu \(self.thermal, privacy: .public)")
             return
         }
         // FOTO: Auto memilih mesin saat shutter ditekan; Live / flash nyala = proses Apple (semua proses)
@@ -2375,7 +2379,7 @@ final class CameraManager: NSObject, ObservableObject {
             let apple = livePhoto || realFlash || photoProcess == .apple || gain < 2
             let want: Mode = apple ? .heif : .hdrplus
             if mode != want { mode = want }
-            Log.camera.info("Proses \(self.photoProcess.rawValue, privacy: .public): ISO x t \(gain, privacy: .public), live \(self.livePhoto, privacy: .public), flash \(self.flash.rawValue, privacy: .public) -> \(want.rawValue, privacy: .public)")
+            Log.camera.notice("Proses \(self.photoProcess.rawValue, privacy: .public): ISO x t \(gain, privacy: .public), live \(self.livePhoto, privacy: .public), flash \(self.flash.rawValue, privacy: .public) -> \(want.rawValue, privacy: .public)")
         }
         isCapturing = true
         previewFrozen = true
@@ -2437,7 +2441,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstPortrait = self.shootMode == .portrait
             self.burstDepthPortrait = self.shootMode == .portrait && m == .heif && self.photoOutput.isDepthDataDeliveryEnabled
             if self.shootMode == .portrait {
-                Log.camera.info("Potret: \(self.burstDepthPortrait ? "kedalaman (proses Apple)" : "cara lama (HDR+ + segmentasi)", privacy: .public), mesin \(m.rawValue, privacy: .public)")
+                Log.camera.notice("Potret: \(self.burstDepthPortrait ? "kedalaman (proses Apple)" : "cara lama (HDR+ + segmentasi)", privacy: .public), mesin \(m.rawValue, privacy: .public)")
             }
             self.burstBokehIntensity = self.bokehIntensity
             self.burstAspect = asp
@@ -2452,7 +2456,7 @@ final class CameraManager: NSObject, ObservableObject {
                 // v0.15: dari sensor gerak - RotationCoordinator selalu 90 (potret) bila Rotation Lock nyala
                 let a = self.captureAngle()
                 let sys = self.rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? -1
-                Log.camera.info("Orientasi foto: sensor gerak \(Double(a), privacy: .public), sistem \(Double(sys), privacy: .public)")
+                Log.camera.notice("Orientasi foto: sensor gerak \(Double(a), privacy: .public), sistem \(Double(sys), privacy: .public)")
                 if c.isVideoRotationAngleSupported(a) { c.videoRotationAngle = a }
                 self.burstAngle = a
             }
@@ -2485,12 +2489,19 @@ final class CameraManager: NSObject, ObservableObject {
             let zoomed = canZoom && Self.usesVirtual(m) && crop > 1.05
             if zoomed, #available(iOS 26.0, *), let d = self.device, d.isFocusRectOfInterestSupported {
                 let r = d.focusRectOfInterest
-                Log.camera.info("iOS 26: area fokus preview \(Self.sizeText(r.size), privacy: .public) di \(Double(r.midX), format: .fixed(precision: 2), privacy: .public),\(Double(r.midY), format: .fixed(precision: 2), privacy: .public), zoom perangkat \(Double(d.videoZoomFactor), format: .fixed(precision: 1), privacy: .public)x, crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x")
+                Log.camera.notice("iOS 26: area fokus preview \(Self.sizeText(r.size), privacy: .public) di \(Double(r.midX), format: .fixed(precision: 2), privacy: .public),\(Double(r.midY), format: .fixed(precision: 2), privacy: .public), zoom perangkat \(Double(d.videoZoomFactor), format: .fixed(precision: 1), privacy: .public)x, crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x")
             }
             let bayerOK = self.photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                 || self.photoOutput.isAppleProRAWEnabled
             var zm = night ? ZoomMethod.superRes : method
             if self.burstDepthPortrait { zm = .apple }      // kedalaman hanya ada di kamera virtual (tidak pindah lensa)
+            // v0.38.1: potret 2x cara lama di cahaya redup = crop Bayer 12MP (2016 px) diperbesar 2,8x -> wajah seperti
+            // lilin & terlalu terang (IMG_7368), sedangkan zoom Apple pada cahaya yang sama tajam (IMG_7369).
+            // Potret yang di-zoom selalu lewat zoom Apple; bokeh + percantik tetap dari app.
+            if self.burstPortrait && zoomed && zm != .apple {
+                zm = .apple
+                Log.camera.notice("Potret zoom \(Double(crop), format: .fixed(precision: 1), privacy: .public)x: lewat zoom Apple")
+            }
             // v0.29.4: Auto di tele / crop >= 3x = zoom Apple (kamera virtual pada zoom sebenarnya: fokus & eksposur
             // dinilai di bidang yang terlihat, sumber 2x lebih besar). Uji 15 Nov: lampu 75x Apple jauh lebih tajam
             // dari burst RAW + drizzle (IMG_7162 vs IMG_7166).
@@ -2502,7 +2513,7 @@ final class CameraManager: NSObject, ObservableObject {
                 let dim = m == .hdrplus && bayerOK && gain >= 2
                 zm = far && !dim ? .apple : .fullCrop
                 if zoomed {
-                    Log.camera.info("Cara zoom Auto -> \(zm.rawValue, privacy: .public) (lensa \(lensName, privacy: .public), crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x, ISO x t \(gain, format: .fixed(precision: 2), privacy: .public), redup \(dim, privacy: .public))")
+                    Log.camera.notice("Cara zoom Auto -> \(zm.rawValue, privacy: .public) (lensa \(lensName, privacy: .public), crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x, ISO x t \(gain, format: .fixed(precision: 2), privacy: .public), redup \(dim, privacy: .public))")
                 }
             }
             if zm == .superRes && !bayerOK { zm = .fullCrop }
@@ -2512,7 +2523,7 @@ final class CameraManager: NSObject, ObservableObject {
             if zm == .superRes && !night && (lensName == "Utama" || (lensName == "Tele" && crop > 1.05)) && crop < 3 && nativeLong >= 8000
                 && Double(srcISO) * srcDur < 0.25 {
                 zm = .fullCrop
-                Log.camera.info("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
+                Log.camera.notice("Super Res -> Crop penuh 48MP (utama \(Double(crop), privacy: .public)x, terang)")
             }
 
             // v0.36.1: commit 73864a8 memaksa burst Bayer 12MP untuk SEMUA Crop penuh di mode HDR+, padahal maksudnya
@@ -2521,17 +2532,17 @@ final class CameraManager: NSObject, ObservableObject {
             let sensorCrop = nativeLong >= 8000 && crop < 3 && Double(srcISO) * srcDur < 2
             let darkCrop = m == .hdrplus && zoomed && zm == .fullCrop && !sensorCrop
             if m == .hdrplus && zoomed && zm == .fullCrop && sensorCrop {
-                Log.camera.info("Crop penuh terang: 1 foto sensor 48MP di-crop (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 2), privacy: .public), crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x)")
+                Log.camera.notice("Crop penuh terang: 1 foto sensor 48MP di-crop (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 2), privacy: .public), crop \(Double(crop), format: .fixed(precision: 1), privacy: .public)x)")
             }
             let bayerBurst = (m == .hdrplus && !zoomed) || (zoomed && zm == .superRes) || darkCrop
             let singleFull = zoomed && zm == .fullCrop && !darkCrop
             if darkCrop {
-                Log.camera.info("Crop penuh gelap: paksa multi-frame merge (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 1), privacy: .public))")
+                Log.camera.notice("Crop penuh gelap: paksa multi-frame merge (ISO x t \(Double(srcISO) * srcDur, format: .fixed(precision: 1), privacy: .public))")
             }
             if zoomed && zm == .apple {
                 // zoom Apple apa adanya (kamera virtual, seperti kamera bawaan); + AI: perkecil ke detail asli lalu AI
                 self.burstMode = .heif
-                self.burstAppleZoomAI = useAI
+                self.burstAppleZoomAI = useAI || self.burstPortrait      // potret: jalur ini yang memberi bokeh + percantik
                 self.burstCrop = crop
                 // v0.10.0: sensor/crop (621 px di 13x utama) terlalu kecil - Apple (remosaic + multi-frame)
                 // menyimpan ~2x lebih banyak detail; diperkecil sejauh itu AI mengubah huruf jadi balok
@@ -2578,14 +2589,14 @@ final class CameraManager: NSObject, ObservableObject {
                             return abs(Int(da.width) - Int(cd.width)) < abs(Int(db.width) - Int(cd.width))
                         }
                         if pick == nil {
-                            Log.camera.info("Fusi 48MP: tidak ada format 48MP (\(p.formats.count, privacy: .public) format, aktif \(cd.width, privacy: .public)x\(cd.height, privacy: .public))")
+                            Log.camera.notice("Fusi 48MP: tidak ada format 48MP (\(p.formats.count, privacy: .public) format, aktif \(cd.width, privacy: .public)x\(cd.height, privacy: .public))")
                         }
                         if let f48 = pick, (try? p.lockForConfiguration()) != nil {
                             p.activeFormat = f48
                             p.unlockForConfiguration()
                             if let md = self.maxDimensions(of: p) { self.photoOutput.maxPhotoDimensions = md }
                             nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
-                            Log.camera.info("Fusi 48MP: format lensa diganti ke yang mendukung 48MP (\(nativeLong, privacy: .public))")
+                            Log.camera.notice("Fusi 48MP: format lensa diganti ke yang mendukung 48MP (\(nativeLong, privacy: .public))")
                         }
                     }
                     if (try? p.lockForConfiguration()) != nil {
@@ -2603,7 +2614,7 @@ final class CameraManager: NSObject, ObservableObject {
                                                  pf.minExposureDuration.seconds), pf.maxExposureDuration.seconds)
                                 let i2 = min(max(Float(tot / t2), pf.minISO), pf.maxISO)
                                 apDone = Self.applyAperture(p, fA, duration: CMTime(seconds: t2, preferredTimescale: 1_000_000_000), iso: i2)
-                                Log.camera.info("Capture aperture f/\(fA, privacy: .public) (asal f/\(srcAp, privacy: .public)): \(t2, privacy: .public)s ISO \(i2, privacy: .public), \(apDone ? "ok" : "tidak didukung", privacy: .public)")
+                                Log.camera.notice("Capture aperture f/\(fA, privacy: .public) (asal f/\(srcAp, privacy: .public)): \(t2, privacy: .public)s ISO \(i2, privacy: .public), \(apDone ? "ok" : "tidak didukung", privacy: .public)")
                             }
                             if !apDone {
                                 p.setExposureModeCustom(duration: CMTime(seconds: s, preferredTimescale: 1_000_000_000),
@@ -2631,7 +2642,7 @@ final class CameraManager: NSObject, ObservableObject {
                     }
                     self.switchedToPhysicalForMF = true
                     delay = 0.5   // eksposur & WB sudah sama; cukup waktu untuk fokus
-                    Log.camera.info("Capture: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
+                    Log.camera.notice("Capture: pindah ke lensa fisik \(p.localizedName, privacy: .public)")
                 } else if let d = self.device, (try? d.lockForConfiguration()) != nil {
                     // lensa dikunci (atau tanpa kamera virtual): sudah lensa fisik, cukup zoom 1x.
                     // Ganti zoom membuat AF mencari ulang -> fokus tengah lagi & beri waktu (v0.10.0: Crop penuh buram)
@@ -2679,7 +2690,7 @@ final class CameraManager: NSObject, ObservableObject {
                     delay = max(delay, 2 * t + 0.3)
                     let tt = t >= 0.5 ? String(format: "%.1fs", t) : "1/\(Int((1 / t).rounded()))"
                     hint = String(format: "MALAM: tahan HP ~%.0f s (%d x %@)", Double(frames) * t + 0.5, frames, tt)
-                    Log.camera.info("MALAM: \(frames, privacy: .public) frame x \(t, privacy: .public)s ISO \(plan.iso, privacy: .public) (asal ISO \(srcISO, privacy: .public) \(srcDur, privacy: .public)s, diam \(steady, privacy: .public), gyro \(motion, privacy: .public) rad/s)")
+                    Log.camera.notice("MALAM: \(frames, privacy: .public) frame x \(t, privacy: .public)s ISO \(plan.iso, privacy: .public) (asal ISO \(srcISO, privacy: .public) \(srcDur, privacy: .public)s, diam \(steady, privacy: .public), gyro \(motion, privacy: .public) rad/s)")
                 }
             }
             self.burstLensName = lensName
@@ -2694,12 +2705,12 @@ final class CameraManager: NSObject, ObservableObject {
                 // v0.20: semua lensa belakang 48MP (iPhone 17/18 Pro Max: tele 4x juga 48MP)
                 let ok = fus && !night && lensName != "Depan" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
                 self.fusionPending = ok
-                Log.camera.info("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
+                Log.camera.notice("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
             }
             // v0.34: burst RAW disimpan di memori sampai digabung -> jumlah frame dibatasi sisa memori HP
             if bayerBurst && frames > 1 {
                 let lim = DeviceCaps.frameLimit(wanted: frames, frameBytes: self.lastBayerBytes)
-                Log.camera.info("Memori: sisa \(lim.roomMB, privacy: .public) MB sebelum burst \(frames, privacy: .public) frame (\(self.lastBayerBytes / 1_048_576, privacy: .public) MB/frame) -> \(lim.frames, privacy: .public) frame")
+                Log.camera.notice("Memori: sisa \(lim.roomMB, privacy: .public) MB sebelum burst \(frames, privacy: .public) frame (\(self.lastBayerBytes / 1_048_576, privacy: .public) MB/frame) -> \(lim.frames, privacy: .public) frame")
                 if lim.frames < frames {
                     frames = lim.frames
                     hint = "Memori terbatas: \(frames) frame"
@@ -2715,14 +2726,14 @@ final class CameraManager: NSObject, ObservableObject {
             let bm = self.burstMode
             self.burstDir = Self.makeBurstDir(prefix: night ? "MALAM" : (bm == .hdrplus ? "HDRPLUS" : (bm == .heif ? "FOTO" : "BURST")))
             let isMulti = bm.isBurst || self.burstAIMultiFrame
-            Log.camera.info("Capture mulai: \(frames, privacy: .public) frame, mode \(bm.rawValue, privacy: .public)\(night ? " MALAM" : "", privacy: .public), zoom total \(Double(tz), privacy: .public)x, lensa \(lensName, privacy: .public), crop \(Double(crop), privacy: .public)x, cara zoom \(zoomed ? zm.rawValue : "-", privacy: .public), AI \(useAI, privacy: .public), MF \(self.burstAIMultiFrame, privacy: .public), rasio \(asp.rawValue, privacy: .public), live \(liveReq, privacy: .public)")
+            Log.camera.notice("Capture mulai: \(frames, privacy: .public) frame, mode \(bm.rawValue, privacy: .public)\(night ? " MALAM" : "", privacy: .public), zoom total \(Double(tz), privacy: .public)x, lensa \(lensName, privacy: .public), crop \(Double(crop), privacy: .public)x, cara zoom \(zoomed ? zm.rawValue : "-", privacy: .public), AI \(useAI, privacy: .public), MF \(self.burstAIMultiFrame, privacy: .public), rasio \(asp.rawValue, privacy: .public), live \(liveReq, privacy: .public)")
             self.setStatus(isMulti ? "Burst 0/\(frames)" : "Memotret...")
             // v0.18.4: siapkan pengaturan foto (Bayer + 48MP) selama jeda pindah lensa -> foto 48MP lebih cepat
             if self.fusionPending {
                 let t0 = CFAbsoluteTimeGetCurrent()
                 self.photoOutput.setPreparedPhotoSettingsArray([self.makeSettings(bm), self.fusionSettings()]) { ok, err in
                     let dt = CFAbsoluteTimeGetCurrent() - t0
-                    Log.camera.info("Fusi 48MP: pengaturan disiapkan \(ok, privacy: .public) \(dt, format: .fixed(precision: 2), privacy: .public) s \(err?.localizedDescription ?? "", privacy: .public)")
+                    Log.camera.notice("Fusi 48MP: pengaturan disiapkan \(ok, privacy: .public) \(dt, format: .fixed(precision: 2), privacy: .public) s \(err?.localizedDescription ?? "", privacy: .public)")
                 }
             }
             if screenFill || torchFill, let d = self.device, (try? d.lockForConfiguration()) != nil {
@@ -2734,7 +2745,7 @@ final class CameraManager: NSObject, ObservableObject {
                 if d.isExposureModeSupported(.continuousAutoExposure) { d.exposureMode = .continuousAutoExposure }
                 d.unlockForConfiguration()
                 delay = max(delay, 0.9)
-                Log.camera.info("Lampu isi: \(screenFill ? "layar (kamera depan)" : "senter", privacy: .public), senter nyala \(self.burstTorch, privacy: .public)")
+                Log.camera.notice("Lampu isi: \(screenFill ? "layar (kamera depan)" : "senter", privacy: .public), senter nyala \(self.burstTorch, privacy: .public)")
             }
             // kunci AE/AWB/AF SETELAH lensa stabil, lalu mulai capture
             // v0.30.0 mencoba AF kedua dengan lensa fisik di-zoom: posisi lensa tidak pernah berubah (5 dari 5),
@@ -2754,7 +2765,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard wait, let d = device else { done(); return }
         let dt = CFAbsoluteTimeGetCurrent() - started
         if !d.isAdjustingFocus || dt > 1.5 {
-            Log.camera.info("Fokus zoom: tunggu tambahan \(dt, format: .fixed(precision: 2), privacy: .public) s, selesai \(!d.isAdjustingFocus, privacy: .public), posisi lensa \(Double(d.lensPosition), format: .fixed(precision: 3), privacy: .public)")
+            Log.camera.notice("Fokus zoom: tunggu tambahan \(dt, format: .fixed(precision: 2), privacy: .public) s, selesai \(!d.isAdjustingFocus, privacy: .public), posisi lensa \(Double(d.lensPosition), format: .fixed(precision: 3), privacy: .public)")
             done()
             return
         }
@@ -2826,8 +2837,8 @@ final class CameraManager: NSObject, ObservableObject {
             liveMovieURL = nil
         }
         DispatchQueue.main.async { self.previewFrozen = false }
-        Log.camera.info("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
-        if collectsBayer { Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah capture (\(self.hdrFrames.count, privacy: .public) frame di memori)") }
+        Log.camera.notice("Capture selesai: \(n, privacy: .public) frame -> \(dir?.lastPathComponent ?? "-", privacy: .public)")
+        if collectsBayer { Log.camera.notice("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah capture (\(self.hdrFrames.count, privacy: .public) frame di memori)") }
         if collectsBayer {
             let frames = hdrFrames, ref = hdrRef, nr = burstNR, ai = burstMode == .aiZoom
             let fusion = fusionData
@@ -2870,14 +2881,14 @@ final class CameraManager: NSObject, ObservableObject {
             let on = self.isRecording || self.isCapturing || self.pendingJobs > 0
             guard UIApplication.shared.isIdleTimerDisabled != on else { return }
             UIApplication.shared.isIdleTimerDisabled = on
-            Log.camera.info("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), jepret \(self.isCapturing, privacy: .public), antre \(self.pendingJobs, privacy: .public))")
+            Log.camera.notice("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), jepret \(self.isCapturing, privacy: .public), antre \(self.pendingJobs, privacy: .public))")
         }
     }
 
     /// processQueue: satu foto di antrean selesai (berhasil atau gagal)
     private func finish(_ message: String) {
         let dt = CFAbsoluteTimeGetCurrent() - jobStart
-        Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah proses")
+        Log.camera.notice("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah proses")
         var message = message
         if portraitNoSubject {
             portraitNoSubject = false
@@ -2886,7 +2897,7 @@ final class CameraManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.pendingJobs = max(0, self.pendingJobs - 1)
             let left = self.pendingJobs
-            Log.camera.info("Antrean proses: selesai \(dt, format: .fixed(precision: 1), privacy: .public) s, sisa \(left, privacy: .public) foto")
+            Log.camera.notice("Antrean proses: selesai \(dt, format: .fixed(precision: 1), privacy: .public) s, sisa \(left, privacy: .public) foto")
             if !self.isCapturing { self.status = left > 0 ? "\(message) · \(left) foto lagi diproses" : message }
             self.progress = nil
             self.progressText = ""
@@ -2923,7 +2934,7 @@ final class CameraManager: NSObject, ObservableObject {
         let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for f in files.dropLast(12) { try? FileManager.default.removeItem(at: f) }
-        Log.camera.info("Debug: \(name, privacy: .public) (\(data.count / 1024, privacy: .public) KB)")
+        Log.camera.notice("Debug: \(name, privacy: .public) (\(data.count / 1024, privacy: .public) KB)")
     }
 
     /// v0.18: foto Apple 48MP (HEVC, sensor penuh) untuk fusi detail
@@ -3010,7 +3021,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard let plain = SRUpscaler.resize(plain0, longSide: target) else { return (plain0, "resize gagal") }
         guard need >= minAIFactor, strength > 0.01 else { return (plain, "Lanczos") }
         if need < 2, L >= 2500 {
-            Log.sr.info("AI dilewati: sumber \(Int(L), privacy: .public) px hanya perlu x\(need, format: .fixed(precision: 2), privacy: .public)")
+            Log.sr.notice("AI dilewati: sumber \(Int(L), privacy: .public) px hanya perlu x\(need, format: .fixed(precision: 2), privacy: .public)")
             return (plain, "Lanczos (sumber besar)")
         }
         guard let sr = upscaler(for: model) else { return (plain, "AI gagal: model \(model.rawValue) tidak bisa dimuat") }
@@ -3030,7 +3041,7 @@ final class CameraManager: NSObject, ObservableObject {
                 let nAI = dec.filter { $0.useAI }.count
                 let detail = dec.prefix(8).map { String(format: "%.2f/%.2f~%.2f", $0.confAI, $0.confPlain, $0.sim) }
                     .joined(separator: " ")
-                Log.sr.info("Fokus tulisan: \(boxes.count, privacy: .public) area, AI menang \(nAI, privacy: .public) (OCR ai/asli: \(detail, privacy: .public))")
+                Log.sr.notice("Fokus tulisan: \(boxes.count, privacy: .public) area, AI menang \(nAI, privacy: .public) (OCR ai/asli: \(detail, privacy: .public))")
                 if let comp = TextBoost.compose(plain: plain, ai: upT, strength: strength,
                                                 textStrength: max(strength, 0.9), decisions: dec) {
                     return (comp, "AI \(model.rawValue) \(Int((strength * 100).rounded()))% + teks \(nAI)/\(boxes.count) AI")
@@ -3077,7 +3088,7 @@ final class CameraManager: NSObject, ObservableObject {
         var keep: [Int] = []
         for (rank, i) in order.enumerated() where rank < minKeep || scores[i] >= 0.8 * best { keep.append(i) }
         let txt = order.map { String(format: "%d:%.0f", $0 + 1, 100 * scores[$0] / best) }.joined(separator: " ")
-        Log.hdr.info("Frame tertajam: dipakai \(keep.count, privacy: .public) dari \(frames.count, privacy: .public), acuan frame \(order[0] + 1, privacy: .public) (frame:skor% \(txt, privacy: .public))")
+        Log.hdr.notice("Frame tertajam: dipakai \(keep.count, privacy: .public) dari \(frames.count, privacy: .public), acuan frame \(order[0] + 1, privacy: .public) (frame:skor% \(txt, privacy: .public))")
         return keep.map { frames[$0] }
     }
 
@@ -3090,7 +3101,7 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         procStatus("Memproses HDR+ \(frames.count) frame...")
-        Log.hdr.info("Tuning: \(self.pj.burstTuning.summary, privacy: .public), gaya warna \(self.pj.burstStyle.rawValue, privacy: .public)")
+        Log.hdr.notice("Tuning: \(self.pj.burstTuning.summary, privacy: .public), gaya warna \(self.pj.burstStyle.rawValue, privacy: .public)")
         // DNG referensi dulu: butuh NoiseProfile & black/white untuk merge frekuensi
         guard let refDNG = ref.fileDataRepresentation() else {
             finish("HDR+ gagal: DNG referensi kosong")
@@ -3123,7 +3134,7 @@ final class CameraManager: NSObject, ObservableObject {
                                           software: "BaginCam HDR+ \(frames.count) frame", sourceFullScale: fs.full)
             dng = w.data
             highlight = Self.highlightLevel(px, count: r.width * r.height, scale: w.scale, black: w.black, white: w.white)
-            Log.hdr.info("RAW \(fs.bits, privacy: .public), maks data \(fs.maxValue, privacy: .public), DNG white \(w.white, privacy: .public) -> skala \(w.scale, privacy: .public)")
+            Log.hdr.notice("RAW \(fs.bits, privacy: .public), maks data \(fs.maxValue, privacy: .public), DNG white \(w.white, privacy: .public) -> skala \(w.scale, privacy: .public)")
         } catch {
             Log.hdr.error("Tulis DNG gagal: \(String(describing: error), privacy: .public)")
             finish("HDR+ gagal menulis DNG: \(error)")
@@ -3137,8 +3148,9 @@ final class CameraManager: NSObject, ObservableObject {
             // Drizzle 2x: sub-pixel super-resolution untuk zoom (>= 3 frame)
             if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle {
                 let bW = r.width, bH = r.height
-                let cropW = max(16, (bW / 2) / Int(max(1, pj.burstCrop))) & ~1
-                let cropH = max(16, (bH / 2) / Int(max(1, pj.burstCrop))) & ~1
+                // v0.38.1: dulu dibagi Int(crop) -> 1,5x dibagi 1 (tidak di-crop, hasil 1x); 2,5x dibagi 2
+                let cropW = max(16, Int(Double(bW / 2) / Double(max(1, pj.burstCrop)))) & ~1
+                let cropH = max(16, Int(Double(bH / 2) / Double(max(1, pj.burstCrop)))) & ~1
                 let cropX = ((bW / 2) - cropW) / 2, cropY = ((bH / 2) - cropH) / 2
                 procStatus("Drizzle 2x super-resolusi...")
                 let td = CFAbsoluteTimeGetCurrent()
@@ -3153,7 +3165,7 @@ final class CameraManager: NSObject, ObservableObject {
                         if let img = RawDeveloper.develop(dng: dw.data, highlight: dhl, metering: 1,
                                                           night: pj.burstNight, tuning: pj.burstTuning, styleEV: pj.burstStyle.ev),
                            let cg = RawDeveloper.cgImage(img) {
-                            Log.sr.info("Drizzle 2x: sumber \(cg.width, privacy: .public)x\(cg.height, privacy: .public) (crop \(cropW, privacy: .public)x\(cropH, privacy: .public) superpx -> 2x)")
+                            Log.sr.notice("Drizzle 2x: sumber \(cg.width, privacy: .public)x\(cg.height, privacy: .public) (crop \(cropW, privacy: .public)x\(cropH, privacy: .public) superpx -> 2x)")
                             processAIZoomImage(cg, properties: img.properties, dir: dir, multiFrame: frames.count, cropOverride: 1)
                             return
                         }
@@ -3218,7 +3230,7 @@ final class CameraManager: NSObject, ObservableObject {
                 if pj.burstPortrait, let cg = RawDeveloper.cgImage(final) {
                     if let b = Self.applyPortraitBokeh(cg, intensity: pj.burstBokehIntensity) {
                         final = CIImage(cgImage: b).settingProperties(final.properties)
-                        Log.sr.info("Portrait bokeh diterapkan")
+                        Log.sr.notice("Portrait bokeh diterapkan")
                     } else {
                         portraitNoSubject = true
                     }
@@ -3226,7 +3238,7 @@ final class CameraManager: NSObject, ObservableObject {
                 if pj.burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
                    let b = Self.applyFaceBeauty(cg, level: pj.burstBeautyLevel) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
-                    Log.sr.info("Face Beauty diterapkan")
+                    Log.sr.notice("Face Beauty diterapkan")
                 }
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
@@ -3270,7 +3282,7 @@ final class CameraManager: NSObject, ObservableObject {
         // p99.9 0.95 -> eksposur -1.9 EV, 1.3 stop lebih gelap dari Apple). Bila 1 % teratas jauh lebih redup
         // dari 0.1 % teratas -> pakai p99 (lampu dibiarkan terbakar, seperti kamera Apple). Langit luas: p99 tinggi.
         let use = (p999 > 0.8 && p99 < 0.45 * p999) ? max(p99 * 1.6, 0.05) : p999
-        Log.hdr.info("Highlight: p99 \(p99, format: .fixed(precision: 3), privacy: .public), p99.9 \(p999, format: .fixed(precision: 3), privacy: .public) -> pakai \(use, format: .fixed(precision: 3), privacy: .public)\(use != p999 ? " (abaikan lampu kecil)" : "", privacy: .public)")
+        Log.hdr.notice("Highlight: p99 \(p99, format: .fixed(precision: 3), privacy: .public), p99.9 \(p999, format: .fixed(precision: 3), privacy: .public) -> pakai \(use, format: .fixed(precision: 3), privacy: .public)\(use != p999 ? " (abaikan lampu kecil)" : "", privacy: .public)")
         return use
     }
 
@@ -3299,7 +3311,7 @@ final class CameraManager: NSObject, ObservableObject {
                                         night: pj.burstNight, multiFrame: multiFrame) {
             src = deconv
             srcRect = CGRect(x: 0, y: 0, width: deconv.width, height: deconv.height)
-            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(self.pj.burstCrop), lens: self.pj.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.pj.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
+            Log.sr.notice("Deconv: sigma \(Self.deconvSigma(crop: Double(self.pj.burstCrop), lens: self.pj.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.pj.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
         }
 
         // v0.29.3: zoom di atas 50x selalu 12MP - sumbernya hanya ratusan piksel,
@@ -3307,7 +3319,7 @@ final class CameraManager: NSObject, ObservableObject {
         let farZoom = pj.burstZoomed && pj.burstTotalZoom > 50.5
         let res: OutputMP = farZoom ? .mp12 : pj.burstOutputMP
         if farZoom && pj.burstOutputMP != .mp12 {
-            Log.sr.info("Zoom jauh: hasil 12MP (setelan \(self.pj.burstOutputMP.label, privacy: .public))")
+            Log.sr.notice("Zoom jauh: hasil 12MP (setelan \(self.pj.burstOutputMP.label, privacy: .public))")
         }
         let (img0, note) = upscale(src, crop: srcRect, target: res.longSide, model: pj.burstSRModel,
                                    strength: pj.burstStrength, minAIFactor: 1.4, label: "AI Zoom")
@@ -3346,14 +3358,14 @@ final class CameraManager: NSObject, ObservableObject {
         if pj.burstPortrait {
             if let b = Self.applyPortraitBokeh(result, intensity: pj.burstBokehIntensity) {
                 result = b
-                Log.sr.info("Portrait bokeh diterapkan (zoom)")
+                Log.sr.notice("Portrait bokeh diterapkan (zoom)")
             } else {
                 portraitNoSubject = true
             }
         }
         if pj.burstFaceBeauty, let b = Self.applyFaceBeauty(result, level: pj.burstBeautyLevel) {
             result = b
-            Log.sr.info("Face Beauty diterapkan (zoom)")
+            Log.sr.notice("Face Beauty diterapkan (zoom)")
         }
 
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
@@ -3376,7 +3388,7 @@ final class CameraManager: NSObject, ObservableObject {
         let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(pj.burstSRModel.tag)" : ""
         let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, pj.burstLensName, mfTag, aiTag, res.label)
         save(out as Data, fileName: name, dir: dir)
-        Log.sr.info("AI Zoom \(tz, privacy: .public)x lensa \(self.pj.burstLensName, privacy: .public) crop \(Double(self.pj.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")
+        Log.sr.notice("AI Zoom \(tz, privacy: .public)x lensa \(self.pj.burstLensName, privacy: .public) crop \(Double(self.pj.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")
         let mfText = multiFrame > 0 ? " · MF \(multiFrame)" : ""
         let label = pj.burstAppleZoomAI ? "Zoom Apple" : (pj.burstMode == .aiZoom ? "AI Zoom"
             : (pj.burstMode == .hdrplus ? "Super Res" : "Crop penuh"))
@@ -3414,6 +3426,10 @@ final class CameraManager: NSObject, ObservableObject {
 
     static func applyFaceBeauty(_ img: CGImage, level: BeautyLevel = .standard) -> CGImage? {
         guard level.active, min(img.width, img.height) >= 400 else { return nil }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        defer {
+            Log.sr.notice("Percantik: \(img.width, privacy: .public)x\(img.height, privacy: .public), \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s, sisa memori \(DeviceCaps.availableMB, privacy: .public) MB")
+        }
         let faceReq = VNDetectFaceRectanglesRequest()
         let faceHandler = VNImageRequestHandler(cgImage: img, options: [:])
         guard (try? faceHandler.perform([faceReq])) != nil,
@@ -3476,7 +3492,7 @@ final class CameraManager: NSObject, ObservableObject {
         if let pm = personMask {
             let cov = coverage(pm)
             if cov >= 0.01 { return (fit(pm), String(format: "segmentasi orang %.0f%%", cov * 100)) }
-            Log.sr.info("Bokeh: mask orang kosong (\(cov * 100, format: .fixed(precision: 2), privacy: .public)%), tidak ada objek menonjol")
+            Log.sr.notice("Bokeh: mask orang kosong (\(cov * 100, format: .fixed(precision: 2), privacy: .public)%), tidak ada objek menonjol")
         }
         return nil
     }
@@ -3531,7 +3547,7 @@ final class CameraManager: NSObject, ObservableObject {
     static func applyPortraitBokeh(_ img: CGImage, intensity: Double = 50) -> CGImage? {
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let (matte, how) = subjectMatte(img) else {
-            Log.sr.info("Bokeh: tidak ada subjek / orang, foto dibiarkan tajam")
+            Log.sr.notice("Bokeh: tidak ada subjek / orang, foto dibiarkan tajam")
             return nil
         }
         let ci = CIImage(cgImage: img)
@@ -3565,7 +3581,7 @@ final class CameraManager: NSObject, ObservableObject {
             kCIInputMaskImageKey: m,
         ]).cropped(to: bounds)
         let out = RawDeveloper.cgImage(result)
-        Log.sr.info("Bokeh: matte \(how, privacy: .public), kekuatan \(Int(intensity), privacy: .public)%, radius \(Int(radius), privacy: .public) px, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+        Log.sr.notice("Bokeh: matte \(how, privacy: .public), kekuatan \(Int(intensity), privacy: .public)%, radius \(Int(radius), privacy: .public) px, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
         return out
     }
 
@@ -3579,7 +3595,7 @@ final class CameraManager: NSObject, ObservableObject {
         let long = max(cg0.width, cg0.height)
         let real = min(long, pj.burstRealLong)
         let cg = real < long ? (SRUpscaler.resize(cg0, longSide: real) ?? cg0) : cg0
-        Log.sr.info("Zoom Apple + AI: hasil Apple \(cg0.width, privacy: .public)x\(cg0.height, privacy: .public), detail asli ~\(real, privacy: .public) px sisi panjang")
+        Log.sr.notice("Zoom Apple + AI: hasil Apple \(cg0.width, privacy: .public)x\(cg0.height, privacy: .public), detail asli ~\(real, privacy: .public) px sisi panjang")
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0, cropOverride: 1)
     }
 
@@ -3636,7 +3652,7 @@ final class CameraManager: NSObject, ObservableObject {
             finish("Potret gagal: tidak bisa menyimpan HEIF")
             return
         }
-        Log.sr.info("Potret kedalaman: \(how, privacy: .public), percantik \(beauty, privacy: .public) (setelan \(self.pj.burstFaceBeauty, privacy: .public)), orientasi \(o, privacy: .public), \(Int(out.extent.width), privacy: .public)x\(Int(out.extent.height), privacy: .public), \(enc.count / 1024, privacy: .public) KB, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+        Log.sr.notice("Potret kedalaman: \(how, privacy: .public), percantik \(beauty, privacy: .public) (setelan \(self.pj.burstFaceBeauty, privacy: .public)), orientasi \(o, privacy: .public), \(Int(out.extent.width), privacy: .public)x\(Int(out.extent.height), privacy: .public), \(enc.count / 1024, privacy: .public) KB, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
         save(enc, fileName: String(format: "POTRET_%04d.heic", index), dir: dir)
         finish("Potret tersimpan (\(how)\(beauty ? " + percantik" : ""))")
     }
@@ -3671,12 +3687,12 @@ final class CameraManager: NSObject, ObservableObject {
             DispatchQueue.global(qos: .utility).async {
                 let t0 = CFAbsoluteTimeGetCurrent()
                 guard let res = CompositionAI.cropVersion(data) else {
-                    Log.camera.info("Komposisi: \(fileName, privacy: .public) sudah rapi, tanpa versi crop")
+                    Log.camera.notice("Komposisi: \(fileName, privacy: .public) sudah rapi, tanpa versi crop")
                     return
                 }
                 let base = (fileName as NSString).deletingPathExtension
                 let dt = CFAbsoluteTimeGetCurrent() - t0
-                Log.camera.info("Komposisi: \(base, privacy: .public)_CROP.heic (\(res.note, privacy: .public)) \(dt, format: .fixed(precision: 2), privacy: .public) s")
+                Log.camera.notice("Komposisi: \(base, privacy: .public)_CROP.heic (\(res.note, privacy: .public)) \(dt, format: .fixed(precision: 2), privacy: .public) s")
                 self.save(res.data, fileName: base + "_CROP.heic", dir: dir)
                 self.setStatus("AI Komposisi: versi crop disimpan (\(res.note))")
             }
@@ -3757,7 +3773,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                     if self.debugFusionS, let d = self.fusionData, let dir = self.burstDir {
                         Self.saveDebug(d, name: dir.lastPathComponent + "_48.heic")
                     }
-                    Log.camera.info("Fusi 48MP: foto Apple \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \((self.fusionData?.count ?? 0) / 1024, privacy: .public) KB")
+                    Log.camera.notice("Fusi 48MP: foto Apple \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \((self.fusionData?.count ?? 0) / 1024, privacy: .public) KB")
                 } else {
                     if let frame {
                         self.lastBayerBytes = frame.buffer.length
@@ -3779,7 +3795,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                 }
                 let hasDepth = photo.depthData != nil, hasMatte = photo.portraitEffectsMatte != nil
                 let dims = photo.resolvedSettings.photoDimensions
-                Log.camera.info("Potret kedalaman: foto \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \(info, privacy: .public), matte potret \(hasMatte, privacy: .public)")
+                Log.camera.notice("Potret kedalaman: foto \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \(info, privacy: .public), matte potret \(hasMatte, privacy: .public)")
                 self.enqueue("potret kedalaman") { self.processDepthPortrait(data, hasDepth: hasDepth, dir: dir, index: idx) }
             } else if self.burstMode == .aiZoom || (self.burstZoomed && !photo.isRawPhoto) {
                 let dir = self.burstDir
@@ -3801,11 +3817,11 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                 }
             }
             if let pb = photo.pixelBuffer, idx == 1 {
-                Log.camera.info("RAW buffer \(CVPixelBufferGetWidth(pb), privacy: .public)x\(CVPixelBufferGetHeight(pb), privacy: .public) format \(CVPixelBufferGetPixelFormatType(pb), privacy: .public)")
+                Log.camera.notice("RAW buffer \(CVPixelBufferGetWidth(pb), privacy: .public)x\(CVPixelBufferGetHeight(pb), privacy: .public) format \(CVPixelBufferGetPixelFormatType(pb), privacy: .public)")
             }
             // v0.20: foto 48MP fusi ikut terhitung (log lama "Frame 7/6") -> ditandai
             let fx = self.collectsBayer && !photo.isRawPhoto ? " (foto fusi 48MP, di luar burst)" : ""
-            Log.camera.info("Frame \(idx, privacy: .public)/\(total, privacy: .public)\(fx, privacy: .public): raw=\(photo.isRawPhoto, privacy: .public) ISO \(iso, privacy: .public) exp \(exp, privacy: .public)")
+            Log.camera.notice("Frame \(idx, privacy: .public)/\(total, privacy: .public)\(fx, privacy: .public): raw=\(photo.isRawPhoto, privacy: .public) ISO \(iso, privacy: .public) exp \(exp, privacy: .public)")
             if total > 1 { self.setStatus("Burst \(idx)/\(total)") }
         }
     }

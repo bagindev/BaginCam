@@ -83,7 +83,7 @@ final class LUTLibrary: ObservableObject {
         items = urls.filter { $0.pathExtension.lowercased() == "cube" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .map(Item.init(url:))
-        Log.lut.info("LUT tersedia: \(self.items.count, privacy: .public)")
+        Log.lut.notice("LUT tersedia: \(self.items.count, privacy: .public)")
     }
 
     func select(_ item: Item?) {
@@ -96,7 +96,7 @@ final class LUTLibrary: ObservableObject {
                 DispatchQueue.main.async {
                     if self.selected == item { self.current = lut; self.filter = f }
                 }
-                Log.lut.info("LUT dimuat: \(lut.name, privacy: .public) size \(lut.size, privacy: .public)")
+                Log.lut.notice("LUT dimuat: \(lut.name, privacy: .public) size \(lut.size, privacy: .public)")
             } catch {
                 Log.lut.error("Gagal muat LUT \(item.name, privacy: .public): \(String(describing: error), privacy: .public)")
                 DispatchQueue.main.async { self.filter = nil }

@@ -321,7 +321,7 @@ final class HDRPlusMerger {
                 progress?(N - 1 + bi, N - 1 + nBands)
             }
             weights = []
-            Log.hdr.info("Merge frekuensi: \(1 + frameAligns.count, privacy: .public) frame, c \(fc.c, privacy: .public), noise S \(fc.noiseS, privacy: .public) O \(fc.noiseO, privacy: .public), black \(fc.black, privacy: .public) range \(fc.range, privacy: .public)")
+            Log.hdr.notice("Merge frekuensi: \(1 + frameAligns.count, privacy: .public) frame, c \(fc.c, privacy: .public), noise S \(fc.noiseS, privacy: .public) O \(fc.noiseO, privacy: .public), black \(fc.black, privacy: .public) range \(fc.range, privacy: .public)")
         }
 
         // --- 3. kembali ke Bayer uint16 ---
@@ -334,7 +334,7 @@ final class HDRPlusMerger {
 
         let dt = CFAbsoluteTimeGetCurrent() - t0
         let wtxt = weights.map { String(format: "%.2f", $0) }.joined(separator: " ")
-        Log.hdr.info("HDR+ \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s, noiseSD \(noiseSD, privacy: .public), maxDiff \(maxDiff, privacy: .public), bobot [\(wtxt, privacy: .public)]")
+        Log.hdr.notice("HDR+ \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s, noiseSD \(noiseSD, privacy: .public), maxDiff \(maxDiff, privacy: .public), bobot [\(wtxt, privacy: .public)]")
         return Result(buffer: out, width: W, height: H, meanWeights: weights, noiseSD: noiseSD, seconds: dt)
     }
 
@@ -479,7 +479,7 @@ final class HDRPlusMerger {
 
         let dt = CFAbsoluteTimeGetCurrent() - t0
         let bw = outW * 2, bh = outH * 2
-        Log.hdr.info("Drizzle \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public) crop \(Int(crop.minX), privacy: .public),\(Int(crop.minY), privacy: .public) \(Int(crop.width), privacy: .public)x\(Int(crop.height), privacy: .public) -> \(bw, privacy: .public)x\(bh, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        Log.hdr.notice("Drizzle \(N, privacy: .public) frame \(W, privacy: .public)x\(H, privacy: .public) crop \(Int(crop.minX), privacy: .public),\(Int(crop.minY), privacy: .public) \(Int(crop.width), privacy: .public)x\(Int(crop.height), privacy: .public) -> \(bw, privacy: .public)x\(bh, privacy: .public): \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return Result(buffer: out, width: bw, height: bh, meanWeights: [], noiseSD: 0, seconds: dt)
     }
 

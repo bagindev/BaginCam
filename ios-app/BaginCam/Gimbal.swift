@@ -38,22 +38,22 @@ final class HardwareInput {
         let nc = NotificationCenter.default
         nc.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] n in
             guard let kb = n.object as? GCKeyboard else { return }
-            Log.camera.info("Tombol: keyboard Bluetooth tersambung (\(kb.vendorName ?? "?", privacy: .public))")
+            Log.camera.notice("Tombol: keyboard Bluetooth tersambung (\(kb.vendorName ?? "?", privacy: .public))")
             self?.attach(kb)
         }
         nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
             guard let c = n.object as? GCController else { return }
             let vendor = c.vendorName ?? "?"
             let cat = c.productCategory
-            Log.camera.info("Tombol: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public))")
+            Log.camera.notice("Tombol: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public))")
             self?.attach(c)
             self?.onControllerConnect?(vendor, cat)
         }
         nc.addObserver(forName: .GCKeyboardDidDisconnect, object: nil, queue: .main) { _ in
-            Log.camera.info("Tombol: keyboard Bluetooth terputus")
+            Log.camera.notice("Tombol: keyboard Bluetooth terputus")
         }
         nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
-            Log.camera.info("Tombol: controller terputus")
+            Log.camera.notice("Tombol: controller terputus")
             self?.onControllerDisconnect?()
         }
         if let kb = GCKeyboard.coalesced { attach(kb) }
@@ -79,7 +79,7 @@ final class HardwareInput {
             self.lastVolume = vol
             guard abs(diff) > 0.001 else { return }
             let factor: CGFloat = diff > 0 ? 1.06 : (1.0 / 1.06)
-            Log.camera.info("Tombol: volume KVO \(diff > 0 ? "up" : "down", privacy: .public) (\(vol, privacy: .public))")
+            Log.camera.notice("Tombol: volume KVO \(diff > 0 ? "up" : "down", privacy: .public) (\(vol, privacy: .public))")
             DispatchQueue.main.async { self.onZoom?(factor) }
         }
     }
@@ -106,20 +106,20 @@ final class HardwareInput {
             if volumeIsPrimary != isPrimary {
                 // arah berubah (down lalu up, atau sebaliknya) → flip kamera
                 volumeCount = 0
-                Log.camera.info("Tombol: volume double-tap beda arah -> flip kamera")
+                Log.camera.notice("Tombol: volume double-tap beda arah -> flip kamera")
                 handler?(.flip, "volume double-tap flip")
             } else {
                 // arah sama berturut → zoom
                 let factor: CGFloat = volumeIsPrimary ? (1.0 / 1.08) : 1.08
                 onZoom?(factor)
-                Log.camera.info("Tombol: volume zoom \(self.volumeIsPrimary ? "out" : "in", privacy: .public) (x\(self.volumeCount, privacy: .public))")
+                Log.camera.notice("Tombol: volume zoom \(self.volumeIsPrimary ? "out" : "in", privacy: .public) (x\(self.volumeCount, privacy: .public))")
             }
             return
         }
 
         let w = DispatchWorkItem { [weak self] in
             self?.pendingShutter = nil
-            Log.camera.info("Tombol: volume -> shutter (primary=\(isPrimary, privacy: .public))")
+            Log.camera.notice("Tombol: volume -> shutter (primary=\(isPrimary, privacy: .public))")
             self?.handler?(.shutter, isPrimary ? "tombol primer" : "tombol sekunder")
         }
         pendingShutter = w
@@ -130,7 +130,7 @@ final class HardwareInput {
         kb.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
             guard pressed else { return }
             let a = Self.map(code)
-            Log.camera.info("Tombol: keyboard kode \(code.rawValue, privacy: .public) -> \(a?.rawValue ?? "tidak dipakai", privacy: .public)")
+            Log.camera.notice("Tombol: keyboard kode \(code.rawValue, privacy: .public) -> \(a?.rawValue ?? "tidak dipakai", privacy: .public)")
             if let a { DispatchQueue.main.async { self?.handler?(a, "keyboard \(code.rawValue)") } }
         }
     }
@@ -150,7 +150,7 @@ final class HardwareInput {
             guard let b = element as? GCControllerButtonInput, b.isPressed else { return }
             let name = element.localizedName ?? element.aliases.first ?? "?"
             let aliases = element.aliases.joined(separator: ",")
-            Log.camera.info("Tombol: controller tombol \(name, privacy: .public) aliases=[\(aliases, privacy: .public)]")
+            Log.camera.notice("Tombol: controller tombol \(name, privacy: .public) aliases=[\(aliases, privacy: .public)]")
             let gp = c?.extendedGamepad
             let mgp = c?.microGamepad
             let action: GimbalAction?
@@ -164,7 +164,7 @@ final class HardwareInput {
                 action = Self.guessAction(name: name, aliases: aliases)
             }
             if let action {
-                Log.camera.info("Tombol: controller -> \(action.rawValue, privacy: .public)")
+                Log.camera.notice("Tombol: controller -> \(action.rawValue, privacy: .public)")
                 DispatchQueue.main.async { self?.handler?(action, "controller \(name)") }
             }
         }

@@ -243,7 +243,7 @@ final class CompositionAI: ObservableObject {
         let t0 = CFAbsoluteTimeGetCurrent()
         let sc = CompScorer.bundled(m)
         if let sc { scorers[m] = sc } else { failedScorers.insert(m) }
-        Log.camera.info("Komposisi \(m.rawValue, privacy: .public): model \(sc == nil ? "TIDAK ADA" : "dimuat", privacy: .public) (\(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s)")
+        Log.camera.notice("Komposisi \(m.rawValue, privacy: .public): model \(sc == nil ? "TIDAK ADA" : "dimuat", privacy: .public) (\(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s)")
         return sc
     }
 
@@ -252,7 +252,7 @@ final class CompositionAI: ObservableObject {
         guard let sc = scorer(m) else { return nil }
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let f = sc.features(cg), let sv = sc.scores(f, rects: all), sv.count == all.count else {
-            Log.camera.info("Komposisi \(m.rawValue, privacy: .public): gagal menilai")
+            Log.camera.notice("Komposisi \(m.rawValue, privacy: .public): gagal menilai")
             return nil
         }
         let dt = CFAbsoluteTimeGetCurrent() - t0
@@ -263,7 +263,7 @@ final class CompositionAI: ObservableObject {
             let r = all[bi]
             parts.append(String(format: "AI %.2f @%.2f,%.2f sisi %.2f", sv[bi], Double(r.midX), Double(r.midY), Double(r.width)))
         }
-        Log.camera.info("Komposisi \(m.rawValue, privacy: .public): \(parts.joined(separator: ", "), privacy: .public) | \(all.count, privacy: .public) kandidat, masukan \(f.inW, privacy: .public)x\(f.inH, privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        Log.camera.notice("Komposisi \(m.rawValue, privacy: .public): \(parts.joined(separator: ", "), privacy: .public) | \(all.count, privacy: .public) kandidat, masukan \(f.inW, privacy: .public)x\(f.inH, privacy: .public), \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return sv
     }
 

@@ -92,18 +92,18 @@ enum RawDeveloper {
                 // wajah linear 0.15 vs foto Apple 0.28)
                 if metering >= 0.99, let face = faceLuminance(small) {
                     adj = max(-1.2, min(0.8, log2(0.24 / face)))
-                    Log.hdr.info("Kecerahan wajah: linear \(face, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
+                    Log.hdr.notice("Kecerahan wajah: linear \(face, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
                 if adj != 0 {
                     f.exposure += Float(adj)
-                    Log.hdr.info("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
+                    Log.hdr.notice("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
             }
             // v0.19: gaya warna (Cerah / Ala Apple ...) - setelah eksposur otomatis supaya tidak dibatalkan
             if styleEV != 0 { f.exposure += Float(styleEV) }
         }
         f.scaleFactor = fullScale
-        Log.hdr.info("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")
+        Log.hdr.notice("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")
         guard let img = f.outputImage else { return nil }
         // piksel sudah tegak -> orientasi metadata harus 1 supaya tidak diputar dua kali
         return img.settingProperties(uprightProperties(img.properties))

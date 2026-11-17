@@ -167,7 +167,7 @@ final class VideoUpscaler {
 
         guard reader.startReading() else { throw UpscaleError.msg("Baca gagal: \(reader.error?.localizedDescription ?? "-")") }
         guard writer.startWriting() else { throw UpscaleError.msg("Tulis gagal: \(writer.error?.localizedDescription ?? "-")") }
-        Log.sr.info("AI video: \(url.lastPathComponent, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public), \(info.frames, privacy: .public) frame, mulai frame \(job.done, privacy: .public) (\(job.nextTime, format: .fixed(precision: 2), privacy: .public) s), model \(o.model.rawValue, privacy: .public), kedip \(o.stabilize, privacy: .public)")
+        Log.sr.notice("AI video: \(url.lastPathComponent, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public), \(info.frames, privacy: .public) frame, mulai frame \(job.done, privacy: .public) (\(job.nextTime, format: .fixed(precision: 2), privacy: .public) s), model \(o.model.rawValue, privacy: .public), kedip \(o.stabilize, privacy: .public)")
 
         var prevBase: CIImage?, prevSR: CIImage?
         var prevCG: CGImage?, prevSRCG: CGImage?
@@ -258,7 +258,7 @@ final class VideoUpscaler {
         job.save()
         let secs = CFAbsoluteTimeGetCurrent() - t0
         let state = ended ? "habis" : (paused ? "dijeda" : "berhenti")
-        Log.sr.info("AI video: potongan \(segFrames, privacy: .public) frame \(secs, format: .fixed(precision: 1), privacy: .public) s, total \(job.done, privacy: .public)/\(info.frames, privacy: .public), \(state, privacy: .public)")
+        Log.sr.notice("AI video: potongan \(segFrames, privacy: .public) frame \(secs, format: .fixed(precision: 1), privacy: .public) s, total \(job.done, privacy: .public)/\(info.frames, privacy: .public), \(state, privacy: .public)")
         if let failure { throw UpscaleError.msg(failure + " - bisa dilanjutkan") }
         guard ended else { return (job, nil) }
 
@@ -270,7 +270,7 @@ final class VideoUpscaler {
         let outURL = dir.appendingPathComponent("\(base)_\(tag)_\(o.model == .fast ? "C" : "D").mov")
         try? FileManager.default.removeItem(at: outURL)
         try await Self.merge(job, audioFrom: asset, to: outURL)
-        Log.sr.info("AI video selesai: \(outURL.lastPathComponent, privacy: .public), \(job.done, privacy: .public) frame, \(job.segments.count, privacy: .public) potongan")
+        Log.sr.notice("AI video selesai: \(outURL.lastPathComponent, privacy: .public), \(job.done, privacy: .public) frame, \(job.segments.count, privacy: .public) potongan")
         return (job, outURL)
     }
 

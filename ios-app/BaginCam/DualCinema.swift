@@ -100,7 +100,7 @@ final class CinematicProcessor {
         totalMs += (CACurrentMediaTime() - t0) * 1000
         frames += 1
         guard frames >= 300 else { return }
-        Log.camera.info("SINEMA: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public) \(1 / max(self.interval, 0.001), format: .fixed(precision: 0), privacy: .public) fps masuk, \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, mask \(self.asyncMode ? "async" : "tiap frame", privacy: .public), orang terdeteksi \(self.withPerson * 100 / self.frames, privacy: .public)%")
+        Log.camera.notice("SINEMA: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public) \(1 / max(self.interval, 0.001), format: .fixed(precision: 0), privacy: .public) fps masuk, \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, mask \(self.asyncMode ? "async" : "tiap frame", privacy: .public), orang terdeteksi \(self.withPerson * 100 / self.frames, privacy: .public)%")
         frames = 0; withPerson = 0; totalMs = 0
     }
 

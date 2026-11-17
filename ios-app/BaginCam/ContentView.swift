@@ -106,12 +106,12 @@ struct ContentView: View {
             cam.onFrame = { image in r.push(image) }
             HardwareInput.shared.handler = { a, src in handleHardware(a, src) }   // v0.21: gimbal / remote
             HardwareInput.shared.onControllerConnect = { vendor, cat in
-                Log.camera.info("Auto-gimbal: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public)), gimbalAuto=\(cam.gimbalAuto, privacy: .public)")
+                Log.camera.notice("Auto-gimbal: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public)), gimbalAuto=\(cam.gimbalAuto, privacy: .public)")
                 if cam.gimbalAuto && !cam.gimbalMode { cam.gimbalMode = true }
             }
             HardwareInput.shared.onControllerDisconnect = {
                 let still = HardwareInput.shared.hasController
-                Log.camera.info("Auto-gimbal: controller terputus, sisa controller=\(still, privacy: .public)")
+                Log.camera.notice("Auto-gimbal: controller terputus, sisa controller=\(still, privacy: .public)")
                 if cam.gimbalAuto && cam.gimbalMode && !still { cam.gimbalMode = false }
             }
             HardwareInput.shared.onZoom = { factor in cam.zoomStep(factor) }
@@ -194,6 +194,7 @@ struct ContentView: View {
     /// zoom di luar titik lensa optik -> hasil diproses Super Res / AI
     private var zoomProcessed: Bool {
         guard showsZoom, cam.shootMode != .video else { return false }
+        if isFront { return displayZoom > 1.05 }
         return ![0.5, 1.0, Double(CameraManager.teleNative)].contains { abs($0 - displayZoom) < 0.05 }
     }
 
@@ -990,7 +991,7 @@ struct ContentView: View {
                 cam.hardwareShutter(source: src)
             }
         }, onVolumeEvent: { isPrimary, phase in
-            Log.camera.info("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
+            Log.camera.notice("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
         }, fps: cam.thermal >= 2 ? 20 : 30)      // v0.37: saat panas preview 20 fps juga ketika merekam (file video tidak terpengaruh)
             .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
             .clipped()
@@ -1188,7 +1189,7 @@ struct ContentView: View {
     /// zoom tersedia di mode kamera virtual (lensa belakang)
     private var showsZoom: Bool {
         if cam.videoKind == .dual { return true }
-        return CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock != .front : false
+        return CameraManager.usesVirtual(cam.mode)       // v0.38.1: kamera depan juga (1-4x)
     }
 
     /// DUAL: area kotak kecil di preview - ketuk = tukar besar/kecil, seret = pindahkan
@@ -1239,6 +1240,11 @@ struct ContentView: View {
     }
 
     private var zoomPresets: [Double] {
+        // v0.38.1: kamera depan - 1x = sensor penuh (lebih lebar dari selfie kamera bawaan), 1.3x = bingkai selfie
+        // kamera bawaan, 2x / 3x = crop + HDR+ multi-frame
+        if isFront && cam.videoKind != .dual {
+            return [1, 1.3, 2, 3].filter { $0 <= maxZoom + 0.01 }
+        }
         if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty {
             // video: titik native (lensa + crop sensor 48 MP) + 10x
             var p = cam.nativeZoomPoints.map { Double($0) }

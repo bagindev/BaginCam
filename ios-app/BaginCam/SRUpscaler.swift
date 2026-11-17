@@ -81,7 +81,7 @@ final class SRUpscaler {
         do {
             let t0 = CFAbsoluteTimeGetCurrent()
             let m = try MLModel(contentsOf: url, configuration: cfg)
-            Log.sr.info("Model \(url.lastPathComponent, privacy: .public) dimuat (units \(units.rawValue, privacy: .public)) \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+            Log.sr.notice("Model \(url.lastPathComponent, privacy: .public) dimuat (units \(units.rawValue, privacy: .public)) \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
             return m
         } catch {
             Log.sr.error("Muat model gagal (units \(units.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)")
@@ -229,7 +229,7 @@ final class SRUpscaler {
             }
         }
         let dt = CFAbsoluteTimeGetCurrent() - t0
-        Log.sr.info("SR \(self.modelKind.rawValue, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public) (x\(k, format: .fixed(precision: 2), privacy: .public)): \(nx * ny, privacy: .public) tile, \(dt, format: .fixed(precision: 2), privacy: .public) s")
+        Log.sr.notice("SR \(self.modelKind.rawValue, privacy: .public) \(w, privacy: .public)x\(h, privacy: .public) -> \(ow, privacy: .public)x\(oh, privacy: .public) (x\(k, format: .fixed(precision: 2), privacy: .public)): \(nx * ny, privacy: .public) tile, \(dt, format: .fixed(precision: 2), privacy: .public) s")
         return octx.makeImage()
     }
 
