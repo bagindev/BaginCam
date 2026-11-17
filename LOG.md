@@ -2127,3 +2127,36 @@ Catatan zoom video: 25x = tele 5x + crop digital 5x (~800 px asli diperbesar ke 
 jauh lebih lembut, goyangan 1,6x lebih besar. Penajaman zoom digital otomatis sudah ada.
 Jendela bidik video: sudah layar penuh 9:16 selebar layar (bawaan) - maksud "lebih lebar" ditanyakan ke pengguna.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.38.5/BaginCam-unsigned.ipa`. IPA v0.38.3 dan v0.38.4 dihapus.
+
+## 2026-11-17 - v0.39.0 build 94 + v0.40.0 build 95: peta zoom, roda zoom, zoom lebih responsif, antrean AI video, video isi layar
+
+Permintaan: peta zoom seperti kamera bawaan (screenshot Apple 15x, kotak kuning di gambar kecil); kenapa zoom kamera
+bawaan lancar sedangkan app kita lag & panas; roda/slider zoom ala kamera bawaan di FOTO & VIDEO; AI video dibuat
+antrean seperti foto; jendela bidik video masih ada bar hitam atas-bawah (screenshot BaginCam).
+Analisis lag (dari kode; log sesi 15:31-15:36 tidak memuat pengukuran):
+- Cubit zoom di VIDEO memakai ramp "Zoom halus" (Sedang = 1,6 stop/detik): 1x -> 15x tertinggal ~2,4 s di belakang jari.
+- LevelMonitor menerbitkan `roll` 20x/detik dan dipegang ContentView sebagai @StateObject -> seluruh layar SwiftUI
+  dihitung ulang 20x/detik di main thread, tempat preview Metal juga digambar.
+- Preview kita = frame BGRA -> Core Image (LUT, penajaman, histogram) -> Metal tiap frame; kamera bawaan memakai
+  lapisan preview hardware tanpa pemrosesan per frame. HP juga sedang mengisi daya (suhu 2 saat app dibuka 15:36).
+v0.39.0 build 94 (run 44049169867):
+- `ZoomNavigator` (file baru): peta zoom di kanan atas preview mulai 8x (kamera belakang, bukan DUAL). Gambar acuan =
+  frame preview terakhir saat zoom < 6x (tiap 0,4 s, 360 px); posisi kotak digeser oleh gyro (putaran sejak acuan,
+  tan sudut / tan setengah sudut pandang acuan); ukuran kotak = zoom acuan / zoom sekarang; kotak oranye bila pusat
+  keluar dari gambar acuan. Sudut pandang dari `activeFormat.videoFieldOfView` (log `Peta zoom: sudut format ..`).
+  Beda dengan kamera bawaan: gambar acuan tidak hidup (diam sejak zoom melewati 6x).
+- `ZoomDial`: tahan tombol zoom 0,3 s lalu geser = roda zoom (log2, 70 pt per 2x), FOTO & VIDEO; slider permanen
+  VIDEO dari build 93 dicabut (slider tetap di lapisan PRO).
+- Cubit / roda / slider = zoom langsung (`setTotalZoom(immediate:)`), tombol tetap ramp halus saat VIDEO.
+- `RollState` terpisah: hanya garis waterpass yang mengamati kemiringan; AI Komposisi lewat `onRoll`.
+v0.40.0 build 95 (run 44050031960):
+- `VideoAIQueue` (file baru): "AI setelah rekam" kini memasukkan video ke antrean (Documents/AIQueue/queue.json +
+  salinan video), tidak lagi membuka layar AI yang mematikan kamera. Diproses satu per satu di latar memakai AIJob
+  (bisa dilanjutkan); ditahan otomatis saat merekam / memotret / foto diproses / timer, suhu >= 2, atau app
+  ditinggal (potongan disimpan, lanjut sendiri; dicek tiap 2 s + saat kamera berubah status). Pekerjaan gagal dibuang
+  agar antrean tidak macet (sumber sudah ada di Foto / Files). Baris status ungu di bawah status kamera. Layar AI
+  Upscale: tombol Mulai = masuk antrean; bagian "Antrean AI video" + "Kosongkan antrean". Layar tetap nyala selama
+  AI berjalan. Log `Antrean AI video: ..`.
+- Video "Isi layar" (bawaan nyala, laci > Jendela bidik layar penuh > Isi layar): preview mengisi seluruh layar tanpa
+  bar hitam; tepi kiri-kanan rekaman 16:9 tidak terlihat di layar (rekaman tidak berubah); titik fokus dikoreksi.
+BELUM DIUJI DI HP (build 92-95). IPA: `data/ipa-v0.40.0/BaginCam-unsigned.ipa`. IPA v0.38.5 dihapus.
