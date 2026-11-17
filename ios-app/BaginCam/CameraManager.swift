@@ -298,6 +298,9 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var multiFrameZoom: Bool = Prefs.get("multiFrameZoom", true) { didSet { Prefs.set("multiFrameZoom", multiFrameZoom) } }  // burst Bayer + merge sebelum AI (bila tersedia)
 
     @Published private(set) var isCapturing = false { didSet { if isCapturing != oldValue { updateIdleTimer() } } }
+    /// v0.38: foto yang masih diproses di latar. Rana sudah bisa dipakai lagi begitu jepretan selesai DIAMBIL
+    /// (isCapturing = false); penggabungan / bokeh / simpan berjalan di antrean.
+    @Published private(set) var pendingJobs = 0 { didSet { if (pendingJobs > 0) != (oldValue > 0) { updateIdleTimer() } } }
     /// progres pemrosesan berat (0..1), nil = tidak ada
     @Published private(set) var progress: Double?
     /// zoom di FOTO/HDR+: pakai AI (true) atau pembesaran biasa Lanczos (false) - untuk membandingkan
@@ -424,24 +427,58 @@ final class CameraManager: NSObject, ObservableObject {
         shootMode == .portrait && portraitDepth && depthReady ? .heif : Self.internalMode(shootMode, photoProcess, proFormat)
     }
 
-    /// sessionQueue: nyalakan / matikan pengiriman data kedalaman di photo output. Hanya kamera virtual belakang
-    /// (dua lensa) atau kamera depan; lensa fisik tunggal tidak punya kedalaman.
+    private var depthBusy = false                     // sessionQueue: applyDepth sedang berjalan (install memanggilnya lagi)
+
+    /// sessionQueue: nyalakan / matikan pengiriman data kedalaman di photo output. Kamera virtual belakang (dua
+    /// lensa) atau kamera depan TrueDepth; lensa fisik tunggal tidak punya kedalaman.
+    /// v0.38: dipanggil juga dari install() dan leaveVideo(). Build 87 hanya memanggilnya saat mode / saklar
+    /// berubah, sehingga setelah app dibuka, keluar VIDEO atau kamera dibalik, POTRET diam-diam memakai cara lama
+    /// (17 Nov: 3 dari 7 potret belakang + semua potret depan).
     private func applyDepth() {
-        guard configured, !inVideo, session.outputs.contains(photoOutput), let d = device else { return }
-        let capable = d.isVirtualDevice || d.position == .front
-        let want = shootMode == .portrait && portraitDepth && capable
-        if !want && !photoOutput.isDepthDataDeliveryEnabled && !depthLoweredDims {
+        guard configured, !inVideo, !depthBusy, session.outputs.contains(photoOutput), var d = device else { return }
+        depthBusy = true
+        defer { depthBusy = false }
+        let wantMode = shootMode == .portrait && portraitDepth
+        var note = ""
+        // kamera depan: kedalaman hanya ada di kamera TrueDepth (sensor yang sama); cara lama (HDR+ RAW) memakai
+        // kamera depan biasa
+        func swapFront(_ type: AVCaptureDevice.DeviceType) {
+            guard let nd = AVCaptureDevice.default(type, for: .video, position: .front) else {
+                note += ", \(type.rawValue) tidak ada"
+                return
+            }
+            let z = d.videoZoomFactor
+            install(nd, mirrored: true)
+            guard device === nd else {
+                note += ", gagal pindah ke \(nd.localizedName)"
+                return
+            }
+            applyRawMode(.aiZoom)
+            applyAuto()
+            if (try? nd.lockForConfiguration()) != nil {
+                nd.videoZoomFactor = min(max(z, nd.minAvailableVideoZoomFactor), nd.maxAvailableVideoZoomFactor)
+                nd.unlockForConfiguration()
+            }
+            d = nd
+            note += ", kamera depan -> \(nd.localizedName)"
+        }
+        if d.position == .front {
+            let isTD = d.deviceType == .builtInTrueDepthCamera
+            if wantMode && !isTD { swapFront(.builtInTrueDepthCamera) } else if !wantMode && isTD { swapFront(.builtInWideAngleCamera) }
+        }
+        let capable = d.isVirtualDevice || d.deviceType == .builtInTrueDepthCamera
+        let want = wantMode && capable
+        if !want && !photoOutput.isDepthDataDeliveryEnabled && !depthLoweredDims && note.isEmpty {
             if depthReady { DispatchQueue.main.async { self.depthReady = false } }
             return
         }
-        var note = ""
         if want && !photoOutput.isDepthDataDeliverySupported, let std = standardDimensions(of: d) {
             // kedalaman tidak tersedia pada batas resolusi penuh -> turunkan ke ~12MP selama POTRET
             session.beginConfiguration()
             photoOutput.maxPhotoDimensions = std
             session.commitConfiguration()
             depthLoweredDims = true
-            note = ", batas foto diturunkan ke \(std.width)x\(std.height)"
+            note += ", batas foto diturunkan ke \(std.width)x\(std.height)"
         }
         let on = want && photoOutput.isDepthDataDeliverySupported
         if photoOutput.isDepthDataDeliveryEnabled != on {
@@ -452,7 +489,7 @@ final class CameraManager: NSObject, ObservableObject {
             session.commitConfiguration()
         }
         if !on && depthLoweredDims {
-            if capable, let full = maxDimensions(of: d) {
+            if let full = maxDimensions(of: d) {
                 session.beginConfiguration()
                 photoOutput.maxPhotoDimensions = full
                 session.commitConfiguration()
@@ -460,8 +497,11 @@ final class CameraManager: NSObject, ObservableObject {
             depthLoweredDims = false
             note += ", batas foto dikembalikan"
         }
+        let supported = photoOutput.isDepthDataDeliverySupported
+        // TrueDepth tanpa kedalaman (tidak diharapkan) -> kembali ke kamera depan biasa supaya HDR+ RAW tetap jalan
+        if !on && wantMode && d.deviceType == .builtInTrueDepthCamera { swapFront(.builtInWideAngleCamera) }
         let matte = photoOutput.isPortraitEffectsMatteDeliveryEnabled
-        Log.camera.info("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(want, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(self.photoOutput.isDepthDataDeliverySupported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
+        Log.camera.info("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(wantMode, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(supported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
         DispatchQueue.main.async {
             self.depthReady = on
             if self.shootMode == .portrait && !self.isCapturing {
@@ -591,6 +631,79 @@ final class CameraManager: NSObject, ObservableObject {
     private var lensBaseMain: [AVCaptureDevice.DeviceType: CGFloat] = [:]  // salinan untuk main thread
 
     // burst (diakses di sessionQueue)
+    /// v0.38: salinan parameter satu jepretan untuk antrean proses. Jepretan berikutnya boleh dimulai selagi foto
+    /// sebelumnya masih diproses; tanpa salinan ini burst* yang baru akan mengubah foto yang sedang antre.
+    private struct ProcParams {
+        var burstAppleZoomAI = false
+        var burstAspect: AspectRatio = .r43
+        var burstBeautyLevel: BeautyLevel = .off
+        var burstBokehIntensity: Double = 50
+        var burstCrop: CGFloat = 1
+        var burstDisplayZoom: CGFloat = 1
+        var burstFaceBeauty = false
+        var burstFormat: PhotoFormat = .heif
+        var burstLUT: CubeLUT?
+        var burstLensName = "Utama"
+        var burstMerge: MergeMethod = .frequency
+        var burstMode: Mode = .hdrplus
+        var burstNight = false
+        var burstOutputMP: OutputMP = .mp12
+        var burstPortrait = false
+        var burstRealLong = 4032
+        var burstSRModel: SRModel = .fast
+        var burstStrength: Double = 0.5
+        var burstStyle: ColorStyle = .natural
+        var burstTextFocus = true
+        var burstTotalZoom: CGFloat = 1
+        var burstTuning = PhotoTuning()
+        var burstZoomed = false
+    }
+    private var pj = ProcParams()                 // processQueue: pekerjaan yang sedang diproses
+    private var jobStart = CFAbsoluteTimeGetCurrent()   // processQueue
+
+    /// sessionQueue: bekukan parameter jepretan sekarang
+    private func procParams() -> ProcParams {
+        var p = ProcParams()
+        p.burstAppleZoomAI = burstAppleZoomAI
+        p.burstAspect = burstAspect
+        p.burstBeautyLevel = burstBeautyLevel
+        p.burstBokehIntensity = burstBokehIntensity
+        p.burstCrop = burstCrop
+        p.burstDisplayZoom = burstDisplayZoom
+        p.burstFaceBeauty = burstFaceBeauty
+        p.burstFormat = burstFormat
+        p.burstLUT = burstLUT
+        p.burstLensName = burstLensName
+        p.burstMerge = burstMerge
+        p.burstMode = burstMode
+        p.burstNight = burstNight
+        p.burstOutputMP = burstOutputMP
+        p.burstPortrait = burstPortrait
+        p.burstRealLong = burstRealLong
+        p.burstSRModel = burstSRModel
+        p.burstStrength = burstStrength
+        p.burstStyle = burstStyle
+        p.burstTextFocus = burstTextFocus
+        p.burstTotalZoom = burstTotalZoom
+        p.burstTuning = burstTuning
+        p.burstZoomed = burstZoomed
+        return p
+    }
+
+    /// sessionQueue: serahkan satu foto ke antrean proses (processQueue, satu per satu)
+    private func enqueue(_ what: String, _ work: @escaping () -> Void) {
+        let p = procParams()
+        DispatchQueue.main.async {
+            self.pendingJobs += 1
+            Log.camera.info("Antrean proses: +\(what, privacy: .public) -> \(self.pendingJobs, privacy: .public) foto, sisa memori \(DeviceCaps.availableMB, privacy: .public) MB")
+        }
+        processQueue.async {
+            self.pj = p
+            self.jobStart = CFAbsoluteTimeGetCurrent()
+            work()
+        }
+    }
+
     private var burstRemaining = 0
     private var burstIndex = 0
     private var burstAuto = true
@@ -698,7 +811,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// v0.15: jeda kamera bila tidak dipakai (tidak saat rekam / memotret / hitung mundur)
     func pauseIdle() {
-        guard !idlePaused, !isRecording, !isCapturing, countdown == 0 else { return }
+        guard !idlePaused, !isRecording, !isCapturing, pendingJobs == 0, countdown == 0 else { return }
         idlePaused = true
         torch = false
         stop()
@@ -809,6 +922,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         session.commitConfiguration()
         applyLive()
+        applyDepth()        // v0.38: tiap ganti kamera (app dibuka, balik kamera, kunci lensa, kembali dari burst)
         let flashOK = photoOutput.supportedFlashModes.contains(.on)
         let liveOK = photoOutput.isLivePhotoCaptureSupported
         DispatchQueue.main.async {
@@ -1703,6 +1817,7 @@ final class CameraManager: NSObject, ObservableObject {
             if session.outputs.contains(photoOutput), let maxDims = maxDimensions(of: d) { photoOutput.maxPhotoDimensions = maxDims }
             applyAuto()
         }
+        applyDepth()        // v0.38: VIDEO -> POTRET (photo output baru dipasang lagi di sini)
         videoQueue.async { self.previewLog = false }
         Log.camera.info("VIDEO: keluar")
         DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
@@ -2238,6 +2353,14 @@ final class CameraManager: NSObject, ObservableObject {
 
     func startBurst() {
         guard !isCapturing else { return }
+        // v0.38: tiap burst HDR+ yang antre menahan ~190 MB sampai digabung; saat HP panas proses jauh lebih lambat
+        let limit = thermal >= 2 ? min(2, DeviceCaps.queueLimit) : DeviceCaps.queueLimit
+        let lowMem = pendingJobs > 0 && DeviceCaps.availableMB > 0 && DeviceCaps.availableMB < 1000
+        if pendingJobs >= limit || lowMem {
+            status = "Antrean penuh (\(pendingJobs) foto masih diproses) - tunggu sebentar"
+            Log.camera.info("Rana ditolak: antrean \(self.pendingJobs, privacy: .public) dari \(limit, privacy: .public), sisa memori \(DeviceCaps.availableMB, privacy: .public) MB, suhu \(self.thermal, privacy: .public)")
+            return
+        }
         // FOTO: Auto memilih mesin saat shutter ditekan; Live / flash nyala = proses Apple (semua proses)
         let front = Self.usesVirtual(mode) ? aiLensLock == .front : lens == .front
         // flash kamera sungguhan hanya ada di proses Apple lensa belakang
@@ -2711,9 +2834,32 @@ final class CameraManager: NSObject, ObservableObject {
             hdrFrames = []
             hdrRef = nil
             fusionData = nil
-            processQueue.async { self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai, fusion: fusion) }
-        } else if !burstZoomed && !burstAppleZoomAI && !burstDepthPortrait {
-            finish("Tersimpan \(n) frame (\(dir?.lastPathComponent ?? "-"))")
+            enqueue("HDR+ \(frames.count) frame") {
+                self.processHDRPlus(frames: frames, ref: ref, dir: dir, noiseReduction: nr, forAIZoom: ai, fusion: fusion)
+            }
+            releaseCapture(nil)
+        } else {
+            let plain = !burstZoomed && !burstAppleZoomAI && !burstDepthPortrait
+            releaseCapture(plain ? "Tersimpan \(n) frame (\(dir?.lastPathComponent ?? "-"))" : nil)
+        }
+    }
+
+    /// v0.38 (sessionQueue): jepretan selesai diambil -> rana bebas lagi. Foto yang masih diproses dihitung di
+    /// pendingJobs (enqueue selalu dipanggil sebelum ini, jadi hitungannya sudah naik).
+    private func releaseCapture(_ message: String?) {
+        DispatchQueue.main.async {
+            self.isCapturing = false
+            self.previewFrozen = false
+            self.captureHint = ""
+            // Auto / Live / flash mengganti mesin untuk satu jepretan -> kembali ke pilihan pengguna
+            let base = self.baseMode()
+            if self.mode != base && Self.usesVirtual(self.mode) && Self.usesVirtual(base) { self.mode = base }
+            if self.pendingJobs > 0 {
+                self.status = "Diproses di latar (\(self.pendingJobs) foto) - boleh memotret lagi"
+            } else {
+                if let message { self.status = message }
+                self.endBackgroundTask()
+            }
         }
     }
 
@@ -2721,14 +2867,16 @@ final class CameraManager: NSObject, ObservableObject {
     /// begitu layar terkunci (16 Nov: video berhenti di 61 s tanpa disentuh).
     private func updateIdleTimer() {
         DispatchQueue.main.async {
-            let on = self.isRecording || self.isCapturing
+            let on = self.isRecording || self.isCapturing || self.pendingJobs > 0
             guard UIApplication.shared.isIdleTimerDisabled != on else { return }
             UIApplication.shared.isIdleTimerDisabled = on
-            Log.camera.info("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), proses \(self.isCapturing, privacy: .public))")
+            Log.camera.info("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), jepret \(self.isCapturing, privacy: .public), antre \(self.pendingJobs, privacy: .public))")
         }
     }
 
+    /// processQueue: satu foto di antrean selesai (berhasil atau gagal)
     private func finish(_ message: String) {
+        let dt = CFAbsoluteTimeGetCurrent() - jobStart
         Log.camera.info("Memori: sisa \(DeviceCaps.availableMB, privacy: .public) MB setelah proses")
         var message = message
         if portraitNoSubject {
@@ -2736,16 +2884,13 @@ final class CameraManager: NSObject, ObservableObject {
             message += " · potret: subjek tidak ditemukan, tanpa bokeh"
         }
         DispatchQueue.main.async {
-            self.isCapturing = false
-            self.previewFrozen = false
-            self.status = message
+            self.pendingJobs = max(0, self.pendingJobs - 1)
+            let left = self.pendingJobs
+            Log.camera.info("Antrean proses: selesai \(dt, format: .fixed(precision: 1), privacy: .public) s, sisa \(left, privacy: .public) foto")
+            if !self.isCapturing { self.status = left > 0 ? "\(message) · \(left) foto lagi diproses" : message }
             self.progress = nil
             self.progressText = ""
-            self.captureHint = ""
-            // Auto / Live / flash mengganti mesin untuk satu jepretan -> kembali ke pilihan pengguna
-            let base = self.baseMode()
-            if self.mode != base && Self.usesVirtual(self.mode) && Self.usesVirtual(base) { self.mode = base }
-            self.endBackgroundTask()
+            if left == 0 && !self.isCapturing { self.endBackgroundTask() }
         }
     }
 
@@ -2766,7 +2911,7 @@ final class CameraManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.progress = frac
             self.progressText = text
-            self.status = "\(text) - jangan tinggalkan app"
+            if !self.isCapturing { self.status = "\(text) - jangan tinggalkan app" }
         }
     }
 
@@ -2848,7 +2993,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func upscaler(for m: SRModel) -> SRUpscaler? {
         if let u = upscalers[m] { return u }
         if upscalerFailed.contains(m) { return nil }
-        setStatus("Memuat model AI \(m.rawValue)...")
+        procStatus("Memuat model AI \(m.rawValue)...")
         if let u = SRUpscaler(model: m) { upscalers[m] = u; return u }
         upscalerFailed.insert(m)
         return nil
@@ -2876,11 +3021,11 @@ final class CameraManager: NSObject, ObservableObject {
             return (plain, "AI gagal: \(sr.lastError ?? "prediksi gagal")")
         }
         let upT = SRUpscaler.resize(up, width: plain.width, height: plain.height) ?? up
-        if burstTextFocus {
+        if pj.burstTextFocus {
             // area tulisan: AI lebih kuat supaya huruf terbaca; area lain tetap campuran biasa
             let boxes = TextBoost.mergedBoxes(ai: upT, plain: plain)
             if !boxes.isEmpty {
-                setStatus("\(label): baca tulisan (OCR) \(boxes.count) area...")
+                procStatus("\(label): baca tulisan (OCR) \(boxes.count) area...")
                 let dec = TextBoost.decide(plain: plain, ai: upT, boxes: boxes)
                 let nAI = dec.filter { $0.useAI }.count
                 let detail = dec.prefix(8).map { String(format: "%.2f/%.2f~%.2f", $0.confAI, $0.confPlain, $0.sim) }
@@ -2944,8 +3089,8 @@ final class CameraManager: NSObject, ObservableObject {
             finish("HDR+ gagal: frame Bayer tidak lengkap (\(frames.count))")
             return
         }
-        setStatus("Memproses HDR+ \(frames.count) frame...")
-        Log.hdr.info("Tuning: \(self.burstTuning.summary, privacy: .public), gaya warna \(self.burstStyle.rawValue, privacy: .public)")
+        procStatus("Memproses HDR+ \(frames.count) frame...")
+        Log.hdr.info("Tuning: \(self.pj.burstTuning.summary, privacy: .public), gaya warna \(self.pj.burstStyle.rawValue, privacy: .public)")
         // DNG referensi dulu: butuh NoiseProfile & black/white untuk merge frekuensi
         guard let refDNG = ref.fileDataRepresentation() else {
             finish("HDR+ gagal: DNG referensi kosong")
@@ -2953,15 +3098,15 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let fs = HDRPlusMerger.fullScale(format: CVPixelBufferGetPixelFormatType(refPB), frame: frames[0])
         var freq: FreqConfig?
-        if burstMerge == .frequency, let inf = DNGWriter.info(refDNG), inf.noiseS > 0 {
+        if pj.burstMerge == .frequency, let inf = DNGWriter.info(refDNG), inf.noiseS > 0 {
             // satuan DNG (12-bit) -> satuan pixel buffer (mis. 14-bit): bagi skala
             let k = fs.full > Double(inf.white) * 1.5 ? (fs.full + 1) / Double(inf.white + 1) : 1
             let c = Float(pow(2.0, (noiseReduction - 10) / 2))     // NR 18 -> c 16 (hasil uji PC)
             freq = FreqConfig(noiseS: Float(inf.noiseS), noiseO: Float(inf.noiseO),
                               black: Float(Double(inf.black) * k), range: Float(Double(inf.white - inf.black) * k), c: c)
         }
-        let frames = burstZoomed && burstCrop >= 3 && frames.count > 8
-            ? Self.pickSharp(frames, crop: Double(burstCrop), black: Double(freq?.black ?? 0)) : frames
+        let frames = pj.burstZoomed && pj.burstCrop >= 3 && frames.count > 8
+            ? Self.pickSharp(frames, crop: Double(pj.burstCrop), black: Double(freq?.black ?? 0)) : frames
         let tm = CFAbsoluteTimeGetCurrent()
         guard let r = merger.merge(frames, noiseReduction: noiseReduction, freq: freq, progress: { i, n in
             self.report("Merge HDR+ \(freq != nil ? "frekuensi" : "spasial")", i, n, since: tm)
@@ -2986,16 +3131,16 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let w = r.meanWeights.isEmpty ? 0 : r.meanWeights.reduce(0, +) / Float(r.meanWeights.count)
 
-        if forAIZoom || burstZoomed {
-            if !forAIZoom && burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
+        if forAIZoom || pj.burstZoomed {
+            if !forAIZoom && pj.burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
 
             // Drizzle 2x: sub-pixel super-resolution untuk zoom (>= 3 frame)
-            if burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle {
+            if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle {
                 let bW = r.width, bH = r.height
-                let cropW = max(16, (bW / 2) / Int(max(1, burstCrop))) & ~1
-                let cropH = max(16, (bH / 2) / Int(max(1, burstCrop))) & ~1
+                let cropW = max(16, (bW / 2) / Int(max(1, pj.burstCrop))) & ~1
+                let cropH = max(16, (bH / 2) / Int(max(1, pj.burstCrop))) & ~1
                 let cropX = ((bW / 2) - cropW) / 2, cropY = ((bH / 2) - cropH) / 2
-                setStatus("Drizzle 2x super-resolusi...")
+                procStatus("Drizzle 2x super-resolusi...")
                 let td = CFAbsoluteTimeGetCurrent()
                 if let dr = merger.mergeDrizzle(frames, crop: CGRect(x: CGFloat(cropX), y: CGFloat(cropY),
                                                                       width: CGFloat(cropW), height: CGFloat(cropH)),
@@ -3006,7 +3151,7 @@ final class CameraManager: NSObject, ObservableObject {
                                                        software: "BaginCam Drizzle \(frames.count)f 2x", sourceFullScale: fs.full) {
                         let dhl = Self.highlightLevel(dpx, count: dr.width * dr.height, scale: dw.scale, black: dw.black, white: dw.white)
                         if let img = RawDeveloper.develop(dng: dw.data, highlight: dhl, metering: 1,
-                                                          night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev),
+                                                          night: pj.burstNight, tuning: pj.burstTuning, styleEV: pj.burstStyle.ev),
                            let cg = RawDeveloper.cgImage(img) {
                             Log.sr.info("Drizzle 2x: sumber \(cg.width, privacy: .public)x\(cg.height, privacy: .public) (crop \(cropW, privacy: .public)x\(cropH, privacy: .public) superpx -> 2x)")
                             processAIZoomImage(cg, properties: img.properties, dir: dir, multiFrame: frames.count, cropOverride: 1)
@@ -3018,8 +3163,8 @@ final class CameraManager: NSObject, ObservableObject {
             }
 
             // Fallback / AI Zoom: kembangkan hasil merge -> crop -> upscale
-            guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(burstCrop)),
-                                                 night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev),
+            guard let img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: 1 / max(1, Double(pj.burstCrop)),
+                                                 night: pj.burstNight, tuning: pj.burstTuning, styleEV: pj.burstStyle.ev),
                   let cg = RawDeveloper.cgImage(img) else {
                 finish("AI Zoom MF gagal mengembangkan RAW")
                 return
@@ -3028,21 +3173,21 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
 
-        let fmt = burstFormat, lut = burstLUT, res = burstOutputMP
+        let fmt = pj.burstFormat, lut = pj.burstLUT, res = pj.burstOutputMP
         var saved: [String] = []
         if fmt.wantsDNG {
             save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir)
             saved.append("DNG")
         }
         if fmt.wantsHEIF || fmt.wantsJPEG {
-            setStatus("HDR+: mengembangkan RAW...")
+            procStatus("HDR+: mengembangkan RAW...")
             var rendered = false
-            if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: burstZoomed ? 1 / max(1, Double(burstCrop)) : 1,
-                                              night: burstNight, tuning: burstTuning, styleEV: burstStyle.ev) {
+            if var img = RawDeveloper.develop(dng: dng, highlight: highlight, metering: pj.burstZoomed ? 1 / max(1, Double(pj.burstCrop)) : 1,
+                                              night: pj.burstNight, tuning: pj.burstTuning, styleEV: pj.burstStyle.ev) {
                 // v0.18: detail sensor 48MP (sebelum crop rasio; ukuran = resolusi keluaran)
                 var fused = false
                 if let fd = fusion {
-                    setStatus("HDR+: fusi detail 48MP...")
+                    procStatus("HDR+: fusi detail 48MP...")
                     if let fr = Fusion48.fuse(hdr: img, appleData: fd, targetLong: res.longSide) {
                         img = fr.image.settingProperties(img.properties)
                         saved.append(fr.note)
@@ -3051,41 +3196,41 @@ final class CameraManager: NSObject, ObservableObject {
                         saved.append("fusi 48MP gagal")
                     }
                 }
-                if burstAspect != .r43 {
-                    img = img.cropped(to: burstAspect.rect(in: img.extent)).settingProperties(img.properties)
+                if pj.burstAspect != .r43 {
+                    img = img.cropped(to: pj.burstAspect.rect(in: img.extent)).settingProperties(img.properties)
                 }
                 // 24/48MP: data Bayer 12MP diperbesar (AI Cepat dicampur Lanczos)
                 if res != .mp12 && !fused, let cg = RawDeveloper.cgImage(img) {
                     let full = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
                     let (up, note) = upscale(cg, crop: full, target: res.longSide, model: .fast,
-                                             strength: burstStrength, minAIFactor: 1.2, label: "HDR+ \(res.label)")
+                                             strength: pj.burstStrength, minAIFactor: 1.2, label: "HDR+ \(res.label)")
                     if let up {
                         img = CIImage(cgImage: up).settingProperties(img.properties)
                         saved.append(note)
                     }
                 }
                 // v0.19.1: foto 48MP sudah tajam -> penajaman akhir dikurangi saat fusi (Tajam 0.35 = noise berbintik, IMG_7027)
-                var postT = burstTuning
+                var postT = pj.burstTuning
                 if fused { postT.finalSharpen *= 0.3 }
                 if postT.hasPost { img = postT.post(img).settingProperties(img.properties) }
-                if burstStyle != .natural { img = burstStyle.apply(img).settingProperties(img.properties) }
+                if pj.burstStyle != .natural { img = pj.burstStyle.apply(img).settingProperties(img.properties) }
                 var final = RawDeveloper.applyLUT(img, lut)
-                if burstPortrait, let cg = RawDeveloper.cgImage(final) {
-                    if let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity) {
+                if pj.burstPortrait, let cg = RawDeveloper.cgImage(final) {
+                    if let b = Self.applyPortraitBokeh(cg, intensity: pj.burstBokehIntensity) {
                         final = CIImage(cgImage: b).settingProperties(final.properties)
                         Log.sr.info("Portrait bokeh diterapkan")
                     } else {
                         portraitNoSubject = true
                     }
                 }
-                if burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
-                   let b = Self.applyFaceBeauty(cg, level: burstBeautyLevel) {
+                if pj.burstFaceBeauty, let cg = RawDeveloper.cgImage(final),
+                   let b = Self.applyFaceBeauty(cg, level: pj.burstBeautyLevel) {
                     final = CIImage(cgImage: b).settingProperties(final.properties)
                     Log.sr.info("Face Beauty diterapkan")
                 }
                 if let data = fmt.wantsJPEG ? RawDeveloper.encodeJPEG(final) : RawDeveloper.encodeHEIF(final) {
                     let ext = fmt.wantsJPEG ? "jpg" : "heic"
-                    let prefix = burstPortrait ? "POTRET" : (burstNight ? "MALAM" : "HDRPLUS")
+                    let prefix = pj.burstPortrait ? "POTRET" : (pj.burstNight ? "MALAM" : "HDRPLUS")
                     save(data, fileName: "\(prefix)_\(frames.count)f_\(res.label)\(lut != nil ? "_LUT" : "").\(ext)", dir: dir)
                     saved.append("\(ext.uppercased()) \(res.label)")
                     rendered = true
@@ -3138,64 +3283,79 @@ final class CameraManager: NSObject, ObservableObject {
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0)
     }
 
-    /// crop tengah sesuai burstCrop -> deconv -> upscale ke resolusi output -> sharpen -> HEIC.
+    /// crop tengah sesuai pj.burstCrop -> deconv -> upscale ke resolusi output -> sharpen -> HEIC.
     private func processAIZoomImage(_ cg: CGImage, properties: [String: Any], dir: URL?, multiFrame: Int,
                                     cropOverride: Double? = nil, method: String = "") {
         let W = cg.width, H = cg.height
-        let c = max(1, cropOverride ?? Double(burstCrop))
+        let c = max(1, cropOverride ?? Double(pj.burstCrop))
         let cw = max(16, Int(Double(W) / c)) & ~1, ch = max(16, Int(Double(H) / c)) & ~1
         var rect = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch)
-        if burstAspect != .r43 { rect = burstAspect.rect(in: rect).integral }
+        if pj.burstAspect != .r43 { rect = pj.burstAspect.rect(in: rect).integral }
 
         // Deconvolution: koreksi blur difraksi lensa sebelum AI upscale
         var src = cg, srcRect = rect
-        if burstZoomed, let cropped = cg.cropping(to: rect),
-           let deconv = Self.zoomDeconv(cropped, crop: Double(burstCrop), lens: burstLensName,
-                                        night: burstNight, multiFrame: multiFrame) {
+        if pj.burstZoomed, let cropped = cg.cropping(to: rect),
+           let deconv = Self.zoomDeconv(cropped, crop: Double(pj.burstCrop), lens: pj.burstLensName,
+                                        night: pj.burstNight, multiFrame: multiFrame) {
             src = deconv
             srcRect = CGRect(x: 0, y: 0, width: deconv.width, height: deconv.height)
-            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(self.burstCrop), lens: self.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
+            Log.sr.info("Deconv: sigma \(Self.deconvSigma(crop: Double(self.pj.burstCrop), lens: self.pj.burstLensName), format: .fixed(precision: 2), privacy: .public) alpha \(Self.deconvAlpha(night: self.pj.burstNight, multiFrame: multiFrame), format: .fixed(precision: 2), privacy: .public)")
         }
 
         // v0.29.3: zoom di atas 50x selalu 12MP - sumbernya hanya ratusan piksel,
         // memperbesar ke 24/48MP tidak menambah detail, hanya file & waktu proses
-        let farZoom = burstZoomed && burstTotalZoom > 50.5
-        let res: OutputMP = farZoom ? .mp12 : burstOutputMP
-        if farZoom && burstOutputMP != .mp12 {
-            Log.sr.info("Zoom jauh: hasil 12MP (setelan \(self.burstOutputMP.label, privacy: .public))")
+        let farZoom = pj.burstZoomed && pj.burstTotalZoom > 50.5
+        let res: OutputMP = farZoom ? .mp12 : pj.burstOutputMP
+        if farZoom && pj.burstOutputMP != .mp12 {
+            Log.sr.info("Zoom jauh: hasil 12MP (setelan \(self.pj.burstOutputMP.label, privacy: .public))")
         }
-        let (img0, note) = upscale(src, crop: srcRect, target: res.longSide, model: burstSRModel,
-                                   strength: burstStrength, minAIFactor: 1.4, label: "AI Zoom")
+        let (img0, note) = upscale(src, crop: srcRect, target: res.longSide, model: pj.burstSRModel,
+                                   strength: pj.burstStrength, minAIFactor: 1.4, label: "AI Zoom")
         guard var result = img0 else {
             finish("AI Zoom gagal: \(note)")
             return
         }
 
         // Adaptive luminance sharpening: penajaman akhir hanya di channel luminance (edge-aware)
-        if burstZoomed {
+        if pj.burstZoomed {
             let ci = CIImage(cgImage: result)
             let sharp = ci.applyingFilter("CISharpenLuminance", parameters: [
-                "inputSharpness": burstNight ? 0.25 : 0.45,
+                "inputSharpness": pj.burstNight ? 0.25 : 0.45,
                 "inputRadius": 1.5
             ])
             if let t = RawDeveloper.cgImage(sharp) { result = t }
         }
 
         // v0.14: tuning akhir (penajaman akhir di resolusi output, bayangan, kontras, saturasi)
-        if burstTuning.hasPost, let t = RawDeveloper.cgImage(burstTuning.post(CIImage(cgImage: result))) { result = t }
-        if burstStyle != .natural, let t = RawDeveloper.cgImage(burstStyle.apply(CIImage(cgImage: result))) { result = t }
-        if let lut = burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
+        if pj.burstTuning.hasPost, let t = RawDeveloper.cgImage(pj.burstTuning.post(CIImage(cgImage: result))) { result = t }
+        if pj.burstStyle != .natural, let t = RawDeveloper.cgImage(pj.burstStyle.apply(CIImage(cgImage: result))) { result = t }
+        if let lut = pj.burstLUT, let baked = RawDeveloper.applyLUT(to: result, lut) { result = baked }
 
-        if burstPortrait {
-            if let b = Self.applyPortraitBokeh(result, intensity: burstBokehIntensity) {
+        var props = properties
+        // v0.38: bokeh & percantik bekerja pada gambar tegak - foto Apple datang dengan piksel sensor (miring 90°),
+        // deteksi wajah Vision tidak andal di situ. Jalur ini dulu juga tidak pernah memanggil percantik wajah
+        // (17 Nov: potret 2x tanpa percantik, IMG_7360 / 7362).
+        if pj.burstPortrait || pj.burstFaceBeauty {
+            let o = (props[kCGImagePropertyOrientation as String] as? NSNumber)?.uint32Value ?? 1
+            if o != 1, let orient = CGImagePropertyOrientation(rawValue: o),
+               let up = RawDeveloper.cgImage(CIImage(cgImage: result).oriented(orient)) {
+                result = up
+                props = RawDeveloper.uprightProperties(props)
+            }
+        }
+        if pj.burstPortrait {
+            if let b = Self.applyPortraitBokeh(result, intensity: pj.burstBokehIntensity) {
                 result = b
                 Log.sr.info("Portrait bokeh diterapkan (zoom)")
             } else {
                 portraitNoSubject = true
             }
         }
+        if pj.burstFaceBeauty, let b = Self.applyFaceBeauty(result, level: pj.burstBeautyLevel) {
+            result = b
+            Log.sr.info("Face Beauty diterapkan (zoom)")
+        }
 
-        var props = properties
         props[kCGImageDestinationLossyCompressionQuality as String] = 0.92
         props.removeValue(forKey: kCGImagePropertyPixelWidth as String)
         props.removeValue(forKey: kCGImagePropertyPixelHeight as String)
@@ -3209,19 +3369,19 @@ final class CameraManager: NSObject, ObservableObject {
             finish("AI Zoom gagal encode")
             return
         }
-        let tz = Double(burstDisplayZoom)
-        let prefix = burstAppleZoomAI ? "APPLEZOOM" : (burstMode == .aiZoom ? "AIZOOM"
-            : (burstMode == .hdrplus ? (burstPortrait ? "POTRET_ZOOM" : (burstNight ? "MALAM_ZOOM" : "SUPERRES")) : "CROPZOOM"))
+        let tz = Double(pj.burstDisplayZoom)
+        let prefix = pj.burstAppleZoomAI ? "APPLEZOOM" : (pj.burstMode == .aiZoom ? "AIZOOM"
+            : (pj.burstMode == .hdrplus ? (pj.burstPortrait ? "POTRET_ZOOM" : (pj.burstNight ? "MALAM_ZOOM" : "SUPERRES")) : "CROPZOOM"))
         let mfTag = multiFrame > 0 ? "_MF\(multiFrame)" : ""
-        let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(burstSRModel.tag)" : ""
-        let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, burstLensName, mfTag, aiTag, res.label)
+        let aiTag = note.hasPrefix("AI ") && !note.hasPrefix("AI gagal") ? "_AI\(pj.burstSRModel.tag)" : ""
+        let name = String(format: "%@_%.1fx_%@%@%@_%@.heic", prefix, tz, pj.burstLensName, mfTag, aiTag, res.label)
         save(out as Data, fileName: name, dir: dir)
-        Log.sr.info("AI Zoom \(tz, privacy: .public)x lensa \(self.burstLensName, privacy: .public) crop \(Double(self.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")
+        Log.sr.info("AI Zoom \(tz, privacy: .public)x lensa \(self.pj.burstLensName, privacy: .public) crop \(Double(self.pj.burstCrop), privacy: .public)x: sumber \(W, privacy: .public)x\(H, privacy: .public) -> \(result.width, privacy: .public)x\(result.height, privacy: .public), MF \(multiFrame, privacy: .public), \(note, privacy: .public)")
         let mfText = multiFrame > 0 ? " · MF \(multiFrame)" : ""
-        let label = burstAppleZoomAI ? "Zoom Apple" : (burstMode == .aiZoom ? "AI Zoom"
-            : (burstMode == .hdrplus ? "Super Res" : "Crop penuh"))
-        finish(String(format: "%@ %.1fx · %@ crop %.1fx%@ · %@ -> %dx%d", label, tz, burstLensName,
-                      Double(burstCrop), mfText, note, result.width, result.height))
+        let label = pj.burstAppleZoomAI ? "Zoom Apple" : (pj.burstMode == .aiZoom ? "AI Zoom"
+            : (pj.burstMode == .hdrplus ? "Super Res" : "Crop penuh"))
+        finish(String(format: "%@ %.1fx · %@ crop %.1fx%@ · %@ -> %dx%d", label, tz, pj.burstLensName,
+                      Double(pj.burstCrop), mfText, note, result.width, result.height))
     }
 
     // MARK: deconvolution
@@ -3417,7 +3577,7 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         let long = max(cg0.width, cg0.height)
-        let real = min(long, burstRealLong)
+        let real = min(long, pj.burstRealLong)
         let cg = real < long ? (SRUpscaler.resize(cg0, longSide: real) ?? cg0) : cg0
         Log.sr.info("Zoom Apple + AI: hasil Apple \(cg0.width, privacy: .public)x\(cg0.height, privacy: .public), detail asli ~\(real, privacy: .public) px sisi panjang")
         processAIZoomImage(cg, properties: photo.metadata, dir: dir, multiFrame: 0, cropOverride: 1)
@@ -3428,31 +3588,57 @@ final class CameraManager: NSObject, ObservableObject {
     /// Foto Apple dengan peta kedalaman tertanam -> blur kedalaman Apple (CIDepthBlurEffect). Kekuatan Bokeh
     /// diterjemahkan ke bukaan simulasi f/16 (0 %) .. f/1.4 (100 %); 50 % = f/4,7.
     /// Tanpa data kedalaman: cara lama (segmentasi subjek) pada foto yang sama.
+    /// v0.38: lalu percantik wajah seperti jalur HDR+ (build 87 melewatinya), hasil disimpan tegak.
     private func processDepthPortrait(_ data: Data?, hasDepth: Bool, dir: URL?, index: Int) {
-        guard var out = data else {
+        guard let data, let src = CIImage(data: data, options: [.applyOrientationProperty: false]) else {
             finish("Potret gagal: foto kosong")
             return
         }
-        setStatus("Potret: mengaburkan latar...")
+        procStatus("Potret: mengaburkan latar...")
         let t0 = CFAbsoluteTimeGetCurrent()
-        let t = max(0, min(100, burstBokehIntensity)) / 100
+        let t = max(0, min(100, pj.burstBokehIntensity)) / 100
         let aperture = Float(16 * pow(1.4 / 16, t))
+        let o = (src.properties[kCGImagePropertyOrientation as String] as? NSNumber)?.uint32Value ?? 1
+        let orient = CGImagePropertyOrientation(rawValue: o) ?? .up
         var how = "tanpa bokeh"
-        if hasDepth, let d = RawDeveloper.depthBlur(out, aperture: aperture) {
-            out = d
+        var img = src
+        var blurred = false
+        if hasDepth, let d = RawDeveloper.depthBlurImage(data, aperture: aperture) {
+            img = d
+            blurred = true
             how = String(format: "kedalaman f/%.1f", aperture)
-        } else if let src = CIImage(data: out, options: [.applyOrientationProperty: false]), let cg = RawDeveloper.cgImage(src),
-                  let b = Self.applyPortraitBokeh(cg, intensity: burstBokehIntensity),
-                  let enc = RawDeveloper.encodeHEIF(CIImage(cgImage: b).settingProperties(src.properties)) {
-            out = enc
-            how = "segmentasi subjek (data kedalaman tidak ada)"
-        } else {
-            portraitNoSubject = true
         }
-        if let re = RawDeveloper.reprocess(out, longSide: nil, lut: burstLUT, aspect: burstAspect) { out = re }
-        Log.sr.info("Potret kedalaman: \(how, privacy: .public), \(out.count / 1024, privacy: .public) KB, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
-        save(out, fileName: String(format: "IMG_%04d.heic", index), dir: dir)
-        finish("Potret tersimpan (\(how))")
+        // ditegakkan: Vision (wajah / segmentasi) dan rasio bekerja pada gambar tegak, sama dengan jalur HDR+
+        var out = img.oriented(orient)
+        var cg: CGImage?
+        if !blurred {
+            cg = RawDeveloper.cgImage(out)
+            if let c = cg, let b = Self.applyPortraitBokeh(c, intensity: pj.burstBokehIntensity) {
+                cg = b
+                how = "segmentasi subjek (data kedalaman tidak ada)"
+            } else {
+                portraitNoSubject = true
+            }
+        }
+        var beauty = false
+        if pj.burstFaceBeauty, let c = cg ?? RawDeveloper.cgImage(out),
+           let b = Self.applyFaceBeauty(c, level: pj.burstBeautyLevel) {
+            cg = b
+            beauty = true
+        }
+        if let cg { out = CIImage(cgImage: cg) }
+        if pj.burstAspect != .r43 { out = out.cropped(to: pj.burstAspect.rect(in: out.extent)) }
+        out = RawDeveloper.applyLUT(out, pj.burstLUT)
+        var props = RawDeveloper.uprightProperties(src.properties)
+        props.removeValue(forKey: kCGImagePropertyPixelWidth as String)
+        props.removeValue(forKey: kCGImagePropertyPixelHeight as String)
+        guard let enc = RawDeveloper.encodeHEIF(out.settingProperties(props)) else {
+            finish("Potret gagal: tidak bisa menyimpan HEIF")
+            return
+        }
+        Log.sr.info("Potret kedalaman: \(how, privacy: .public), percantik \(beauty, privacy: .public) (setelan \(self.pj.burstFaceBeauty, privacy: .public)), orientasi \(o, privacy: .public), \(Int(out.extent.width), privacy: .public)x\(Int(out.extent.height), privacy: .public), \(enc.count / 1024, privacy: .public) KB, \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s")
+        save(enc, fileName: String(format: "POTRET_%04d.heic", index), dir: dir)
+        finish("Potret tersimpan (\(how)\(beauty ? " + percantik" : ""))")
     }
 
     // MARK: simpan
@@ -3536,6 +3722,11 @@ final class CameraManager: NSObject, ObservableObject {
     private func setStatus(_ s: String) {
         DispatchQueue.main.async { self.status = s }
     }
+
+    /// status dari antrean proses: tidak menimpa tulisan jepretan yang sedang diambil
+    private func procStatus(_ s: String) {
+        DispatchQueue.main.async { if !self.isCapturing { self.status = s } }
+    }
 }
 
 // MARK: - delegate foto
@@ -3589,13 +3780,13 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
                 let hasDepth = photo.depthData != nil, hasMatte = photo.portraitEffectsMatte != nil
                 let dims = photo.resolvedSettings.photoDimensions
                 Log.camera.info("Potret kedalaman: foto \(dims.width, privacy: .public)x\(dims.height, privacy: .public), \(info, privacy: .public), matte potret \(hasMatte, privacy: .public)")
-                self.processQueue.async { self.processDepthPortrait(data, hasDepth: hasDepth, dir: dir, index: idx) }
+                self.enqueue("potret kedalaman") { self.processDepthPortrait(data, hasDepth: hasDepth, dir: dir, index: idx) }
             } else if self.burstMode == .aiZoom || (self.burstZoomed && !photo.isRawPhoto) {
                 let dir = self.burstDir
-                self.processQueue.async { self.processAIZoom(photo, dir: dir) }
+                self.enqueue("zoom") { self.processAIZoom(photo, dir: dir) }
             } else if self.burstAppleZoomAI && !photo.isRawPhoto {
                 let dir = self.burstDir
-                self.processQueue.async { self.processAppleZoomAI(photo, dir: dir) }
+                self.enqueue("zoom Apple + AI") { self.processAppleZoomAI(photo, dir: dir) }
             } else if var data = photo.fileDataRepresentation() {
                 if !photo.isRawPhoto {
                     let longSide: Int? = self.burstOutputMP == .mp24 ? OutputMP.mp24.longSide : nil

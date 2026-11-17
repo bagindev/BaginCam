@@ -32,6 +32,10 @@ enum DeviceCaps {
     /// sisa memori (MB) sebelum iOS menutup app; 0 = tidak diketahui
     static var availableMB: Int { Int(os_proc_available_memory() / 1_048_576) }
 
+    /// v0.38: jumlah foto yang boleh menunggu di antrean proses. Tiap burst HDR+ menahan ~190 MB (8 frame) sampai
+    /// digabung, dan proses satu foto memakai 240-670 MB lagi (log 16 PM, RAM 8 GB).
+    static let queueLimit = ramGB >= 7 ? 4 : (ramGB >= 5 ? 2 : 1)
+
     /// Cadangan untuk menggabung frame, develop RAW, AI dan gambar hasil. Perkiraan awal - dikalibrasi dari
     /// baris log "Memori:" (sisa sebelum burst / setelah capture / setelah proses).
     private static let reserveBytes = 700 * 1_048_576

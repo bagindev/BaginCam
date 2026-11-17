@@ -383,7 +383,7 @@ struct ContentView: View {
         func body(content: Content) -> some View {
             content
                 .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
-                    guard !cam.idlePaused, !cam.isRecording, !cam.isCapturing, cam.countdown == 0, !busy() else { return }
+                    guard !cam.idlePaused, !cam.isRecording, !cam.isCapturing, cam.pendingJobs == 0, cam.countdown == 0, !busy() else { return }
                     // HP diletakkan diam 45 s tanpa disentuh, atau 3 menit tanpa disentuh
                     if (level.steady && touch.idle > 45) || touch.idle > 180 { cam.pauseIdle() }
                 }
@@ -838,7 +838,7 @@ struct ContentView: View {
             }
             Toggle("Kedalaman (seperti iPhone)", isOn: $cam.portraitDepth)
             if cam.portraitDepth && !cam.depthReady {
-                Text("Data kedalaman tidak tersedia di kamera ini - memakai cara lama")
+                Text("Data kedalaman tidak tersedia di lensa ini (lensa dikunci) - memakai cara lama")
             }
             Text("Atur lebih halus: laci pengaturan")
         } label: {
@@ -1622,6 +1622,19 @@ struct ContentView: View {
                 .background(Color.white.opacity(0.1))
                 .clipShape(Circle())
                 .overlay(Circle().stroke(.white.opacity(0.8), lineWidth: 1.5))
+                // v0.38: jumlah foto yang masih diproses di latar
+                .overlay(alignment: .topTrailing) {
+                    if cam.pendingJobs > 0 {
+                        HStack(spacing: 3) {
+                            ProgressView().controlSize(.mini).tint(.black)
+                            Text("\(cam.pendingJobs)").font(.caption2.bold().monospacedDigit())
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Color.yellow, in: Capsule())
+                        .foregroundStyle(.black)
+                        .offset(x: 12, y: -6)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
