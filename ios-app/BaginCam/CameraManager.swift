@@ -771,6 +771,13 @@ final class CameraManager: NSObject, ObservableObject {
     private var burstZoomed = false               // capture ini di-crop + upscale (AI Zoom / zoom FOTO-HDR+)
     private var burstDisplayZoom: CGFloat = 1     // zoom total untuk nama file / status
     private var subjectObserver: NSObjectProtocol?
+    private var constituentObs: NSKeyValueObservation?     // v0.40.1: log lensa aktif kamera virtual
+    /// v0.40.1: VIDEO - zoom >= tele tapi kamera virtual tetap di lensa utama (cahaya redup / jarak) -> pindah paksa ke
+    /// lensa tele fisik (17 Nov: 16x tetap "Utama crop 16x", buram; kamera bawaan pindah ke tele)
+    @Published var videoTelePriority: Bool = Prefs.get("videoTelePriority", true) { didSet { Prefs.set("videoTelePriority", videoTelePriority) } }
+    /// lensa tele dikunci otomatis oleh aturan di atas (bukan pilihan pengguna)
+    @Published private(set) var autoTele = false
+    private var teleCheck: DispatchWorkItem?
     private var aiLockNative: CGFloat = 0           // sessionQueue: faktor optik lensa terkunci (0 = tidak dikunci)
     private var evBiasSession: Float = 0
     private var wbPresetSession: WBPreset = .auto
@@ -1040,17 +1047,23 @@ final class CameraManager: NSObject, ObservableObject {
             self.totalZoom = min(max(minZ, startZoom), maxZ)
         }
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
+        constituentObs = vd.observe(\.activePrimaryConstituent, options: [.new]) { d, _ in
+            let name = d.activePrimaryConstituent.map { Self.name(of: $0.deviceType) } ?? "-"
+            let iso = d.activePrimaryConstituent?.iso ?? 0
+            Log.camera.notice("Lensa aktif kamera virtual: \(name, privacy: .public) (faktor zoom \(Double(d.videoZoomFactor), format: .fixed(precision: 1), privacy: .public), ISO \(iso, format: .fixed(precision: 0), privacy: .public))")
+        }
         if inVideo { applyVideoFormat() }
     }
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
-    func setAILensLock(_ l: Lens?, whileRecording: Bool = false) {
+    func setAILensLock(_ l: Lens?, whileRecording: Bool = false, zoom: CGFloat? = nil) {
         guard Self.usesVirtual(mode), !isCapturing, !isRecording || whileRecording, videoKind != .dual, l != aiLensLock else { return }
+        autoTele = false
         aiLensLock = l
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
         // v0.38.1: kamera depan punya zoom sendiri (1-4x), selalu mulai dari 1x = sensor penuh
-        let tz = l == .front ? 1 : max(totalZoom, l == nil ? 1 : native)
+        let tz = zoom ?? (l == .front ? 1 : max(totalZoom, l == nil ? 1 : native))
         sessionQueue.async {
             guard let l else {
                 self.enterAIZoom(zoom: tz)
@@ -1126,6 +1139,24 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// v0.40.1 (main): zoom sudah >= tele 0,5 s - bila kamera virtual masih memakai lensa lain, kunci ke tele fisik
+    private func forceTeleIfNeeded() {
+        guard shootMode == .video, videoKind == .normal, !isRecording, !isCapturing, aiLensLock == nil,
+              totalZoom >= Self.teleNative * 0.999 else { return }
+        let z = totalZoom
+        sessionQueue.async {
+            guard let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent,
+                  p.deviceType != .builtInTelephotoCamera else { return }
+            let why = String(format: "lensa %@, ISO %.0f, posisi fokus %.2f", Self.name(of: p.deviceType), p.iso, p.lensPosition)
+            DispatchQueue.main.async {
+                guard self.aiLensLock == nil, !self.isRecording, self.totalZoom >= Self.teleNative * 0.999 else { return }
+                Log.camera.notice("VIDEO: zoom \(Double(z), format: .fixed(precision: 1), privacy: .public)x tapi kamera virtual tetap \(why, privacy: .public) -> pindah paksa ke tele")
+                self.setAILensLock(.tele, zoom: self.totalZoom)
+                self.autoTele = true
+            }
+        }
+    }
+
     /// v0.39: tan(setengah sudut) lebar preview pada zoom layar 1x - untuk peta zoom (main)
     private(set) var fovTan1x: Double = 0.42
 
@@ -1143,7 +1174,7 @@ final class CameraManager: NSObject, ObservableObject {
         var minZ: CGFloat = 1
         if Self.usesVirtual(mode) {
             switch aiLensLock {
-            case .tele?: minZ = Self.teleNative       // v0.21: 17/18 Pro Max tele 4x
+            case .tele?: minZ = autoTele && !isRecording ? minAutoZoom : Self.teleNative       // v0.21: 17/18 Pro Max tele 4x
             case .ultraWide?: minZ = 0.5
             case nil: minZ = minAutoZoom
             default: minZ = 1
@@ -1151,6 +1182,21 @@ final class CameraManager: NSObject, ObservableObject {
         }
         var zz = min(max(minZ, z), maxTotalZoom)
         let video = shootMode == .video
+        // v0.40.1: tele paksa (VIDEO, tidak saat merekam - ganti kamera memutus frame sebentar)
+        if video && videoKind == .normal && !isRecording && autoLensAvailable {
+            let t = Self.teleNative
+            if autoTele && zz < t * 0.98 {
+                Log.camera.notice("VIDEO: zoom \(Double(zz), format: .fixed(precision: 1), privacy: .public)x < tele -> kembali ke lensa Auto")
+                setAILensLock(nil, zoom: zz)
+                return
+            }
+            teleCheck?.cancel()
+            if videoTelePriority && aiLensLock == nil && zz >= t * 0.999 {
+                let w = DispatchWorkItem { [weak self] in self?.forceTeleIfNeeded() }
+                teleCheck = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
+            }
+        }
         // v0.12: video menempel ke titik native (tanpa crop digital) bila dekat (<3 %)
         if video, let p = nativeZoomPoints.first(where: { abs($0 - zz) / $0 < 0.03 }) { zz = p }
         totalZoom = zz
@@ -1411,6 +1457,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     func setShootMode(_ s: ShootMode) {
+        if autoTele && s != .video { setAILensLock(nil, zoom: totalZoom) }      // v0.40.1: tele paksa hanya di VIDEO
         if s == .video { setVideoKind(.normal) } else { applyUI { shootMode = s } }
     }
 

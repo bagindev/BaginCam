@@ -19,6 +19,13 @@ struct ContentView: View {
     /// tidak terlihat di preview (layar 19,5:9 lebih ramping dari video)
     @AppStorage("videoFill") private var videoFill = true
     private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
+    /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
+    /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
+    private var fillTopInset: CGFloat {
+        guard videoFillActive else { return 0 }
+        let b = UIScreen.main.bounds
+        return max(0, (b.height - b.width * 16 / 9) / 2)
+    }
     @State private var lightSavedBrightness: CGFloat = 0.5
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
@@ -1011,7 +1018,7 @@ struct ContentView: View {
             }
         }, onVolumeEvent: { isPrimary, phase in
             Log.camera.notice("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
-        }, fps: cam.thermal >= 2 ? 20 : 30)      // v0.37: saat panas preview 20 fps juga ketika merekam (file video tidak terpengaruh)
+        }, fps: cam.thermal >= 3 ? 20 : 30)      // v0.40.1: 20 fps hanya saat kritis (suhu 2 = 17-19 fps, tersendat dibanding kamera bawaan)
             .modifier(PreviewAspect(ratio: videoFillActive ? nil : (cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0)))
             .clipped()
             .overlay { ratioMask }
@@ -1021,7 +1028,7 @@ struct ContentView: View {
             .overlay(alignment: .topTrailing) {
                 if showHistogram && !histogram.isEmpty {
                     HistogramView(bins: histogram)
-                        .padding(.top, (cam.shootMode == .video ? 72 : 40) + (videoFullActive && proOn ? 46 : 0)).padding(8)
+                        .padding(.top, (cam.shootMode == .video ? 72 : 40) + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
                 }
             }
             .overlay(alignment: .leading) {
@@ -1032,7 +1039,7 @@ struct ContentView: View {
             .overlay(alignment: .topTrailing) {
                 ZoomNavigatorView(nav: zoomNav)
                     .padding(.top, (cam.shootMode == .video ? 72 : 40) + (showHistogram && !histogram.isEmpty ? 64 : 0)
-                             + (videoFullActive && proOn ? 46 : 0)).padding(8)
+                             + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
             }
             .overlay { countdownLayer }
             .overlay { focusLayer }
@@ -1058,7 +1065,7 @@ struct ContentView: View {
                 UIScreen.main.brightness = new == .off ? lightSavedBrightness : max(lightSavedBrightness, new.brightness)
             }
             .overlay(alignment: .top) {
-                if cam.shootMode == .video { videoInfoRow.padding(.top, videoFullActive ? (proOn ? 76 : 30) : 0) } else { infoRow }
+                if cam.shootMode == .video { videoInfoRow.padding(.top, (videoFullActive ? (proOn ? 76 : 30) : 0) + fillTopInset) } else { infoRow }
             }
     }
 
@@ -1245,7 +1252,7 @@ struct ContentView: View {
     private var minZoom: Double {
         if cam.videoKind == .dual { return cam.availableLenses.contains(.ultraWide) ? 0.5 : 1 }
         switch cam.aiLensLock {
-        case .tele?: return 5
+        case .tele?: return cam.autoTele && !cam.isRecording ? Double(cam.minAutoZoom) : 5
         case .ultraWide?: return 0.5
         case nil: return Double(cam.minAutoZoom)
         default: return 1
@@ -1374,7 +1381,7 @@ struct ContentView: View {
             }
             if cam.shootMode != .video { zoomMenuItems }
         } label: {
-            let locked = cam.aiLensLock != nil && cam.aiLensLock != .front
+            let locked = cam.aiLensLock != nil && cam.aiLensLock != .front && !cam.autoTele
             let lit = locked || (cam.shootMode != .video && cam.zoomAIEnabled)
             HStack(spacing: 4) {
                 if locked { Image(systemName: "lock.fill") }
@@ -1904,6 +1911,7 @@ private struct AssistPanel: View {
                         if videoFull {
                             Toggle("Isi layar (tanpa bar hitam, tepi kiri-kanan terpotong di layar saja)", isOn: $videoFill)
                         }
+                        Toggle("Pindah ke tele saat zoom >= \(Int(CameraManager.teleNative))x", isOn: $cam.videoTelePriority)
                         Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
                         Picker("Garis bingkai", selection: $cam.frameGuide) {
                             ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
