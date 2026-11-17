@@ -24,7 +24,8 @@ enum Fusion48 {
         vec3 rr = mix(r, gg, m);
         // area putih terbakar LUAS di foto 48MP (langit, lampu): detail highlight hanya ada di HDR+.
         // v0.18.2: diukur dari lowpass - teks / garis putih kecil tidak lagi diganti HDR+ (pinggiran menyala, IMG_7010)
-        float c = smoothstep(0.80, 0.97, max(lowA.r, max(lowA.g, lowA.b)));
+        // v0.40.3: hanya bila HDR+ cocok di situ (m kecil) - langit terang dari HDR+ yang meleset = kabel dobel (IMG_7397)
+        float c = smoothstep(0.80, 0.97, max(lowA.r, max(lowA.g, lowA.b))) * (1.0 - m);
         return vec4(mix(a.rgb * rr, h.rgb, c), 1.0);
     }
     """)

@@ -2605,7 +2605,10 @@ final class CameraManager: NSObject, ObservableObject {
             if let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent {
                 base = self.lensBase[p.deviceType] ?? 1
                 lensName = Self.name(of: p.deviceType)
-                nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? 4032
+                // v0.40.3: ukuran sensor dari SEMUA format lensa, bukan format aktif (setelah VIDEO / kamera virtual 12MP
+                // tercatat 4032 -> 2x terang tidak memakai crop 48MP tapi drizzle 12MP; motor bergerak jadi bayangan, IMG_7391)
+                nativeLong = p.formats.flatMap { $0.supportedMaxPhotoDimensions }.map { Int(max($0.width, $0.height)) }.max()
+                    ?? self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? 4032
             } else if let d = self.device {
                 if self.aiLockNative > 0 {
                     base = self.aiLockNative
@@ -2708,7 +2711,7 @@ final class CameraManager: NSObject, ObservableObject {
                     nativeLong = self.maxDimensions(of: p).map { Int(max($0.width, $0.height)) } ?? nativeLong
                     // v0.18.1: fusi 48MP butuh format lensa yang mendukung foto 48MP (jepretan pertama setelah
                     // app dibuka kadang format 12MP -> "sensor 4224", fusi dilewati, IMG_7004)
-                    if fus && m == .hdrplus && !zoomed && !night && lensName != "Depan",
+                    if fus && m == .hdrplus && !zoomed && !night && lensName != "Depan" && lensName != "Ultra Wide",
                        (self.maxDimensions(of: p).map { Int($0.width) < 8000 } ?? true) {
                         let cur = p.activeFormat
                         let cd = CMVideoFormatDescriptionGetDimensions(cur.formatDescription)
@@ -2842,7 +2845,9 @@ final class CameraManager: NSObject, ObservableObject {
                 let gain = Double(srcISO) * srcDur
                 // v0.18.5: Ultra Wide 48MP juga (iPhone 16 Pro)
                 // v0.20: semua lensa belakang 48MP (iPhone 17/18 Pro Max: tele 4x juga 48MP)
-                let ok = fus && !night && lensName != "Depan" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
+                // v0.40.3: Ultra Wide tidak difusi - foto 48MP Apple sudah dikoreksi distorsi lensanya, RAW belum, jadi
+                // tidak bisa diselaraskan: langit terang diisi HDR+ yang meleset -> kabel dobel, gedung berbayang (IMG_7392/7397)
+                let ok = fus && !night && lensName != "Depan" && lensName != "Ultra Wide" && nativeLong >= 8000 && gain <= 40 && fmt != .dng
                 self.fusionPending = ok
                 Log.camera.notice("Fusi 48MP: \(ok ? "ya" : "tidak", privacy: .public) (setelan \(fus, privacy: .public), lensa \(lensName, privacy: .public), sensor \(nativeLong, privacy: .public), ISO x t \(gain, format: .fixed(precision: 1), privacy: .public), malam \(night, privacy: .public), format \(fmt.rawValue, privacy: .public))")
             }
@@ -3292,7 +3297,13 @@ final class CameraManager: NSObject, ObservableObject {
 
             // Drizzle 2x: sub-pixel super-resolution untuk zoom (>= 3 frame)
             // v0.38.4: < 1,6x merge biasa sudah cukup detail; drizzle di 1,3x = 29MP di memori (17 Nov 15:28)
-            if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle && pj.burstCrop >= 1.6 {
+            // v0.40.3: drizzle tidak punya penolak gerakan - objek bergerak jadi bayangan berlapis (motor IMG_7391, bobot
+            // merge rata-rata 0,66). Bila merge biasa mendeteksi gerakan (bobot < 0,75), pakai hasil merge biasa.
+            let moving = !r.meanWeights.isEmpty && w < 0.75
+            if moving && pj.burstZoomed && !forAIZoom && pj.burstCrop >= 1.6 {
+                Log.hdr.notice("Drizzle dilewati: ada gerakan (bobot rata-rata \(w, format: .fixed(precision: 2), privacy: .public)), pakai merge biasa")
+            }
+            if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle && pj.burstCrop >= 1.6 && !moving {
                 let bW = r.width, bH = r.height
                 // v0.38.1: dulu dibagi Int(crop) -> 1,5x dibagi 1 (tidak di-crop, hasil 1x); 2,5x dibagi 2
                 let cropW = max(16, Int(Double(bW / 2) / Double(max(1, pj.burstCrop)))) & ~1
