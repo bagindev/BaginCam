@@ -67,6 +67,8 @@ struct SettingsSheet: View {
                     if lutAllowed {
                         Toggle("Bakar LUT ke foto", isOn: $cam.bakeLUT)
                     }
+                    // v0.38.4
+                    Toggle("Cermin selfie (foto kamera depan seperti di layar)", isOn: $cam.selfieMirror)
                 } header: {
                     Text("Hasil foto")
                 } footer: {

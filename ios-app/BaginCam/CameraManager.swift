@@ -284,7 +284,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
     /// v0.38.1: zoom kamera depan (sensor 12MP; 4x = 1008 px asli, lebih dari itu tidak berguna)
-    static let frontMaxZoom: CGFloat = 4
+    static let frontMaxZoom: CGFloat = 3      // v0.38.4: 4x -> 3x (3x pun sudah buram, IMG_7381)
 
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
@@ -390,6 +390,28 @@ final class CameraManager: NSObject, ObservableObject {
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
+    /// v0.38.4: foto kamera depan disimpan seperti cermin (sama dengan preview). Mati = seperti dilihat orang lain
+    /// (tulisan terbaca normal, sama dengan bawaan kamera iPhone). Preview tetap cermin.
+    @Published var selfieMirror: Bool = Prefs.get("selfieMirror", true) {
+        didSet {
+            Prefs.set("selfieMirror", selfieMirror)
+            let v = selfieMirror
+            sessionQueue.async { self.selfieMirrorS = v; self.applyPhotoMirror() }
+        }
+    }
+    private var selfieMirrorS: Bool = Prefs.get("selfieMirror", true)      // sessionQueue
+    private var frontMirrored = false                                     // sessionQueue: device sekarang kamera depan
+
+    /// sessionQueue: cermin koneksi foto = kamera depan && saklar cermin selfie
+    private func applyPhotoMirror() {
+        guard let c = photoOutput.connection(with: .video), c.isVideoMirroringSupported else { return }
+        let want = frontMirrored && selfieMirrorS
+        c.automaticallyAdjustsVideoMirroring = false
+        if c.isVideoMirrored != want {
+            c.isVideoMirrored = want
+            Log.camera.notice("Cermin selfie: foto \(want ? "cermin" : "tidak cermin", privacy: .public)")
+        }
+    }
     @Published var focusRange: FocusRange = Prefs.raw("focusRange", .auto) {
         didSet {
             Prefs.set("focusRange", focusRange.rawValue)
@@ -947,12 +969,14 @@ final class CameraManager: NSObject, ObservableObject {
         } else if let cur = currentInput, session.canAddInput(cur) {
             session.addInput(cur)
         }
+        frontMirrored = mirrored
         for conn in [videoOutput.connection(with: .video), photoOutput.connection(with: .video)] {
             guard let c = conn else { continue }
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
             if c.isVideoMirroringSupported {
                 c.automaticallyAdjustsVideoMirroring = false
-                c.isVideoMirrored = mirrored
+                // v0.38.4: preview selalu cermin di kamera depan; foto mengikuti saklar cermin selfie
+                c.isVideoMirrored = c === photoOutput.connection(with: .video) ? mirrored && selfieMirrorS : mirrored
             }
         }
         rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: d, previewLayer: nil)
@@ -2396,7 +2420,9 @@ final class CameraManager: NSObject, ObservableObject {
         guard !isCapturing else { return }
         // v0.38: tiap burst HDR+ yang antre menahan ~190 MB sampai digabung; saat HP panas proses jauh lebih lambat
         let limit = thermal >= 2 ? min(2, DeviceCaps.queueLimit) : DeviceCaps.queueLimit
-        let lowMem = pendingJobs > 0 && DeviceCaps.availableMB > 0 && DeviceCaps.availableMB < 1500
+        // v0.38.4: 1500 -> 2000 MB. 17 Nov 15:28: burst 2x dimulai di sisa 1882 MB selagi drizzle 1.3x diproses ->
+        // 14 dari 15 frame RAW ditolak iOS (-11800 / -12686), foto hilang
+        let lowMem = pendingJobs > 0 && DeviceCaps.availableMB > 0 && DeviceCaps.availableMB < 2000
         if pendingJobs >= limit || lowMem {
             status = "Antrean penuh (\(pendingJobs) foto masih diproses) - tunggu sebentar"
             Log.camera.notice("Rana ditolak: antrean \(self.pendingJobs, privacy: .public) dari \(limit, privacy: .public), sisa memori \(DeviceCaps.availableMB, privacy: .public) MB, suhu \(self.thermal, privacy: .public)")
@@ -2466,6 +2492,8 @@ final class CameraManager: NSObject, ObservableObject {
             self.burstTotalZoom = tz
             self.burstSRModel = model
             self.burstStrength = useAI ? strength : 0
+            // v0.38.4: kamera depan = wajah; AI super-res membuat wajah seperti lukisan dan butuh ~25 s (IMG_7375 / 7381)
+            if self.lens == .front || self.aiLockNative > 0 && self.device?.position == .front { self.burstStrength = 0 }
             self.restoreZoomAfterBurst = false
             self.burstTextFocus = tf
             self.burstZoomed = false
@@ -3141,7 +3169,8 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: HDR+
     private func processHDRPlus(frames: [BayerFrame], ref: AVCapturePhoto?, dir: URL?, noiseReduction: Double,
                                 forAIZoom: Bool, fusion: Data? = nil) {
-        guard let ref, let refPB = ref.pixelBuffer, let merger = self.merger, frames.count >= 2 else {
+        if frames.count == 1 { Log.hdr.error("! HDR+: hanya 1 frame diterima, disimpan tanpa penggabungan") }
+        guard let ref, let refPB = ref.pixelBuffer, let merger = self.merger, frames.count >= 1 else {
             Log.hdr.error("HDR+ batal: frame \(frames.count, privacy: .public), ref \(ref != nil, privacy: .public)")
             finish("HDR+ gagal: frame Bayer tidak lengkap (\(frames.count))")
             return
@@ -3192,7 +3221,8 @@ final class CameraManager: NSObject, ObservableObject {
             if !forAIZoom && pj.burstFormat.wantsDNG { save(dng, fileName: "HDRPLUS_\(frames.count)f.dng", dir: dir) }
 
             // Drizzle 2x: sub-pixel super-resolution untuk zoom (>= 3 frame)
-            if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle {
+            // v0.38.4: < 1,6x merge biasa sudah cukup detail; drizzle di 1,3x = 29MP di memori (17 Nov 15:28)
+            if pj.burstZoomed && !forAIZoom && frames.count >= 3 && merger.canDrizzle && pj.burstCrop >= 1.6 {
                 let bW = r.width, bH = r.height
                 // v0.38.1: dulu dibagi Int(crop) -> 1,5x dibagi 1 (tidak di-crop, hasil 1x); 2,5x dibagi 2
                 let cropW = max(16, Int(Double(bW / 2) / Double(max(1, pj.burstCrop)))) & ~1

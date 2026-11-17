@@ -1243,7 +1243,7 @@ struct ContentView: View {
         // v0.38.1: kamera depan - 1x = sensor penuh (lebih lebar dari selfie kamera bawaan), 1.3x = bingkai selfie
         // kamera bawaan, 2x / 3x = crop + HDR+ multi-frame
         if isFront && cam.videoKind != .dual {
-            return [1, 1.3, 2, 3].filter { $0 <= maxZoom + 0.01 }
+            return [1, 1.3, 2].filter { $0 <= maxZoom + 0.01 }
         }
         if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty {
             // video: titik native (lensa + crop sensor 48 MP) + 10x
