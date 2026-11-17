@@ -2001,3 +2001,41 @@ Potret kedalaman (baru):
   kedalamannya (file akhir sudah diratakan), rentang zoom bisa dibatasi iOS saat kedalaman aktif.
 BELUM DIUJI DI HP - jalur kedalaman belum pernah dijalankan sama sekali.
 Build: run 43853977722 sukses. IPA: `data/ipa-v0.37.0/BaginCam-unsigned.ipa`. IPA v0.36.1 dihapus.
+
+## 2026-11-17 - Cek build 87 (potret tidak konsisten, 2x tanpa percantik) + v0.38.0 build 88: antrean proses
+
+Laporan pengguna: hasil potret tidak konsisten; di 2x percantik wajah seperti tidak aktif; minta proses foto
+dibuat antrean supaya bisa memotret lagi selagi foto sebelumnya diproses (seperti GCam).
+Ditarik: log 17 Nov + IMG_7354-7365 (5 depan, 7 belakang). Pembanding: `data/output/potret_tiga_jalur_1117.jpg`.
+Temuan dari log - 12 potret melewati TIGA jalur berbeda:
+1. Cara lama 1x (HDR+ 8-12 frame, fusi 48MP di belakang, bokeh segmentasi, percantik): semua foto depan +
+   IMG_7359, 7363, 7365. Kulit halus, warna hangat, 24MP.
+2. Cara lama 2x ("Crop penuh terang": 1 foto Apple 48MP di-crop, jalur zoom): IMG_7360, 7362. Jalur
+   `processAIZoomImage` tidak pernah memanggil percantik wajah -> pori terlihat, warna lebih dingin.
+3. Kedalaman (foto Apple 12MP + CIDepthBlurEffect): IMG_7361 (2x f/8,7), 7364 (1x f/4,7). Tanpa percantik.
+Sebab jalur berganti-ganti: `applyDepth()` hanya dipanggil saat mode / saklar berubah. Setelah app dibuka,
+keluar VIDEO, atau kamera dibalik, kedalaman tidak dipasang (baris `Kedalaman potret: aktif` baru muncul 09:35:33
+dan 09:39:22, setelah saklar disentuh). Kamera depan: `Front Camera` biasa, `didukung false`.
+Yang terbukti jalan di build 87: potret kedalaman (kedalaman 768x576 kualitas tinggi, matte potret true, proses
+1,1-1,3 s), "Crop penuh terang" 48MP di 2x (build 86), jalur zoom Apple di kamera virtual saat kedalaman aktif.
+Catatan suhu: IMG_7363 diproses 53 s (percantik 20 s + simpan 25 s) saat suhu naik ke 2 dan ada peringatan
+memori iOS; jepretan lain 4-10 s. Rana yang ditekan selama itu (09:39:33) diabaikan.
+
+Perubahan v0.38.0 build 88:
+- Kedalaman dipasang tiap ganti kamera: `applyDepth()` dipanggil dari `install()` dan `leaveVideo()` (penjaga
+  `depthBusy`). Kamera depan: saat POTRET + kedalaman, kamera diganti ke TrueDepth (`swapFront`), kembali ke
+  kamera depan biasa saat keluar POTRET / saklar mati / TrueDepth ternyata tanpa kedalaman.
+- Percantik wajah di semua jalur potret: jalur zoom (gambar ditegakkan dulu menurut orientasi, lalu bokeh +
+  percantik) dan jalur kedalaman (`processDepthPortrait` ditulis ulang: blur kedalaman -> tegak -> percantik ->
+  rasio -> LUT -> HEIF tegak; `RawDeveloper.depthBlurImage` mengembalikan CIImage). File: `POTRET_%04d.heic`.
+- Antrean proses: `ProcParams` = salinan 23 parameter `burst*` yang dibaca saat memproses; semua fungsi proses
+  membaca `pj.*`. `enqueue()` (sessionQueue) membekukan parameter lalu mengirim ke `processQueue` (serial);
+  `finishBurst` -> `releaseCapture()` melepas rana begitu jepretan selesai DIAMBIL; `finish()` = satu pekerjaan
+  selesai. `pendingJobs` (terbit ke UI): lencana kuning berisi jumlah di tombol galeri, status "Diproses di latar
+  (n foto) - boleh memotret lagi". Batas: `DeviceCaps.queueLimit` (RAM >= 7 GB: 4, >= 5 GB: 2, lainnya 1),
+  2 saat suhu >= 2, dan ditolak bila sisa memori < 1000 MB. Layar tetap nyala & kamera tidak dijeda selama ada
+  antrean. Log: `Antrean proses: +.. -> n foto`, `Antrean proses: selesai .. s, sisa n foto`, `Rana ditolak: ..`.
+Batas yang diketahui: potret kedalaman tetap 12MP tanpa HDR+; cara lama 1x (HDR+) dan 2x (foto Apple di-crop)
+masih berbeda warna bila saklar kedalaman dimatikan; selfie tersimpan seperti cermin (sejak dulu).
+BELUM DIUJI DI HP: kamera TrueDepth depan, percantik di jalur zoom / kedalaman, antrean (memotret selagi proses).
+Build: run 44007913557 sukses. IPA: `data/ipa-v0.38.0/BaginCam-unsigned.ipa` (87,8 MB). IPA v0.37.0 dihapus.
