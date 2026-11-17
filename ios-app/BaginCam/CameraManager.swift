@@ -431,6 +431,32 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private var depthBusy = false                     // sessionQueue: applyDepth sedang berjalan (install memanggilnya lagi)
+    private var depthFailed = false                   // sessionQueue: sesi error saat kedalaman aktif -> kedalaman dimatikan
+    private var runtimeErrors: [CFAbsoluteTime] = []  // sessionQueue
+    private var sessionObservers: [NSObjectProtocol] = []
+
+    /// v0.38.2 (sessionQueue): layanan kamera iOS error / mati (mis. cameracaptured crash) -> sesi berhenti dan preview
+    /// membeku. Dicatat, kedalaman dimatikan bila sedang aktif (konfigurasi yang dicurigai), lalu sesi dijalankan lagi.
+    private func recoverSession(_ err: AVError?) {
+        let now = CFAbsoluteTimeGetCurrent()
+        runtimeErrors = runtimeErrors.filter { now - $0 < 60 } + [now]
+        let depthOn = photoOutput.isDepthDataDeliveryEnabled
+        Log.camera.error("! Sesi kamera error: kode \(err?.code.rawValue ?? -1, privacy: .public) \(err?.localizedDescription ?? "-", privacy: .public), kamera \(self.device?.localizedName ?? "-", privacy: .public), kedalaman \(depthOn, privacy: .public), ke-\(self.runtimeErrors.count, privacy: .public) dalam 1 menit")
+        if depthOn && !depthFailed {
+            depthFailed = true
+            applyDepth()
+            Log.camera.error("! Kedalaman potret dimatikan sampai app dibuka ulang")
+        }
+        guard runtimeErrors.count <= 3 else {
+            setStatus("Kamera iOS error berulang - tutup lalu buka lagi app")
+            return
+        }
+        guard dual == nil else { return }
+        if session.isRunning { session.stopRunning() }
+        session.startRunning()
+        Log.camera.notice("Sesi kamera dijalankan lagi: \(self.session.isRunning, privacy: .public)")
+        setStatus(depthOn ? "Kamera dipulihkan (kedalaman dimatikan)" : "Kamera dipulihkan")
+    }
 
     /// sessionQueue: nyalakan / matikan pengiriman data kedalaman di photo output. Kamera virtual belakang (dua
     /// lensa) atau kamera depan TrueDepth; lensa fisik tunggal tidak punya kedalaman.
@@ -441,7 +467,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard configured, !inVideo, !depthBusy, session.outputs.contains(photoOutput), var d = device else { return }
         depthBusy = true
         defer { depthBusy = false }
-        let wantMode = shootMode == .portrait && portraitDepth
+        let wantMode = shootMode == .portrait && portraitDepth && !depthFailed
         var note = ""
         // kamera depan: kedalaman hanya ada di kamera TrueDepth (sensor yang sama); cara lama (HDR+ RAW) memakai
         // kamera depan biasa
@@ -465,11 +491,11 @@ final class CameraManager: NSObject, ObservableObject {
             d = nd
             note += ", kamera depan -> \(nd.localizedName)"
         }
-        if d.position == .front {
-            let isTD = d.deviceType == .builtInTrueDepthCamera
-            if wantMode && !isTD { swapFront(.builtInTrueDepthCamera) } else if !wantMode && isTD { swapFront(.builtInWideAngleCamera) }
-        }
-        let capable = d.isVirtualDevice || d.deviceType == .builtInTrueDepthCamera
+        // v0.38.2: kamera depan TIDAK lagi dipindah ke TrueDepth. 17 Nov 11:36 (build 89): dua kali layanan kamera
+        // iOS (cameracaptured) abort di -[BWNodeConnection _resolveCommonVideoBufferFormatForAttachedMediaKey:] begitu
+        // TrueDepth + kedalaman dipasang -> preview mati, app harus dibuka ulang. Potret depan = cara lama (segmentasi).
+        if d.position == .front && d.deviceType == .builtInTrueDepthCamera { swapFront(.builtInWideAngleCamera) }
+        let capable = d.isVirtualDevice
         let want = wantMode && capable
         if !want && !photoOutput.isDepthDataDeliveryEnabled && !depthLoweredDims && note.isEmpty {
             if depthReady { DispatchQueue.main.async { self.depthReady = false } }
@@ -502,7 +528,6 @@ final class CameraManager: NSObject, ObservableObject {
         }
         let supported = photoOutput.isDepthDataDeliverySupported
         // TrueDepth tanpa kedalaman (tidak diharapkan) -> kembali ke kamera depan biasa supaya HDR+ RAW tetap jalan
-        if !on && wantMode && d.deviceType == .builtInTrueDepthCamera { swapFront(.builtInWideAngleCamera) }
         let matte = photoOutput.isPortraitEffectsMatteDeliveryEnabled
         Log.camera.notice("Kedalaman potret: \(on ? "aktif" : "mati", privacy: .public) (ingin \(wantMode, privacy: .public), kamera \(d.localizedName, privacy: .public), didukung \(supported, privacy: .public), matte \(matte, privacy: .public), zoom \(Double(d.minAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)-\(Double(d.maxAvailableVideoZoomFactor), format: .fixed(precision: 1), privacy: .public)\(note, privacy: .public))")
         DispatchQueue.main.async {
@@ -840,6 +865,18 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configure(mode: Mode, lens: Lens) {
         configured = true
+        let nc = NotificationCenter.default
+        sessionObservers.append(nc.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] n in
+            let err = n.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            self?.sessionQueue.async { self?.recoverSession(err) }
+        })
+        sessionObservers.append(nc.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { n in
+            let r = (n.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue ?? -1
+            Log.camera.notice("Sesi kamera terputus, alasan \(r, privacy: .public) (1 app lain, 2 audio, 3 app lain di latar, 4 multitasking, 5 tekanan sistem)")
+        })
+        sessionObservers.append(nc.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil) { _ in
+            Log.camera.notice("Sesi kamera tersambung lagi")
+        })
         subjectObserver = NotificationCenter.default.addObserver(forName: AVCaptureDevice.subjectAreaDidChangeNotification,
                                                                  object: nil, queue: nil) { [weak self] _ in
             self?.sessionQueue.async { self?.resetFocusToCenter() }

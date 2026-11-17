@@ -839,7 +839,7 @@ struct ContentView: View {
             }
             Toggle("Kedalaman (seperti iPhone)", isOn: $cam.portraitDepth)
             if cam.portraitDepth && !cam.depthReady {
-                Text("Data kedalaman tidak tersedia di lensa ini (lensa dikunci) - memakai cara lama")
+                Text("Kedalaman hanya untuk kamera belakang (lensa Auto) - di sini memakai cara lama")
             }
             Text("Atur lebih halus: laci pengaturan")
         } label: {
