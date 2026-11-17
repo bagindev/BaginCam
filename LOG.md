@@ -2087,3 +2087,20 @@ Perubahan v0.38.2 build 90:
   Gangguan sesi (`wasInterrupted` + alasan, `interruptionEnded`) juga dicatat.
 BELUM DIUJI DI HP. Zoom kamera depan (build 89) juga belum sempat diuji.
 Build: run 44018656142 sukses. IPA: `data/ipa-v0.38.2/BaginCam-unsigned.ipa`. IPA v0.38.1 dihapus.
+
+## 2026-11-17 - Cek build 90 (zoom kamera depan) -> v0.38.3 build 91
+
+Ditarik: log + IMG_7372-7378. Pembanding: `data/output/zoom_depan_1117.jpg`, `zoom_depan_detail_1117.jpg`.
+- Tidak ada crash / error sesi. Satu gangguan sesi alasan 1 (app lain memakai kamera, 15:18:26), pulih 1,6 s.
+- Kamera depan tetap kamera biasa di POTRET (tanpa TrueDepth); potret depan 1x HDR+ 15 frame + bokeh + percantik.
+- Zoom kamera depan jalan: POTRET 1.3x / 2x / 3x lewat zoom Apple + bokeh + percantik; antrean sampai 3 foto.
+  Percantik kini 0,1-0,9 s (HP tidak mengisi; tadi pagi 22 s).
+- Detail: 1x dan 1.3x baik; 2x lembut (detail asli 2016 px diperbesar ke 24MP); 3x dengan AI Detail = wajah
+  seperti lukisan dan proses 27,9 s (muat model 2,8 s + SR 23 s, IMG_7375).
+- `burstRealLong` memakai x2 remosaic untuk semua sensor -> kamera depan 12MP dicatat "detail asli ~4032" di 2x.
+- Zoom kamera depan di FOTO (burst RAW + drizzle) belum dicoba. Selfie tersimpan seperti cermin (sejak dulu).
+Perubahan v0.38.3 build 91:
+- Detail asli zoom Apple: x2 hanya untuk sensor 48MP; sensor 12MP = sisi sensor / crop.
+- POTRET yang di-zoom: tanpa AI super-res (Lanczos), dan 12MP bila detail asli < 3000 px.
+BELUM DIUJI DI HP.
+Build: run 44046027983 sukses. IPA: `data/ipa-v0.38.3/BaginCam-unsigned.ipa`. IPA v0.38.2 dihapus.
