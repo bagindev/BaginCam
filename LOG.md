@@ -2066,3 +2066,24 @@ Perubahan v0.38.1 build 89:
 - Log: 131 panggilan `Log.*.info` -> `.notice` (disimpan ke disk); percantik wajah mencatat ukuran, waktu, memori.
 BELUM DIUJI DI HP: zoom depan (HDR+ dan TrueDepth), potret zoom lewat Apple, TrueDepth kamera depan.
 Build: run 44014891439 sukses. IPA: `data/ipa-v0.38.1/BaginCam-unsigned.ipa`. IPA v0.38.0 dihapus.
+
+## 2026-11-17 - Crash build 89 (kamera depan TrueDepth) -> v0.38.2 build 90
+
+Laporan pengguna: "kayaknya crash". Ditarik: log + laporan crash iPhone (`data/crash/cameracaptured-2026-11-17-*.ips`).
+- BaginCam sendiri tidak crash (tidak ada laporan BaginCam hari ini). Yang crash: layanan kamera iOS
+  `cameracaptured`, 11:36:12 dan 11:36:24, SIGABRT di `-[BWNodeConnection _resolveCommonVideoBufferFormatForAttachedMediaKey:]`
+  saat `BWGraph commitConfiguration` (iOS gagal menyusun format buffer untuk konfigurasi sesi).
+- 11:36:24.744 log: `Kedalaman potret: aktif (... kamera Front TrueDepth Camera ..., kamera depan -> Front TrueDepth
+  Camera)` - crash di detik yang sama. Sesi pertama (11:36:06) tidak punya baris log (proses ditutup sebelum log
+  dibaca), crash 6 s setelah app dibuka - diduga sama (balik ke kamera depan). Pemicu yang dicurigai: TrueDepth +
+  pengiriman kedalaman/matte di photo output + video data output BGRA (pesan pengecualian tidak ada di laporan).
+  Kedalaman di kamera virtual belakang tidak pernah crash (09:35, 11:01, 11:36:21).
+- App tidak menangani error sesi sama sekali -> preview membeku, terlihat seperti crash.
+Perubahan v0.38.2 build 90:
+- Kamera depan tidak lagi dipindah ke TrueDepth (bila masih TrueDepth, dikembalikan ke kamera depan biasa).
+  Potret kamera depan = cara lama (HDR+ + segmentasi + percantik). Teks menu Bokeh disesuaikan.
+- `recoverSession`: `AVCaptureSession.runtimeErrorNotification` dicatat (`! Sesi kamera error: kode ..`), kedalaman
+  dimatikan sampai app dibuka ulang bila sedang aktif (`depthFailed`), sesi dijalankan lagi (maks 3x per menit).
+  Gangguan sesi (`wasInterrupted` + alasan, `interruptionEnded`) juga dicatat.
+BELUM DIUJI DI HP. Zoom kamera depan (build 89) juga belum sempat diuji.
+Build: run 44018656142 sukses. IPA: `data/ipa-v0.38.2/BaginCam-unsigned.ipa`. IPA v0.38.1 dihapus.
