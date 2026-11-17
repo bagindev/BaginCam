@@ -356,6 +356,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var lockLensOnRecord: Bool = Prefs.get("lockLensOnRecord2", false) { didSet { Prefs.set("lockLensOnRecord2", lockLensOnRecord) } }  // v0.12.4: bawaan mati (Auto tetap bisa pindah lensa saat rekam)
     /// titik zoom tanpa crop digital (relatif lensa utama), mis. [0.5, 1, 2, 5]
     @Published private(set) var nativeZoomPoints: [CGFloat] = []
+    /// v0.38.4: zoom terbesar yang benar-benar terekam di format video aktif (batas hardware, angka layar)
+    @Published private(set) var videoMaxZoom: CGFloat = 25
     /// "Native" / "Digital 1.4x"
     @Published private(set) var zoomQuality = ""
     /// kekuatan penajaman zoom digital (preview + rekaman)
@@ -1919,8 +1921,10 @@ final class CameraManager: NSObject, ObservableObject {
         clean = clean.enumerated().filter { i, v in i + 1 >= clean.count || v < clean[i + 1] * 0.85 }.map { $0.element }
         let txt = clean.map { String(format: "%.2g", Double($0)) }.joined(separator: ", ")
         let own = fmt.secondaryNativeResolutionZoomFactors.map { String(format: "%.2g", Double($0)) }.joined(separator: ",")
-        Log.camera.notice("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)])")
-        DispatchQueue.main.async { self.nativeZoomPoints = clean; self.updateZoomQuality() }
+        let zBase = d.isVirtualDevice ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
+        let hwMax = d.maxAvailableVideoZoomFactor / max(zBase, 0.01)
+        Log.camera.notice("VIDEO: titik zoom native [\(txt, privacy: .public)] (format aktif: [\(own, privacy: .public)]), zoom maks terekam \(Double(hwMax), format: .fixed(precision: 1), privacy: .public)x")
+        DispatchQueue.main.async { self.nativeZoomPoints = clean; self.videoMaxZoom = hwMax; self.updateZoomQuality() }
     }
 
     /// main: label kualitas zoom + kekuatan penajaman zoom digital

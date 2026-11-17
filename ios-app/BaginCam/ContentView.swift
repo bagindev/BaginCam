@@ -1227,7 +1227,12 @@ struct ContentView: View {
         default: return 1
         }
     }
-    private var maxZoom: Double { cam.videoKind == .dual ? 15 : Double(cam.maxTotalZoom) }
+    private var maxZoom: Double {
+        if cam.videoKind == .dual { return 15 }
+        // v0.38.4: video dibatasi zoom yang benar-benar terekam (hardware), bukan crop preview
+        if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty { return min(Double(cam.maxTotalZoom), Double(cam.videoMaxZoom)) }
+        return Double(cam.maxTotalZoom)
+    }
     private var displayZoom: Double { Double(cam.totalZoom) }
 
     private func setDisplayZoom(_ z: Double) { cam.setTotalZoom(CGFloat(z)) }
@@ -1248,7 +1253,8 @@ struct ContentView: View {
         if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty {
             // video: titik native (lensa + crop sensor 48 MP) + 10x
             var p = cam.nativeZoomPoints.map { Double($0) }
-            if !p.contains(where: { abs($0 - 10) < 0.5 }) { p.append(10) }
+            // v0.38.4: + 25x (batas kamera bawaan) dan 40x (crop digital besar, buram) bila hardware mengizinkan
+            for z in [10.0, 25, 40] where !p.contains(where: { abs($0 - z) < 0.5 }) { p.append(z) }
             return p.sorted().filter { $0 >= minZoom - 0.01 && $0 <= maxZoom + 0.01 }
         }
         // v0.20: titik tele mengikuti HP (16 Pro Max 5x/10x, 17/18 Pro Max 4x/8x)
@@ -1293,7 +1299,8 @@ struct ContentView: View {
                         .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
                 }
             }
-            if proOn { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
+            // v0.38.4: VIDEO selalu punya slider zoom (dulu hanya saat lapisan PRO nyala)
+            if proOn || (cam.shootMode == .video && cam.videoKind != .dual) { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
             if cam.videoKind == .dual { dualLensRow }
         }
     }
