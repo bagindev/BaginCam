@@ -774,10 +774,27 @@ final class CameraManager: NSObject, ObservableObject {
     private var constituentObs: NSKeyValueObservation?     // v0.40.1: log lensa aktif kamera virtual
     /// v0.40.1: VIDEO - zoom >= tele tapi kamera virtual tetap di lensa utama (cahaya redup / jarak) -> pindah paksa ke
     /// lensa tele fisik (17 Nov: 16x tetap "Utama crop 16x", buram; kamera bawaan pindah ke tele)
-    @Published var videoTelePriority: Bool = Prefs.get("videoTelePriority", true) { didSet { Prefs.set("videoTelePriority", videoTelePriority) } }
+    @Published var videoTelePriority: Bool = Prefs.get("videoTelePriority", true) {
+        didSet { Prefs.set("videoTelePriority", videoTelePriority); let v = videoTelePriority; sessionQueue.async { self.teleS = v; self.applyTeleFallback() } }
+    }
+    private var teleS: Bool = Prefs.get("videoTelePriority", true)        // sessionQueue
+
+    /// v0.40.2 (sessionQueue): VIDEO - lensa cadangan kamera virtual dikosongkan, jadi di zoom >= tele iOS tetap memakai
+    /// lensa tele walau redup / dekat (bawaan iOS: kembali ke crop lensa utama). Tetap kamera virtual -> ganti lensa
+    /// mulus tanpa jeda (build 96 mengunci ke tele fisik = ganti kamera, preview jeda).
+    private func applyTeleFallback() {
+        guard let d = device, d.isVirtualDevice else { return }
+        let want = inVideo && teleS
+        let target = want ? [] : d.supportedFallbackPrimaryConstituentDevices
+        let now = d.fallbackPrimaryConstituentDevices.map(\.uniqueID)
+        guard now != target.map(\.uniqueID), (try? d.lockForConfiguration()) != nil else { return }
+        d.fallbackPrimaryConstituentDevices = target
+        d.unlockForConfiguration()
+        let names = target.map { Self.name(of: $0.deviceType) }.joined(separator: ", ")
+        Log.camera.notice("Lensa cadangan kamera virtual: \(want ? "dimatikan (tele tetap tele)" : "bawaan [\(names)]", privacy: .public)")
+    }
     /// lensa tele dikunci otomatis oleh aturan di atas (bukan pilihan pengguna)
     @Published private(set) var autoTele = false
-    private var teleCheck: DispatchWorkItem?
     private var aiLockNative: CGFloat = 0           // sessionQueue: faktor optik lensa terkunci (0 = tidak dikunci)
     private var evBiasSession: Float = 0
     private var wbPresetSession: WBPreset = .auto
@@ -1047,6 +1064,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.totalZoom = min(max(minZ, startZoom), maxZ)
         }
         publishCapabilities(vd, label: "Auto", mode: .aiZoom)
+        applyTeleFallback()
         constituentObs = vd.observe(\.activePrimaryConstituent, options: [.new]) { d, _ in
             let name = d.activePrimaryConstituent.map { Self.name(of: $0.deviceType) } ?? "-"
             let iso = d.activePrimaryConstituent?.iso ?? 0
@@ -1139,24 +1157,6 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    /// v0.40.1 (main): zoom sudah >= tele 0,5 s - bila kamera virtual masih memakai lensa lain, kunci ke tele fisik
-    private func forceTeleIfNeeded() {
-        guard shootMode == .video, videoKind == .normal, !isRecording, !isCapturing, aiLensLock == nil,
-              totalZoom >= Self.teleNative * 0.999 else { return }
-        let z = totalZoom
-        sessionQueue.async {
-            guard let d = self.device, d.isVirtualDevice, let p = d.activePrimaryConstituent,
-                  p.deviceType != .builtInTelephotoCamera else { return }
-            let why = String(format: "lensa %@, ISO %.0f, posisi fokus %.2f", Self.name(of: p.deviceType), p.iso, p.lensPosition)
-            DispatchQueue.main.async {
-                guard self.aiLensLock == nil, !self.isRecording, self.totalZoom >= Self.teleNative * 0.999 else { return }
-                Log.camera.notice("VIDEO: zoom \(Double(z), format: .fixed(precision: 1), privacy: .public)x tapi kamera virtual tetap \(why, privacy: .public) -> pindah paksa ke tele")
-                self.setAILensLock(.tele, zoom: self.totalZoom)
-                self.autoTele = true
-            }
-        }
-    }
-
     /// v0.39: tan(setengah sudut) lebar preview pada zoom layar 1x - untuk peta zoom (main)
     private(set) var fovTan1x: Double = 0.42
 
@@ -1189,12 +1189,6 @@ final class CameraManager: NSObject, ObservableObject {
                 Log.camera.notice("VIDEO: zoom \(Double(zz), format: .fixed(precision: 1), privacy: .public)x < tele -> kembali ke lensa Auto")
                 setAILensLock(nil, zoom: zz)
                 return
-            }
-            teleCheck?.cancel()
-            if videoTelePriority && aiLensLock == nil && zz >= t * 0.999 {
-                let w = DispatchWorkItem { [weak self] in self?.forceTeleIfNeeded() }
-                teleCheck = w
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
             }
         }
         // v0.12: video menempel ke titik native (tanpa crop digital) bila dekat (<3 %)
@@ -1924,6 +1918,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         session.commitConfiguration()
         Log.camera.notice("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
+        applyTeleFallback()
         applyVideoFormat()
         syncDual()
     }
@@ -1950,6 +1945,7 @@ final class CameraManager: NSObject, ObservableObject {
         applyDepth()        // v0.38: VIDEO -> POTRET (photo output baru dipasang lagi di sini)
         videoQueue.async { self.previewLog = false }
         Log.camera.notice("VIDEO: keluar")
+        applyTeleFallback()
         DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
     }
 

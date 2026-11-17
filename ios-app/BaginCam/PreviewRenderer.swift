@@ -35,6 +35,13 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     weak var navigator: ZoomNavigator?
 
     private var frameCounter = 0
+    // v0.40.2: statistik render preview (log tiap 10 s)
+    private var statStart = CACurrentMediaTime()
+    private var statFrames = 0
+    private var statCPU = 0.0
+    private var statGPU = 0.0
+    private var statGPUn = 0
+    private let statLock = NSLock()
     private weak var lastDrawn: CIImage?       // v0.15: frame sama -> tidak dirender ulang (hemat GPU/panas)
     private var histBitmap = [Float](repeating: 0, count: 64 * 4)
 
@@ -57,6 +64,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         guard var image = frame, frame !== lastDrawn,
               let drawable = view.currentDrawable,
               let commandBuffer = queue.makeCommandBuffer() else { return }
+        let tDraw = CACurrentMediaTime()
 
         // digital zoom (crop tengah) - sama persis dengan crop AI Zoom saat memotret
         if zoom > 1.001 {
@@ -147,8 +155,31 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         _ = try? ciContext.startTask(toRender: image, from: CGRect(origin: .zero, size: ds),
                                      to: dest, at: .zero)
         commandBuffer.present(drawable)
+        commandBuffer.addCompletedHandler { [weak self] cb in
+            guard let self, cb.gpuEndTime > cb.gpuStartTime else { return }
+            self.statLock.lock()
+            self.statGPU += cb.gpuEndTime - cb.gpuStartTime
+            self.statGPUn += 1
+            self.statLock.unlock()
+        }
         commandBuffer.commit()
         lastDrawn = frame
+        statFrames += 1
+        statCPU += CACurrentMediaTime() - tDraw
+        let el = CACurrentMediaTime() - statStart
+        if el >= 10 {
+            statLock.lock()
+            let gpu = statGPUn > 0 ? statGPU / Double(statGPUn) * 1000 : 0
+            statGPU = 0; statGPUn = 0
+            statLock.unlock()
+            let fps = Double(statFrames) / el, cpu = statCPU / Double(max(statFrames, 1)) * 1000
+            let on = [lutFilter != nil ? "LUT" : nil, sharpen > 0.01 ? "tajam" : nil, histogramEnabled ? "histogram" : nil,
+                      zebra ? "zebra" : nil, peaking ? "peaking" : nil, navigator?.wantsRef == true ? "peta" : nil].compactMap { $0 }
+            Log.camera.notice("Preview: \(fps, format: .fixed(precision: 1), privacy: .public) fps, CPU \(cpu, format: .fixed(precision: 1), privacy: .public) ms, GPU \(gpu, format: .fixed(precision: 1), privacy: .public) ms per frame, \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public), aktif [\(on.joined(separator: ", "), privacy: .public)], suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
+            statStart = CACurrentMediaTime()
+            statFrames = 0
+            statCPU = 0
+        }
     }
 
     private func blend(_ top: CIImage, over background: CIImage, mask: CIImage) -> CIImage {

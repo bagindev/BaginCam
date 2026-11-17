@@ -18,6 +18,8 @@ struct ContentView: View {
     /// v0.40: jendela bidik video mengisi seluruh layar (tanpa bar hitam atas-bawah); sisi kiri-kanan rekaman 16:9
     /// tidak terlihat di preview (layar 19,5:9 lebih ramping dari video)
     @AppStorage("videoFill") private var videoFill = true
+    /// v0.40.2: LUT di preview (mati = preview lebih ringan; LUT tetap dibakar ke foto / video bila disetel)
+    @AppStorage("previewLUT") private var previewLUT = true
     private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
     /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
     /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
@@ -159,7 +161,8 @@ struct ContentView: View {
                 luts.select(luts.items.first { $0.name.contains("STANDARD") } ?? luts.items.first)
             }
         }
-        .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
+        .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = previewLUT ? newFilter : nil; cam.captureLUT = luts.current }
+        .onChange(of: previewLUT) { _, v in renderer.lutFilter = v ? luts.filter : nil }
         .onChange(of: cam.previewExtraZoom) { _, z in renderer.zoom = z }
         .onChange(of: cam.totalZoom) { _, z in zoomNav.setZoom(z, fovTan1x: cam.fovTan1x) }
         .onChange(of: navEnabled) { _, v in zoomNav.enabled = v }
@@ -168,7 +171,7 @@ struct ContentView: View {
         .onChange(of: peaking) { _, v in renderer.peaking = v }
         .onChange(of: zebraLevel) { _, v in renderer.zebraLevel = Float(v) }
         .onChange(of: peakColor) { _, v in renderer.peakColor = Self.peakCI(v) }
-        .onChange(of: cam.previewSharpen) { _, v in renderer.sharpen = v }
+        // v0.40.2: penajaman zoom hanya untuk rekaman (preview tidak ditajamkan - lebih ringan)
         .onChange(of: faceTracker.cropRect) { _, r in cam.faceTrackerCrop = cam.faceTrack ? r : nil }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
         .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
@@ -1868,6 +1871,7 @@ private struct AssistPanel: View {
     let close: () -> Void
     @AppStorage("videoFullScreen") private var videoFull = true
     @AppStorage("videoFill") private var videoFill = true
+    @AppStorage("previewLUT") private var previewLUT = true
 
     var body: some View {
         NavigationStack {
@@ -1911,7 +1915,8 @@ private struct AssistPanel: View {
                         if videoFull {
                             Toggle("Isi layar (tanpa bar hitam, tepi kiri-kanan terpotong di layar saja)", isOn: $videoFill)
                         }
-                        Toggle("Pindah ke tele saat zoom >= \(Int(CameraManager.teleNative))x", isOn: $cam.videoTelePriority)
+                        Toggle("Tetap tele saat zoom >= \(Int(CameraManager.teleNative))x (walau redup)", isOn: $cam.videoTelePriority)
+                        Toggle("LUT di preview (mati = lebih ringan)", isOn: $previewLUT)
                         Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
                         Picker("Garis bingkai", selection: $cam.frameGuide) {
                             ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
