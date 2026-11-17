@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var pipDragStart: CGPoint?
     @AppStorage("videoFullScreen") private var videoFull = true
     private var videoFullActive: Bool { videoFull && cam.shootMode == .video }
+    /// v0.40: jendela bidik video mengisi seluruh layar (tanpa bar hitam atas-bawah); sisi kiri-kanan rekaman 16:9
+    /// tidak terlihat di preview (layar 19,5:9 lebih ramping dari video)
+    @AppStorage("videoFill") private var videoFill = true
+    private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
     @State private var lightSavedBrightness: CGFloat = 0.5
     @State private var proControl: ProControl = .ev
     @State private var histogram: [Float] = []
@@ -111,6 +115,10 @@ struct ContentView: View {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
             r.navigator = zoomNav
+            let cq = cam
+            VideoAIQueue.shared.cameraBusy = { cq.isRecording || cq.isCapturing || cq.pendingJobs > 0 || cq.countdown > 0 }
+            VideoAIQueue.shared.onRunningChange = { cq.refreshIdleTimer() }
+            VideoAIQueue.shared.start()
             zoomNav.enabled = navEnabled
             let cm = comp
             level.onRoll = { [weak cm] v in cm?.roll = v }
@@ -834,7 +842,7 @@ struct ContentView: View {
     private var upscaleChip: some View {
         Menu {
             Button { cam.aiAfterRecord.toggle() } label: {
-                check("AI setelah rekam (otomatis buka)", cam.aiAfterRecord)
+                check("AI setelah rekam (masuk antrean)", cam.aiAfterRecord)
             }
             Button { showUpscale = true } label: { Label("Buka AI Upscale...", systemImage: "sparkles") }
             Text("AI terlalu berat untuk real-time; diproses setelah rekam (~1-2 s/frame)")
@@ -1004,7 +1012,7 @@ struct ContentView: View {
         }, onVolumeEvent: { isPrimary, phase in
             Log.camera.notice("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
         }, fps: cam.thermal >= 2 ? 20 : 30)      // v0.37: saat panas preview 20 fps juga ketika merekam (file video tidak terpengaruh)
-            .aspectRatio(cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0, contentMode: .fit)
+            .modifier(PreviewAspect(ratio: videoFillActive ? nil : (cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0)))
             .clipped()
             .overlay { ratioMask }
             .overlay { frameGuideOverlay }
@@ -1506,7 +1514,13 @@ struct ContentView: View {
         focusPoint = loc
         focusTick += 1
         let tick = focusTick
-        cam.focus(atViewPoint: CGPoint(x: loc.x / size.width, y: loc.y / size.height), lock: lock)
+        var p = CGPoint(x: loc.x / size.width, y: loc.y / size.height)
+        if videoFillActive {
+            // v0.40: preview isi layar = gambar 9:16 dipotong; titik layar -> titik gambar
+            let va = size.width / size.height, ia: CGFloat = 9.0 / 16.0
+            if va < ia { p.x = 0.5 + (p.x - 0.5) * va / ia } else { p.y = 0.5 + (p.y - 0.5) * ia / va }
+        }
+        cam.focus(atViewPoint: p, lock: lock)
         DispatchQueue.main.asyncAfter(deadline: .now() + (lock ? 2.5 : 1.2)) {
             if focusTick == tick { focusPoint = nil }
         }
@@ -1665,6 +1679,7 @@ struct ContentView: View {
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            VideoAIQueueLine(q: VideoAIQueue.shared)      // v0.40
         }
     }
 
@@ -1845,6 +1860,7 @@ private struct AssistPanel: View {
     @Binding var showHistogram: Bool
     let close: () -> Void
     @AppStorage("videoFullScreen") private var videoFull = true
+    @AppStorage("videoFill") private var videoFill = true
 
     var body: some View {
         NavigationStack {
@@ -1885,6 +1901,9 @@ private struct AssistPanel: View {
                 } else {
                     Section {
                         Toggle("Jendela bidik layar penuh", isOn: $videoFull)
+                        if videoFull {
+                            Toggle("Isi layar (tanpa bar hitam, tepi kiri-kanan terpotong di layar saja)", isOn: $videoFill)
+                        }
                         Toggle("Face Tracking Digital", isOn: $cam.faceTrack)
                         Picker("Garis bingkai", selection: $cam.frameGuide) {
                             ForEach(FrameGuide.allCases) { Text($0.rawValue).tag($0) }
@@ -1932,5 +1951,14 @@ private struct AssistPanel: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+}
+
+
+/// v0.40: rasio preview; nil = mengisi ruang yang ada (video isi layar)
+private struct PreviewAspect: ViewModifier {
+    let ratio: CGFloat?
+    func body(content: Content) -> some View {
+        if let ratio { content.aspectRatio(ratio, contentMode: .fit) } else { content }
     }
 }

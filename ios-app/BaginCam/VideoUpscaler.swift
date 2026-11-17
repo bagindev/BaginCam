@@ -506,19 +506,14 @@ struct VideoUpscaleView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let j = job {
-                    Section {
-                        Text(j.inputName).font(.caption).foregroundStyle(.secondary)
-                        if running {
-                            Text("Sedang diproses...").font(.caption)
-                        } else {
-                            row("Selesai", "\(j.done)/\(j.frames) frame (\(j.frames > 0 ? j.done * 100 / j.frames : 0) %)")
-                            Button { start(j) } label: { Label("Lanjutkan", systemImage: "play.fill") }
-                            Button("Buang pekerjaan ini", role: .destructive) { j.finish(); job = nil; tick += 1 }
-                        }
-                    } header: { Text("Belum selesai") } footer: {
-                        Text("Proses dijeda bila app ditinggal / layar dikunci. Hasil yang sudah jadi tersimpan, lanjutkan kapan saja.")
+                // v0.40: semua AI video lewat antrean di latar (VideoAIQueue)
+                Section {
+                    VideoAIQueueLine(q: VideoAIQueue.shared)
+                    if VideoAIQueue.shared.count > 0 && !VideoAIQueue.shared.running {
+                        Button("Kosongkan antrean", role: .destructive) { VideoAIQueue.shared.clearAll(); tick += 1 }
                     }
+                } header: { Text("Antrean AI video") } footer: {
+                    Text("Video diproses satu per satu di latar selagi app terbuka. Ditahan otomatis saat merekam / memotret, HP panas, atau app ditinggal - lanjut sendiri sesudahnya.")
                 }
 
                 Section {
@@ -631,7 +626,6 @@ struct VideoUpscaleView: View {
             opt = UpscaleOptions.load(model: cam.srModel, saveTo: cam.videoSaveTo)
             cam.stop()                      // kamera berhenti: GPU / Neural Engine untuk AI
             job = AIJob.load()
-            if job == nil { AIJob.clear() }
             if let initial { choose(initial) }
             cleanBroken()
         }
@@ -690,16 +684,11 @@ struct VideoUpscaleView: View {
 
     private func startNew() {
         guard let u = input else { return }
-        do {
-            let del = initial.map { $0.resolvingSymlinksInPath().path == u.resolvingSymlinksInPath().path } == true
-                && cam.videoSaveTo == .photos
-            let j = try AIJob.create(input: u, options: opt, frames: info?.frames ?? 0, deleteInput: del)
-            job = j
-            input = nil; info = nil
-            start(j)
-        } catch {
-            message = "Gagal menyiapkan: \(error.localizedDescription)"
-        }
+        // v0.40: masuk antrean (video dari galeri = salinan sementara -> dipindah; video di Files app -> disalin)
+        let tmp = u.resolvingSymlinksInPath().path.hasPrefix(FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path)
+        VideoAIQueue.shared.enqueue(u, options: opt, move: tmp)
+        input = nil; info = nil
+        message = "Masuk antrean AI video. Boleh tutup layar ini dan lanjut memotret."
     }
 
     private func start(_ j: AIJob) {

@@ -2312,9 +2312,11 @@ final class CameraManager: NSObject, ObservableObject {
         let summary = String(format: "%02d:%02d", mins, secs) + (dropped > 0 ? " · \(dropped) frame hilang" : "")
         // v0.12.1: "AI setelah rekam" -> file asli disimpan dulu untuk AI Upscale (dihapus setelah layar AI ditutup)
         let keepForAI = aiAfterRecord && seconds > 0.3
+        // v0.40: langsung masuk antrean AI video (dulu membuka layar AI yang mematikan kamera)
+        let aiOpt = UpscaleOptions.load(model: srModel, saveTo: to)
         guard to != .files else {
             setStatus("Video tersimpan di Files: \(url.lastPathComponent) (\(summary))")
-            if keepForAI { DispatchQueue.main.async { self.pendingUpscale = url } }
+            if keepForAI { DispatchQueue.main.async { VideoAIQueue.shared.enqueue(url, options: aiOpt, move: false) } }
             return
         }
         PHPhotoLibrary.shared().performChanges({
@@ -2323,7 +2325,7 @@ final class CameraManager: NSObject, ObservableObject {
             opt.shouldMoveFile = to == .photos && !keepForAI
             req.addResource(with: .video, fileURL: url, options: opt)
         }) { ok, err in
-            if keepForAI { DispatchQueue.main.async { self.pendingUpscale = url } }
+            if keepForAI { DispatchQueue.main.async { VideoAIQueue.shared.enqueue(url, options: aiOpt, move: to == .photos) } }
             if ok {
                 self.setStatus("Video tersimpan (\(to.rawValue)): \(summary)")
             } else {
@@ -2970,9 +2972,14 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// v0.36.1: kunci layar otomatis iOS dimatikan selama merekam / memproses. Sebelumnya rekaman terhenti sendiri
     /// begitu layar terkunci (16 Nov: video berhenti di 61 s tanpa disentuh).
+    /// v0.40: dipanggil antrean AI video saat mulai / berhenti
+    func refreshIdleTimer() { updateIdleTimer() }
+
     private func updateIdleTimer() {
         DispatchQueue.main.async {
-            let on = self.isRecording || self.isCapturing || self.pendingJobs > 0
+            // v0.40: kamera mulai sibuk -> antrean AI video ditahan saat itu juga
+            VideoAIQueue.shared.poke()
+            let on = self.isRecording || self.isCapturing || self.pendingJobs > 0 || VideoAIQueue.shared.running
             guard UIApplication.shared.isIdleTimerDisabled != on else { return }
             UIApplication.shared.isIdleTimerDisabled = on
             Log.camera.notice("Layar tetap nyala: \(on, privacy: .public) (rekam \(self.isRecording, privacy: .public), jepret \(self.isCapturing, privacy: .public), antre \(self.pendingJobs, privacy: .public))")
