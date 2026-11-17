@@ -31,6 +31,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     var onHistogram: (([Float]) -> Void)?
     /// v0.13: frame ukuran layar (sebelum LUT) ~4x/detik untuk AI Komposisi
     var onAnalysis: ((CIImage) -> Void)?
+    /// v0.39: peta zoom - gambar acuan diambil dari frame yang tampil
+    weak var navigator: ZoomNavigator?
 
     private var frameCounter = 0
     private weak var lastDrawn: CIImage?       // v0.15: frame sama -> tidak dirender ulang (hemat GPU/panas)
@@ -97,6 +99,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             sharpenFilter.radius = 1.6
             if let out = sharpenFilter.outputImage?.cropped(to: extent) { image = out }
         }
+
+        if let nav = navigator, nav.wantsRef { nav.offer(image, context: ciContext) }
 
         if peaking, let l = luma {
             let edges = CIFilter.edges()
@@ -253,8 +257,19 @@ struct GridOverlay: View {
 }
 
 /// Waterpass: kemiringan HP (roll) dari CoreMotion.
+/// v0.39: kemiringan dipisah dari LevelMonitor. Dulu `roll` diterbitkan 20x/detik oleh LevelMonitor yang dipegang
+/// ContentView -> SELURUH layar dihitung ulang 20x/detik di main thread, tempat preview Metal juga digambar
+/// (preview & zoom tersendat, HP lebih panas). Sekarang hanya garis waterpass yang mengamati nilai ini.
+final class RollState: ObservableObject {
+    @Published var roll: Double = 0
+}
+
 final class LevelMonitor: ObservableObject {
-    @Published private(set) var roll: Double = 0      // derajat, 0 = datar (potret / lanskap)
+    let rollState = RollState()
+    /// derajat, 0 = datar (potret / lanskap)
+    var roll: Double { rollState.roll }
+    /// dipanggil tiap pembaruan gerak (main) - AI Komposisi
+    var onRoll: ((Double) -> Void)?
     @Published private(set) var flat = false          // HP rebah (menghadap atas/bawah)
     /// HP diam (tripod / disandarkan) > ~1 detik: putaran gyro sangat kecil (untuk mode MALAM)
     @Published private(set) var steady = false
@@ -294,7 +309,8 @@ final class LevelMonitor: ObservableObject {
             }
             // pegang lanskap: ukur terhadap 90 derajat terdekat
             if a > 45 && a <= 135 { a -= 90 } else if a < -45 && a >= -135 { a += 90 } else if a > 135 { a -= 180 } else if a < -135 { a += 180 }
-            self.roll = a
+            if abs(a - self.rollState.roll) >= 0.2 { self.rollState.roll = a }
+            self.onRoll?(a)
         }
     }
 
@@ -304,8 +320,13 @@ final class LevelMonitor: ObservableObject {
 /// Garis waterpass di tengah preview (kuning bila datar +-1 derajat).
 struct LevelOverlay: View {
     @ObservedObject var level: LevelMonitor
+    @ObservedObject var rs: RollState
+    init(level: LevelMonitor) {
+        self.level = level
+        self.rs = level.rollState
+    }
     var body: some View {
-        let ok = abs(level.roll) < 1
+        let ok = abs(rs.roll) < 1
         GeometryReader { g in
             ZStack {
                 Rectangle().fill(Color.white.opacity(0.5)).frame(width: 40, height: 1)
@@ -314,14 +335,14 @@ struct LevelOverlay: View {
                     .position(x: g.size.width / 2 + 70, y: g.size.height / 2)
                 Rectangle().fill(ok ? Color.yellow : Color.white)
                     .frame(width: 100, height: ok ? 2 : 1.5)
-                    .rotationEffect(.degrees(-level.roll))
+                    .rotationEffect(.degrees(-rs.roll))
                     .position(x: g.size.width / 2, y: g.size.height / 2)
                 if !ok {
-                    Text(String(format: "%.0f°", level.roll)).font(.caption2.monospacedDigit())
+                    Text(String(format: "%.0f°", rs.roll)).font(.caption2.monospacedDigit())
                         .foregroundStyle(.white).position(x: g.size.width / 2, y: g.size.height / 2 + 14)
                 }
             }
-            .opacity(level.flat || abs(level.roll) > 30 ? 0 : 1)
+            .opacity(level.flat || abs(rs.roll) > 30 ? 0 : 1)
         }
         .allowsHitTesting(false)
     }

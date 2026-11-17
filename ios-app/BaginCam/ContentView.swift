@@ -29,11 +29,17 @@ struct ContentView: View {
     @State private var showGrid = false
     @State private var showLevel = true
     @StateObject private var level = LevelMonitor()
+    /// v0.39: @State (bukan @StateObject) supaya kotak peta yang bergerak 30x/detik tidak menggambar ulang layar
+    @State private var zoomNav = ZoomNavigator()
     @StateObject private var comp = CompositionAI()
     @StateObject private var gimbalGuide = GimbalGuide()
     @StateObject private var faceTracker = FaceTracker()
     @State private var touch = TouchClock()
     @State private var pinchBase: Double?
+    /// v0.39: roda zoom ala kamera bawaan (tahan tombol zoom lalu geser)
+    @State private var dialActive = false
+    @State private var dialStart = 1.0
+    @State private var dialToken = 0
     @State private var showAssist = false
     @State private var showDrawer = false
     /// v0.28 (UI B): saklar PRO = angka eksposur + histogram + alat bantu di layar
@@ -104,6 +110,10 @@ struct ContentView: View {
         .onAppear {
             let r = renderer
             cam.onFrame = { image in r.push(image) }
+            r.navigator = zoomNav
+            zoomNav.enabled = navEnabled
+            let cm = comp
+            level.onRoll = { [weak cm] v in cm?.roll = v }
             HardwareInput.shared.handler = { a, src in handleHardware(a, src) }   // v0.21: gimbal / remote
             HardwareInput.shared.onControllerConnect = { vendor, cat in
                 Log.camera.notice("Auto-gimbal: controller tersambung (\(vendor, privacy: .public), \(cat, privacy: .public)), gimbalAuto=\(cam.gimbalAuto, privacy: .public)")
@@ -136,6 +146,8 @@ struct ContentView: View {
         }
         .onChange(of: luts.filter) { _, newFilter in renderer.lutFilter = newFilter; cam.captureLUT = luts.current }
         .onChange(of: cam.previewExtraZoom) { _, z in renderer.zoom = z }
+        .onChange(of: cam.totalZoom) { _, z in zoomNav.setZoom(z, fovTan1x: cam.fovTan1x) }
+        .onChange(of: navEnabled) { _, v in zoomNav.enabled = v }
         .onChange(of: cam.previewFrozen) { _, v in renderer.frozen = v }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
@@ -432,7 +444,6 @@ struct ContentView: View {
                 .onChange(of: cam.shootMode) { _, _ in update() }
                 .onChange(of: cam.aiLensLock) { _, _ in update() }
                 .onChange(of: cam.totalZoom) { _, _ in comp.maxZoom = maxZoom() }
-                .onChange(of: level.roll) { _, v in comp.roll = v }
         }
     }
 
@@ -1010,6 +1021,11 @@ struct ContentView: View {
             }
             .overlay { if showGrid { GridOverlay().allowsHitTesting(false) } }
             .overlay { if showLevel { LevelOverlay(level: level) } }
+            .overlay(alignment: .topTrailing) {
+                ZoomNavigatorView(nav: zoomNav)
+                    .padding(.top, (cam.shootMode == .video ? 72 : 40) + (showHistogram && !histogram.isEmpty ? 64 : 0)
+                             + (videoFullActive && proOn ? 46 : 0)).padding(8)
+            }
             .overlay { countdownLayer }
             .overlay { focusLayer }
             .overlay { if compActive && !cam.isCapturing { CompositionOverlay(comp: comp) } }
@@ -1235,13 +1251,16 @@ struct ContentView: View {
     }
     private var displayZoom: Double { Double(cam.totalZoom) }
 
-    private func setDisplayZoom(_ z: Double) { cam.setTotalZoom(CGFloat(z)) }
+    private func setDisplayZoom(_ z: Double, immediate: Bool = false) { cam.setTotalZoom(CGFloat(z), immediate: immediate) }
+
+    /// v0.39: peta zoom - kamera belakang, bukan DUAL
+    private var navEnabled: Bool { showsZoom && !isFront && cam.videoKind != .dual }
 
     /// slider 0..1 -> zoom min..max skala logaritmik
     private var zoomBinding: Binding<Double> {
         Binding(
             get: { log(displayZoom / minZoom) / log(max(maxZoom / minZoom, 1.01)) },
-            set: { t in setDisplayZoom(minZoom * pow(max(maxZoom / minZoom, 1.01), t)) })
+            set: { t in setDisplayZoom(minZoom * pow(max(maxZoom / minZoom, 1.01), t), immediate: true) })
     }
 
     private var zoomPresets: [Double] {
@@ -1278,7 +1297,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         ForEach(zoomPresets, id: \.self) { z in
                             let on = abs(displayZoom - z) < 0.05
-                            Button { setDisplayZoom(z) } label: {
+                            Button { if !dialActive { setDisplayZoom(z) } } label: {
                                 Text(zoomLabel(z)).fixedSize()
                                     .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
                                     .font(.caption.bold())
@@ -1292,6 +1311,35 @@ struct ContentView: View {
                     .padding(.vertical, 1)
                 }
                 .environment(\.colorScheme, .dark)
+                .opacity(dialActive ? 0 : 1)
+                .overlay {
+                    if dialActive {
+                        ZoomDial(zoom: displayZoom, minZ: minZoom, maxZ: maxZoom, marks: zoomPresets)
+                            .transition(.opacity)
+                    }
+                }
+                // v0.39: tahan tombol zoom 0,3 s lalu geser kiri/kanan = roda zoom (FOTO & VIDEO), seperti kamera bawaan
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.3)
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onChanged { v in
+                            guard case .second(true, let drag) = v, !cam.isCapturing else { return }
+                            if !dialActive {
+                                dialStart = displayZoom
+                                dialToken += 1
+                                withAnimation(.easeOut(duration: 0.15)) { dialActive = true }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            let dx = Double(drag?.translation.width ?? 0)
+                            setDisplayZoom(min(maxZoom, max(minZoom, dialStart * pow(2, -dx / ZoomDial.ptsPerStop))), immediate: true)
+                        }
+                        .onEnded { _ in
+                            dialToken += 1
+                            let t = dialToken
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                if dialToken == t { withAnimation(.easeIn(duration: 0.2)) { dialActive = false } }
+                            }
+                        })
                 if cam.videoKind != .dual && (cam.autoLensAvailable || cam.shootMode != .video) {
                     zoomMenu
                 } else {
@@ -1299,8 +1347,8 @@ struct ContentView: View {
                         .font(.callout.monospacedDigit().bold()).foregroundStyle(.yellow)
                 }
             }
-            // v0.38.4: VIDEO selalu punya slider zoom (dulu hanya saat lapisan PRO nyala)
-            if proOn || (cam.shootMode == .video && cam.videoKind != .dual) { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
+            // v0.39: slider tetap di lapisan PRO; di luar itu roda zoom (tahan tombol zoom lalu geser)
+            if proOn { Slider(value: zoomBinding, in: 0...1).tint(.yellow) }
             if cam.videoKind == .dual { dualLensRow }
         }
     }
@@ -1430,7 +1478,7 @@ struct ContentView: View {
                         .onChanged { v in
                             guard showsZoom, !cam.isCapturing else { return }
                             if pinchBase == nil { pinchBase = displayZoom }
-                            setDisplayZoom(min(maxZoom, max(minZoom, (pinchBase ?? displayZoom) * Double(v.magnification))))
+                            setDisplayZoom(min(maxZoom, max(minZoom, (pinchBase ?? displayZoom) * Double(v.magnification))), immediate: true)
                         }
                         .onEnded { _ in pinchBase = nil })
                 if let p = focusPoint {

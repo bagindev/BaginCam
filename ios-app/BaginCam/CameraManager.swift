@@ -1126,8 +1126,13 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// v0.39: tan(setengah sudut) lebar preview pada zoom layar 1x - untuk peta zoom (main)
+    private(set) var fovTan1x: Double = 0.42
+
     /// Zoom total (1x = lensa utama). Panggil dari main thread.
-    func setTotalZoom(_ z: CGFloat) {
+    /// `immediate`: cubit / slider - langsung mengikuti jari. v0.39: dulu cubit di VIDEO juga lewat ramp "Zoom halus"
+    /// (Sedang = 1,6 stop/detik) -> zoom tertinggal ~2,4 s di belakang jari untuk 1x -> 15x, terasa lag.
+    func setTotalZoom(_ z: CGFloat, immediate: Bool = false) {
         if videoKind == .dual {
             let zz = min(max(availableLenses.contains(.ultraWide) ? 0.5 : 1, z), 15)
             totalZoom = zz
@@ -1149,10 +1154,21 @@ final class CameraManager: NSObject, ObservableObject {
         // v0.12: video menempel ke titik native (tanpa crop digital) bila dekat (<3 %)
         if video, let p = nativeZoomPoints.first(where: { abs($0 - zz) / $0 < 0.03 }) { zz = p }
         totalZoom = zz
-        let rate = video ? smoothZoom.rate : 0
+        let rate = video && !immediate ? smoothZoom.rate : 0
         sessionQueue.async {
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { return }
             let base = self.isVirtual ? self.wideBase : (self.aiLockNative > 0 ? 1 / self.aiLockNative : 1)
+            do {
+                let dims = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+                let r = Double(min(dims.width, dims.height)) / Double(max(max(dims.width, dims.height), 1))
+                let t = tan(Double(d.activeFormat.videoFieldOfView) * .pi / 360) * r / Double(max(base, 0.01))
+                DispatchQueue.main.async {
+                    if abs(t - self.fovTan1x) > 0.01 {
+                        Log.camera.notice("Peta zoom: sudut format \(d.activeFormat.videoFieldOfView, privacy: .public) derajat, tan lebar 1x \(t, format: .fixed(precision: 3), privacy: .public)")
+                    }
+                    self.fovTan1x = t
+                }
+            }
             let want = zz * base
             let applied = min(max(want, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             if self.inVideo && rate > 0 {
