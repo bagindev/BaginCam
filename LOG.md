@@ -2104,3 +2104,26 @@ Perubahan v0.38.3 build 91:
 - POTRET yang di-zoom: tanpa AI super-res (Lanczos), dan 12MP bila detail asli < 3000 px.
 BELUM DIUJI DI HP.
 Build: run 44046027983 sukses. IPA: `data/ipa-v0.38.3/BaginCam-unsigned.ipa`. IPA v0.38.2 dihapus.
+
+## 2026-11-17 - Cek zoom depan FOTO (build 90) + cermin selfie + zoom video -> v0.38.4 build 92, v0.38.5 build 93
+
+Permintaan: saklar cermin selfie + "cek"; lalu: jendela bidik video lebih lebar? slider zoom video? 25x video
+masih bagus / bisa 40x? Ditarik: log + IMG_7379-7381 (masih build 90). Pembanding: `data/output/zoom_depan_foto_1117.jpg`.
+Temuan (FOTO, kamera depan, ISO x t 33-43):
+- 1x HDR+ 15 frame baik. 1.3x: drizzle 1550x1162 superpx -> 6200x4648 (29MP) lalu di-crop - tajam, lebih baik dari 1x.
+- 2x GAGAL: dimulai di sisa memori 1882 MB selagi drizzle 1.3x diproses; 14 dari 15 frame RAW ditolak iOS
+  (AVError -11800 / OSStatus -12686), `HDR+ batal: frame 1` -> foto hilang.
+- 3x: drizzle 2688x2016 + AI Detail, ~28 s; buram dan terlalu terang (IMG_7381).
+v0.38.4 build 92 (run 44047360934):
+- `selfieMirror` (bawaan nyala = perilaku lama) di Pengaturan > Hasil foto "Cermin selfie": koneksi foto kamera
+  depan dicerminkan sesuai saklar, preview selalu cermin. Log `Cermin selfie: foto ..`.
+- Zoom depan maks 3x (preset 1 / 1.3 / 2), tanpa AI super-res di kamera depan.
+- Drizzle hanya bila crop >= 1.6x. Antrean menolak rana bila ada foto diproses dan sisa memori < 2000 MB.
+- HDR+ dengan 1 frame tetap disimpan (log `! HDR+: hanya 1 frame diterima`).
+v0.38.5 build 93 (run 44048062409):
+- VIDEO: slider zoom selalu tampil (dulu hanya saat lapisan PRO nyala); preset + 25x dan 40x; batas zoom video =
+  zoom maks yang benar-benar terekam di format aktif (`videoMaxZoom`, log `zoom maks terekam ..x`).
+Catatan zoom video: 25x = tele 5x + crop digital 5x (~800 px asli diperbesar ke 1920); 40x = crop 8x (~500 px) ->
+jauh lebih lembut, goyangan 1,6x lebih besar. Penajaman zoom digital otomatis sudah ada.
+Jendela bidik video: sudah layar penuh 9:16 selebar layar (bawaan) - maksud "lebih lebar" ditanyakan ke pengguna.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.38.5/BaginCam-unsigned.ipa`. IPA v0.38.3 dan v0.38.4 dihapus.
