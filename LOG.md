@@ -2203,3 +2203,23 @@ Permintaan: (1) matikan penajaman di preview (yang penting hasil), LUT preview b
 - Log baru tiap 10 s: `Preview: .. fps, CPU .. ms, GPU .. ms per frame, ukuran, aktif [LUT, histogram, ..], suhu` untuk
   mengukur beban preview sebenarnya (LUT nyala vs mati).
 BELUM DIUJI DI HP. Build: run 44055170825 sukses. IPA: `data/ipa-v0.40.2/BaginCam-unsigned.ipa`. IPA v0.40.1 dihapus.
+
+## 2026-11-17 - Cek foto luar ruang build 97 ("bayangan") -> v0.40.3 build 98
+
+Laporan: beberapa foto ada bayangan. Ditarik: IMG_7391-7400 + log. Pembanding: `data/output/bayangan_fusi_drizzle_1117.jpg`.
+Temuan:
+- 0.5x fusi 48MP (IMG_7392, 7397, 7398): halo gelap/terang di tepi gedung, kabel listrik dobel, motor berbayang.
+  Ultra Wide: RAW 4224x3024 tanpa koreksi distorsi vs foto 48MP Apple yang sudah dikoreksi -> tidak bisa
+  diselaraskan (skor 0,44-0,51, vision 383 / 711 px diabaikan). Langit mendung terang (lowA > 0,8) diganti piksel HDR+
+  yang meleset -> isi dobel.
+- 2x (IMG_7391, ISO x t 0,35 = terang): motor hijau tembus pandang berlapis. Drizzle tidak punya penolak gerakan
+  (bobot merge 0,85-0,55). Seharusnya crop 48MP tunggal: `nativeLong` dibaca dari format aktif konstituen (4032
+  setelah kamera virtual / VIDEO) -> `sensorCrop` salah -> "Crop penuh gelap" + drizzle.
+- Preview (log baru): CPU 0,2-2,4 ms, GPU 1,0-1,5 ms per frame dengan LUT - beban render kecil; fps preview 16-30
+  mengikuti kamera (cahaya), bukan LUT.
+Perubahan v0.40.3 build 98 (run 44064851196):
+- Fusi 48MP tidak dipakai di Ultra Wide (juga tidak mengganti format lensa ke 48MP).
+- Fusion48: pengganti area terang dengan HDR+ dikali (1 - m) - hanya di tempat HDR+ cocok dengan foto 48MP.
+- Drizzle dilewati bila bobot merge rata-rata < 0,75 (ada gerakan) -> merge biasa (log `Drizzle dilewati: ..`).
+- `nativeLong` = sisi foto terbesar dari semua format lensa -> 2x terang kembali ke crop 48MP tunggal.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.3/BaginCam-unsigned.ipa`. IPA v0.40.2 dihapus.
