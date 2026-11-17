@@ -2039,3 +2039,30 @@ Batas yang diketahui: potret kedalaman tetap 12MP tanpa HDR+; cara lama 1x (HDR+
 masih berbeda warna bila saklar kedalaman dimatikan; selfie tersimpan seperti cermin (sejak dulu).
 BELUM DIUJI DI HP: kamera TrueDepth depan, percantik di jalur zoom / kedalaman, antrean (memotret selagi proses).
 Build: run 44007913557 sukses. IPA: `data/ipa-v0.38.0/BaginCam-unsigned.ipa` (87,8 MB). IPA v0.37.0 dihapus.
+
+## 2026-11-17 - Cek build 88 + v0.38.1 build 89: zoom kamera depan, potret zoom lewat zoom Apple
+
+Laporan pengguna: "cek" + minta zoom untuk kamera depan. Ditarik: log + IMG_7366-7370.
+Pembanding: `data/output/potret_antrean_1117.jpg`.
+Temuan build 88:
+- Antrean jalan: 1x HDR+ (11:00:36) dan 2x HDR+ (11:00:47) dijepret selagi foto pertama diproses, lalu 2 potret
+  kedalaman; antrean sampai 3 foto, semua tersimpan (IMG_7367-7370).
+- Potret kedalaman + percantik jalan: `kedalaman f/4.7, percantik true, orientasi 6, 3024x4032`, 0,7-1,4 s.
+- Saklar kedalaman MATI sejak sesi 09:40 (dimatikan pengguna) -> selfie IMG_7366 lewat cara lama; jalur
+  TrueDepth kamera depan dan kedalaman otomatis saat app dibuka belum teruji. Saklar dinyalakan 11:01:07.
+- Foto 1x pertama butuh 62 s (percantik wajah sendiri 22 s), bersamaan dengan peringatan memori iOS (sisa 2259 MB),
+  burst kedua di memori, HP mengisi daya, suhu naik ke 2.
+- Potret 2x cara lama di cahaya redup (IMG_7368, ISO 800): crop Bayer 12MP diperbesar -> wajah seperti lilin dan
+  terlalu terang; potret kedalaman 2x pada cahaya sama (IMG_7369) tajam.
+- Log hilang 11:01:11-11:01:53 (dua jepretan kedalaman + selesainya foto 1x tidak tercatat, padahal fotonya ada).
+  Sebab: `Logger.info` hanya disimpan di memori dan dibuang iOS saat sibuk sebelum LogFile membacanya (tiap 15 s).
+Perubahan v0.38.1 build 89:
+- Zoom kamera depan: tombol zoom tampil juga di kamera depan (1x / 1.3x / 2x / 3x, cubit sampai 4x =
+  `CameraManager.frontMaxZoom`). 1x = sensor penuh, 1.3x ~ bingkai selfie kamera bawaan. Foto: HDR+ burst Bayer
+  + drizzle + crop (+ AI bila perlu), potret kedalaman: zoom Apple TrueDepth. Balik ke depan selalu mulai 1x.
+- POTRET yang di-zoom selalu lewat zoom Apple (`burstAppleZoomAI` dipaksa) + bokeh + percantik dari app.
+- Bug lama drizzle: crop dibagi `Int(crop)` -> 1,5x tidak di-crop sama sekali, 2,5x jadi 2x. Sekarang pecahan.
+- Antrean ditolak bila sisa memori < 1500 MB (dulu 1000).
+- Log: 131 panggilan `Log.*.info` -> `.notice` (disimpan ke disk); percantik wajah mencatat ukuran, waktu, memori.
+BELUM DIUJI DI HP: zoom depan (HDR+ dan TrueDepth), potret zoom lewat Apple, TrueDepth kamera depan.
+Build: run 44014891439 sukses. IPA: `data/ipa-v0.38.1/BaginCam-unsigned.ipa`. IPA v0.38.0 dihapus.
