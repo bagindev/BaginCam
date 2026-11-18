@@ -493,7 +493,8 @@ final class CameraManager: NSObject, ObservableObject {
         let now = CFAbsoluteTimeGetCurrent()
         runtimeErrors = runtimeErrors.filter { now - $0 < 60 } + [now]
         let depthOn = photoOutput.isDepthDataDeliveryEnabled
-        Log.camera.error("! Sesi kamera error: kode \(err?.code.rawValue ?? -1, privacy: .public) \(err?.localizedDescription ?? "-", privacy: .public), kamera \(self.device?.localizedName ?? "-", privacy: .public), kedalaman \(depthOn, privacy: .public), ke-\(self.runtimeErrors.count, privacy: .public) dalam 1 menit")
+        let under = (err?.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\($0.domain) \($0.code)" } ?? "-"
+        Log.camera.error("! Sesi kamera error: kode \(err?.code.rawValue ?? -1, privacy: .public) \(err?.localizedDescription ?? "-", privacy: .public) (dasar \(under, privacy: .public)), video \(self.inVideo, privacy: .public), kamera \(self.device?.localizedName ?? "-", privacy: .public), kedalaman \(depthOn, privacy: .public), ke-\(self.runtimeErrors.count, privacy: .public) dalam 1 menit")
         if depthOn && !depthFailed {
             depthFailed = true
             applyDepth()
@@ -1023,6 +1024,10 @@ final class CameraManager: NSObject, ObservableObject {
             currentInput = input
             device = d
             applyFocusRange(d)
+            // v0.41.6: di VIDEO format video dipasang DI TRANSAKSI YANG SAMA. Dulu kamera baru dipasang dulu dengan
+            // format bawaannya (commit), lalu format video di transaksi kedua -> 18 Nov 12:50 / 12:51 sesi error
+            // -11800 tiga kali beruntun saat depan -> belakang (preview beku + blur ~6 s).
+            if inVideo && dual == nil { applyVideoFormat(nested: true) }
             if let z = zoom, (try? d.lockForConfiguration()) != nil {
                 d.videoZoomFactor = min(max(z, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
                 d.unlockForConfiguration()
@@ -1109,7 +1114,6 @@ final class CameraManager: NSObject, ObservableObject {
             let iso = d.activePrimaryConstituent?.iso ?? 0
             Log.camera.notice("Lensa aktif kamera virtual: \(name, privacy: .public) (faktor zoom \(Double(d.videoZoomFactor), format: .fixed(precision: 1), privacy: .public), ISO \(iso, format: .fixed(precision: 0), privacy: .public))")
         }
-        if inVideo { applyVideoFormat() }
     }
 
     /// AI Zoom: kunci ke lensa fisik (Utama / Tele) atau Auto (nil). Panggil dari main thread.
@@ -1146,7 +1150,6 @@ final class CameraManager: NSObject, ObservableObject {
                 self.previewExtraZoom = max(1, (tz / native) / max(d.maxAvailableVideoZoomFactor, 1))
             }
             self.publishCapabilities(d, label: l.displayName, mode: .aiZoom)
-            if self.inVideo { self.applyVideoFormat() }
         }
     }
 
@@ -2086,7 +2089,9 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// sessionQueue: pasang format video sesuai pengaturan (dengan cadangan bila tidak tersedia)
-    private func applyVideoFormat() {
+    /// `nested`: dipanggil dari dalam konfigurasi sesi yang sedang terbuka (install) - tanpa begin/commit sendiri,
+    /// zoom diatur pemanggil
+    private func applyVideoFormat(nested: Bool = false) {
         guard inVideo, dual == nil, let d = device else { return }
         let s = videoSnap
         var fps = s.timelapse > 1 ? 30 : (s.fps == .auto ? 30 : s.fps.rawValue)
@@ -2123,7 +2128,7 @@ final class CameraManager: NSObject, ObservableObject {
             setStatus("Format video \(s.res.rawValue) \(needFps) fps \(s.color.short) tidak tersedia")
             return
         }
-        session.beginConfiguration()
+        if !nested { session.beginConfiguration() }
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String:
                                         color.tenBit ? Self.tenBitFmt : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
         if (try? d.lockForConfiguration()) != nil {
@@ -2136,8 +2141,10 @@ final class CameraManager: NSObject, ObservableObject {
             } else {
                 Log.camera.error("VIDEO: format tidak mendukung \(fps, privacy: .public) fps, pakai default")
             }
-            let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
-            d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+            if !nested {
+                let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
+                d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+            }
             d.unlockForConfiguration()
         }
         // v0.17: stabilisasi dengan cadangan (Action / Extended tidak ada di semua format & fps)
@@ -2152,7 +2159,7 @@ final class CameraManager: NSObject, ObservableObject {
                 }
             }
         }
-        session.commitConfiguration()
+        if !nested { session.commitConfiguration() }
         fpsApplied = fps
         applyAuto()
         updateNativePoints(d)

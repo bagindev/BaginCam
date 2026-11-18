@@ -340,7 +340,7 @@ struct ControlDrawer: View {
     private func menuTile<C: View>(_ value: String, _ title: String, on: Bool = false,
                                    @ViewBuilder items: () -> C) -> some View {
         let content = items()
-        return Menu { content } label: { face(value, title, on: on, symbol: false) }
+        return SoftMenu { content } label: { face(value, title, on: on, symbol: false) }   // v0.41.6: bukan UIMenu
     }
 
     private func pick(_ title: String, _ on: Bool, _ action: @escaping () -> Void) -> some View {

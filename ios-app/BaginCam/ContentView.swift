@@ -251,8 +251,8 @@ struct ContentView: View {
     private var zoomText: String { cam.zoomMethod.rawValue + (cam.zoomAIEnabled ? " + AI" : "") }
 
     private var photoPill: some View {
-        Menu {
-            Section("Proses foto") {
+        SoftMenu {
+            SoftGroup("Proses foto") {
                 ForEach(CameraManager.PhotoProcess.allCases) { p in
                     Button { cam.setPhotoProcess(p) } label: { check(p.rawValue, cam.photoProcess == p, detail: p.detail) }
                 }
@@ -270,7 +270,7 @@ struct ContentView: View {
     }
 
     private var nightPill: some View {
-        Menu {
+        SoftMenu {
             Text("Jumlah frame dan lama eksposur dipilih otomatis menurut cahaya dan goyangan HP. Di tripod / gimbal, eksposur lebih panjang.")
             Button("Pengaturan lain...") { showSettings = true }
         } label: {
@@ -280,12 +280,12 @@ struct ContentView: View {
 
     /// cara zoom + AI (dipakai bila zoom melewati lensa optik)
     @ViewBuilder private var zoomMenuItems: some View {
-        Section("Cara zoom (melewati lensa optik)") {
+        SoftGroup("Cara zoom (melewati lensa optik)") {
             ForEach(CameraManager.ZoomMethod.allCases) { z in
                 Button { cam.zoomMethod = z } label: { check(z.rawValue, cam.zoomMethod == z, detail: z.detail) }
             }
         }
-        Section("AI setelah zoom") {
+        SoftGroup("AI setelah zoom") {
             Toggle("AI", isOn: $cam.zoomAIEnabled)
             if cam.zoomAIEnabled {
                 ForEach(SRModel.allCases) { m in
@@ -527,7 +527,7 @@ struct ContentView: View {
     }
 
     private var compChip: some View {
-        Menu {
+        SoftMenu {
             Button { cam.compAI.toggle() } label: { check("AI Komposisi (tombol Susun ulang)", cam.compAI) }
             Button { cam.compCrop.toggle() } label: { check("Simpan versi crop setelah jepret", cam.compCrop) }
             if cam.compAI {
@@ -567,7 +567,7 @@ struct ContentView: View {
     @ViewBuilder private var processChip: some View {
         switch cam.shootMode {
         case .photo:
-            Menu {
+            SoftMenu {
                 ForEach(CameraManager.PhotoProcess.allCases) { p in
                     Button { cam.setPhotoProcess(p) } label: { check(p.rawValue, cam.photoProcess == p, detail: p.detail) }
                 }
@@ -588,7 +588,7 @@ struct ContentView: View {
             case .dual: chip("DUAL", icon: "pip.fill", on: true)
             }
         case .pro:
-            Menu {
+            SoftMenu {
                 ForEach(CameraManager.ProFormat.allCases) { f in
                     Button { cam.setProFormat(f) } label: { check(f.rawValue, cam.proFormat == f, detail: f.detail) }
                 }
@@ -599,7 +599,7 @@ struct ContentView: View {
     }
 
     private var lutChip: some View {
-        Menu {
+        SoftMenu {
             Button { luts.select(nil) } label: { check("Tanpa LUT", luts.selected == nil) }
             ForEach(luts.items) { item in
                 Button { luts.select(item) } label: { check(item.name, luts.selected?.id == item.id) }
@@ -618,8 +618,8 @@ struct ContentView: View {
 
     /// v0.14: LUT + white balance dalam satu menu "Warna"
     private var colorGroupChip: some View {
-        Menu {
-            Menu("LUT: \(luts.selected.map { shortLUT($0.name) } ?? "Tanpa")") {
+        SoftMenu {
+            SoftSection("LUT: \(luts.selected.map { shortLUT($0.name) } ?? "Tanpa")") {
                 Button { luts.select(nil) } label: { check("Tanpa LUT", luts.selected == nil) }
                 ForEach(luts.items) { item in
                     Button { luts.select(item) } label: { check(item.name, luts.selected?.id == item.id) }
@@ -633,14 +633,14 @@ struct ContentView: View {
                 Button("Import .cube...") { showImporter = true }
             }
             if cam.shootMode != .video {
-                Menu("Gaya warna: \(cam.colorStyle.rawValue)") {
+                SoftSection("Gaya warna: \(cam.colorStyle.rawValue)") {
                     ForEach(ColorStyle.allCases) { st in
                         Button { cam.colorStyle = st } label: { check(st.rawValue, cam.colorStyle == st, detail: st.detail) }
                     }
                     Text("Untuk HDR+, MALAM, Super Res, AI Zoom (bukan proses Apple)")
                 }
             }
-            Menu("White balance: \(wbText)") {
+            SoftSection("White balance: \(wbText)") {
                 ForEach(CameraManager.WBPreset.allCases) { p in
                     Button { cam.setWBPreset(p) } label: {
                         check(p.rawValue + (p.kelvin.map { " \(Int($0))K" } ?? ""), !cam.manualWB && cam.wbPreset == p)
@@ -661,29 +661,29 @@ struct ContentView: View {
 
     /// v0.14: format + resolusi + rasio + preset Tuning dalam satu menu "Hasil"
     private var resultChip: some View {
-        Menu {
+        SoftMenu {
             if cam.mode == .hdrplus {
-                Menu("Format: \(cam.outputFormat.rawValue)") {
+                SoftSection("Format: \(cam.outputFormat.rawValue)") {
                     ForEach(PhotoFormat.allCases) { f in
                         Button { cam.outputFormat = f } label: { check(f.rawValue, cam.outputFormat == f) }
                     }
                 }
             }
             if SettingsSheet.showsResolution(cam) {
-                Menu("Resolusi: \(cam.outputMP.label)") {
+                SoftSection("Resolusi: \(cam.outputMP.label)") {
                     ForEach(OutputMP.available) { r in
                         Button { cam.outputMP = r } label: { check(r.label, cam.outputMP == r) }
                     }
                 }
             }
-            Menu("Rasio: \(cam.aspect.rawValue)") {
+            SoftSection("Rasio: \(cam.aspect.rawValue)") {
                 ForEach(AspectRatio.allCases) { a in
                     Button { cam.aspect = a } label: { check(a.rawValue, cam.aspect == a) }
                 }
                 Text("Hanya HEIF/JPEG; RAW tetap 4:3")
             }
             if cam.mode == .hdrplus || cam.mode == .aiZoom || cam.mode == .heif {
-                Menu("Tuning: \(tuningName)") {
+                SoftSection("Tuning: \(tuningName)") {
                     ForEach(PhotoTuning.presets.indices, id: \.self) { i in
                         let p = PhotoTuning.presets[i]
                         Button { cam.tuning = p.1 } label: { check(p.0, cam.tuning == p.1) }
@@ -711,7 +711,7 @@ struct ContentView: View {
     }
 
     private var wbChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(CameraManager.WBPreset.allCases) { p in
                 Button { cam.setWBPreset(p) } label: {
                     check(p.rawValue + (p.kelvin.map { " \(Int($0))K" } ?? ""), !cam.manualWB && cam.wbPreset == p)
@@ -735,16 +735,16 @@ struct ContentView: View {
     }
 
     private var formatChip: some View {
-        Menu {
+        SoftMenu {
             if cam.mode == .hdrplus {
-                Section("Format") {
+                SoftGroup("Format") {
                     ForEach(PhotoFormat.allCases) { f in
                         Button { cam.outputFormat = f } label: { check(f.rawValue, cam.outputFormat == f) }
                     }
                 }
             }
             if SettingsSheet.showsResolution(cam) {
-                Section("Resolusi") {
+                SoftGroup("Resolusi") {
                     ForEach(OutputMP.available) { r in
                         Button { cam.outputMP = r } label: { check(r.label, cam.outputMP == r) }
                     }
@@ -757,7 +757,7 @@ struct ContentView: View {
     }
 
     private var ratioChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(AspectRatio.allCases) { a in
                 Button { cam.aspect = a } label: { check(a.rawValue, cam.aspect == a) }
             }
@@ -768,7 +768,7 @@ struct ContentView: View {
     }
 
     private var flashChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(CameraManager.FlashSetting.allCases) { f in
                 Button { cam.flash = f } label: { check(f.rawValue, cam.flash == f) }
             }
@@ -792,13 +792,13 @@ struct ContentView: View {
 
     /// v0.12.4: satu menu Format = resolusi · fps · time-lapse · codec · warna · stabilisasi
     private var videoFormatChip: some View {
-        Menu {
-            Menu("Resolusi: \(cam.videoRes.rawValue)") {
+        SoftMenu {
+            SoftSection("Resolusi: \(cam.videoRes.rawValue)") {
                 ForEach(VideoRes.allCases) { r in
                     Button { cam.videoRes = r } label: { check(r.rawValue, cam.videoRes == r) }
                 }
             }
-            Menu("Frame rate: \(cam.timelapse > 1 ? "time-lapse" : fpsText)") {
+            SoftSection("Frame rate: \(cam.timelapse > 1 ? "time-lapse" : fpsText)") {
                 ForEach(VideoFps.allCases) { f in
                     Button { cam.videoFps = f; cam.timelapse = 1 } label: {
                         check(f == .auto ? "Auto (60 terang / 30 gelap)" : (f.isSlowMo ? "\(f.label) slow-mo" : "\(f.label) fps"),
@@ -806,32 +806,32 @@ struct ContentView: View {
                     }
                 }
                 if cam.videoFps.isSlowMo && cam.timelapse <= 1 {
-                    Section("Slow-mo diputar di") {
+                    SoftGroup("Slow-mo diputar di") {
                         ForEach([24, 30], id: \.self) { p in
                             Button { cam.slowPlayback = p } label: { check("\(p) fps (\(cam.videoFps.rawValue / p)x lebih lambat)", cam.slowPlayback == p) }
                         }
                     }
                 }
             }
-            Menu("Time-lapse: \(cam.timelapse > 1 ? "\(cam.timelapse)x" : "Mati")") {
+            SoftSection("Time-lapse: \(cam.timelapse > 1 ? "\(cam.timelapse)x" : "Mati")") {
                 Button { cam.timelapse = 1 } label: { check("Mati", cam.timelapse <= 1) }
                 ForEach([5, 10, 30, 60, 120], id: \.self) { k in
                     Button { cam.timelapse = k } label: { check("\(k)x (diputar 30 fps)", cam.timelapse == k) }
                 }
             }
-            Menu("Codec: \(cam.videoCodec.short)") {
+            SoftSection("Codec: \(cam.videoCodec.short)") {
                 ForEach(VideoCodec.allCases) { c in
                     Button { cam.videoCodec = c } label: { check(c.rawValue, cam.videoCodec == c) }
                 }
                 Text("ProRes 4K ~5-6 GB/menit")
             }
-            Menu("Warna: \(cam.videoColor.short)") {
+            SoftSection("Warna: \(cam.videoColor.short)") {
                 ForEach(VideoColor.allCases) { c in
                     Button { cam.videoColor = c } label: { check(c.rawValue, cam.videoColor == c) }
                 }
                 Text("Log: preview otomatis dikonversi ke Rec.709")
             }
-            Menu("Stabilisasi: \(cam.videoStab.rawValue)") {
+            SoftSection("Stabilisasi: \(cam.videoStab.rawValue)") {
                 ForEach(VideoStab.allCases) { st in
                     Button { cam.videoStab = st } label: { check(st.rawValue, cam.videoStab == st, detail: st.detail) }
                 }
@@ -874,7 +874,7 @@ struct ContentView: View {
 
     /// AI video: tidak bisa real-time -> "AI setelah rekam" (nyala/mati) + buka AI Upscale manual
     private var upscaleChip: some View {
-        Menu {
+        SoftMenu {
             Button { cam.aiAfterRecord.toggle() } label: {
                 check("AI setelah rekam (masuk antrean)", cam.aiAfterRecord)
             }
@@ -886,7 +886,7 @@ struct ContentView: View {
 
     /// kekuatan blur latar (POTRET & SINEMA)
     private var bokehChip: some View {
-        Menu {
+        SoftMenu {
             ForEach([(25.0, "Tipis"), (50.0, "Natural"), (75.0, "Kuat"), (100.0, "Maksimal")], id: \.0) { v, name in
                 Button { cam.bokehIntensity = v } label: { check("\(name) \(Int(v))%", abs(cam.bokehIntensity - v) < 2.5) }
             }
@@ -903,7 +903,7 @@ struct ContentView: View {
     /// percantik wajah (foto)
     /// v0.41: percantik video selfie
     private var videoBeautyChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(CameraManager.VideoBeautyLevel.allCases) { l in
                 Button { cam.videoBeauty = l } label: { check(l.rawValue, cam.videoBeauty == l) }
             }
@@ -914,7 +914,7 @@ struct ContentView: View {
     }
 
     private var beautyChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(CameraManager.BeautyLevel.allCases) { l in
                 Button { cam.beautyLevel = l } label: { check(l.rawValue, cam.beautyLevel == l) }
             }
@@ -926,7 +926,7 @@ struct ContentView: View {
 
     /// lampu layar untuk video kamera depan
     private var videoLightChip: some View {
-        Menu {
+        SoftMenu {
             ForEach(CameraManager.VideoLight.allCases) { l in
                 Button { cam.videoLight = l } label: { check(l.rawValue, cam.videoLight == l) }
             }
@@ -1213,13 +1213,13 @@ struct ContentView: View {
 
     /// cara zoom + AI (dipakai bila zoom melewati lensa optik)
     private var zoomChip: some View {
-        Menu {
-            Section("Cara zoom (melewati lensa optik)") {
+        SoftMenu {
+            SoftGroup("Cara zoom (melewati lensa optik)") {
                 ForEach(CameraManager.ZoomMethod.allCases) { z in
                     Button { cam.zoomMethod = z } label: { check(z.rawValue, cam.zoomMethod == z, detail: z.detail) }
                 }
             }
-            Section("AI setelah zoom") {
+            SoftGroup("AI setelah zoom") {
                 Toggle("AI", isOn: $cam.zoomAIEnabled)
                 if cam.zoomAIEnabled {
                     ForEach(SRModel.allCases) { m in
@@ -1426,9 +1426,9 @@ struct ContentView: View {
 
     /// kunci lensa + cara zoom / AI
     private var zoomMenu: some View {
-        Menu {
+        SoftMenu {
             if cam.autoLensAvailable {
-                Section("Lensa") {
+                SoftGroup("Lensa") {
                     ForEach(lockOptions, id: \.self) { l in
                         Button { cam.setAILensLock(l) } label: { check(lockLabel(l), cam.aiLensLock == l) }
                             .disabled(cam.isCapturing || cam.isRecording)
