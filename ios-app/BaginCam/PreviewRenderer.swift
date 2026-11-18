@@ -21,6 +21,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     private var rendering = false                 // dijaga lock
     private weak var layer: CAMetalLayer?         // dijaga lock
     private var lastRender = 0.0                  // renderQueue
+    private var failCount = 0, firstDrawn = false // renderQueue
     /// batas fps preview (panas kritis: 20)
     var fpsLimit = 30
 
@@ -61,9 +62,17 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         super.init()
     }
 
-    /// layer tujuan (main, dari PreviewMTKView); nil = tidak menggambar
-    func attach(_ l: CAMetalLayer?) {
+    /// layer tujuan (main, dari PreviewMTKView)
+    func attach(_ l: CAMetalLayer) {
         lock.lock(); layer = l; lock.unlock()
+        Log.camera.notice("Preview: layer dipasang \(Int(l.drawableSize.width), privacy: .public)x\(Int(l.drawableSize.height), privacy: .public)")
+    }
+
+    /// v0.41.5: lepas HANYA bila layer itu yang sedang dipakai. Build 104: SwiftUI membuat tampilan preview baru
+    /// (mis. app dibuka di VIDEO) lalu membongkar yang lama -> layer baru ikut dilepas -> preview hitam, tidak ada
+    /// satu pun log "Preview:" (screenshot 18 Nov 12:38).
+    func detach(_ l: CAMetalLayer) {
+        lock.lock(); if layer === l { layer = nil }; lock.unlock()
     }
 
     /// Dipanggil dari antrean video kamera. Frame baru langsung digambar di antrean preview.
@@ -103,7 +112,18 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     private func render(_ frame: CIImage, layer: CAMetalLayer) {
         let ds = layer.drawableSize
         guard ds.width > 8, ds.height > 8, let drawable = layer.nextDrawable(),
-              let commandBuffer = queue.makeCommandBuffer() else { lastDrawn = frame; return }
+              let commandBuffer = queue.makeCommandBuffer() else {
+            lastDrawn = frame
+            failCount += 1
+            if failCount == 1 || failCount % 300 == 0 {
+                Log.camera.error("! Preview: gagal menggambar (\(self.failCount, privacy: .public)x), ukuran \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public)")
+            }
+            return
+        }
+        if !firstDrawn {
+            firstDrawn = true
+            Log.camera.notice("Preview: frame pertama digambar \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public)")
+        }
         var image = frame
         let tDraw = CACurrentMediaTime()
 
@@ -298,7 +318,7 @@ struct MetalPreview: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: MTKView, coordinator: ()) {
-        (uiView as? PreviewMTKView)?.renderer?.attach(nil)
+        if let v = uiView as? PreviewMTKView, let l = v.layer as? CAMetalLayer { v.renderer?.detach(l) }
     }
 }
 
@@ -309,7 +329,20 @@ final class PreviewMTKView: MTKView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        renderer?.attach(window == nil ? nil : layer as? CAMetalLayer)
+        guard let l = layer as? CAMetalLayer else { return }
+        if window == nil { renderer?.detach(l) } else { ensureSize(); renderer?.attach(l) }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ensureSize()
+    }
+
+    /// MTKView di-pause: pastikan ukuran drawable mengikuti ukuran tampilan
+    private func ensureSize() {
+        guard let l = layer as? CAMetalLayer else { return }
+        let want = CGSize(width: bounds.width * contentScaleFactor, height: bounds.height * contentScaleFactor)
+        if want.width > 0, want.height > 0, l.drawableSize != want { l.drawableSize = want }
     }
 }
 

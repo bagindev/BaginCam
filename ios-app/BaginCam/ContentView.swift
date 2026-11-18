@@ -233,7 +233,9 @@ struct ContentView: View {
         case .video:
             HStack(spacing: 6) {
                 if cam.videoKind == .cinematic { bokehChip }
-                if cam.videoKind == .normal && isFront { videoBeautyChip }
+                // v0.41.5: chip percantik selalu ada di VIDEO biasa (redup di kamera belakang) - dulu muncul /
+                // hilang tiap ganti kamera sehingga chip format bergeser & tulisannya berubah (terlihat berkedip)
+                if cam.videoKind == .normal { videoBeautyChip.opacity(isFront ? 1 : 0.45) }
                 videoFormatChip
             }
         }
@@ -544,6 +546,7 @@ struct ContentView: View {
         }
         .font(.footnote.weight(.semibold))
         .lineLimit(1)
+        .minimumScaleFactor(0.8)
         // v0.41.2: lebih besar (dulu tinggi ~30 pt, meleset ke fokus sentuh di bawahnya)
         .padding(.horizontal, 12).padding(.vertical, 10)
         .frame(minWidth: 42, minHeight: 38)
@@ -904,7 +907,7 @@ struct ContentView: View {
             ForEach(CameraManager.VideoBeautyLevel.allCases) { l in
                 Button { cam.videoBeauty = l } label: { check(l.rawValue, cam.videoBeauty == l) }
             }
-            Text("Menghaluskan kulit di video kamera depan (langsung terlihat di layar). Hanya SDR - HLG / Log tidak")
+            Text("Menghaluskan kulit di video kamera depan (langsung terlihat di layar; kamera belakang tidak). Hanya SDR")
         } label: {
             chip(cam.videoBeauty.active ? cam.videoBeauty.rawValue : "", icon: "face.smiling", on: cam.videoBeauty.active)
         }

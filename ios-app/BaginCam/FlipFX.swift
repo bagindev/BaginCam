@@ -46,10 +46,17 @@ struct FlipFXOverlay: View {
                         switch shownStyle {
                         case .island: islandFX(e, isl)
                         case .ring: ringFX(e, isl)
-                        case .pulse: pulseFX(e, isl)
+                        case .pulse: pulseFX(e, isl, inward: !front)
                         case .orbit:
-                            orbitFX(e, isl)
-                            pulseFX(e - 0.62, isl)
+                            if front {
+                                orbitFX(e, isl)
+                                pulseFX(e - 0.62, isl)
+                            } else {
+                                // v0.41.5: ke kamera belakang = kebalikannya: denyut masuk dulu, lalu cahaya
+                                // berputar berlawanan arah
+                                pulseFX(e, isl, inward: true)
+                                orbitFX(e - 0.5, isl).scaleEffect(x: -1, y: 1)
+                            }
                         case .ringIsland:
                             islandFX(e, isl)
                             ringFX(e, isl)
@@ -189,16 +196,18 @@ struct FlipFXOverlay: View {
 
     // MARK: denyut cahaya di tepi pulau
 
-    @ViewBuilder private func pulseFX(_ e: Double, _ isl: CGRect) -> some View {
+    /// `inward`: gelombang datang dari luar lalu menyatu ke pulau (kebalikan denyut keluar)
+    @ViewBuilder private func pulseFX(_ e: Double, _ isl: CGRect, inward: Bool = false) -> some View {
         ZStack {
             ForEach(0..<3, id: \.self) { i in
-                let t = Self.clamp((e - Double(i) * 0.22) / 0.8)
-                let g = 26 * Self.easeInOut(t)
+                let t = Self.clamp((e - Double(i) * (inward ? 0.15 : 0.22)) / (inward ? 0.55 : 0.8))
+                let g = 26 * (inward ? 1 - Self.easeInOut(t) : Self.easeInOut(t))
+                let op = inward ? (t > 0 && t < 1 ? sin(t * .pi) * 0.9 : 0) : (t > 0 ? (1 - t) * 0.9 : 0)
                 Capsule()
                     .stroke(front ? Color.yellow : Color.white, lineWidth: 2.5)
                     .frame(width: isl.width + g * 2, height: isl.height + g * 1.2)
                     .shadow(color: (front ? Color.yellow : Color.white).opacity(0.8), radius: 6)
-                    .opacity(t > 0 ? (1 - t) * 0.9 : 0)
+                    .opacity(op)
             }
         }
         .position(x: isl.midX, y: isl.midY)
