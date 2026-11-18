@@ -2286,3 +2286,28 @@ Referensi metode: frequency separation (retouching), guided filter (He, Sun, Tan
 filter skin smoothing real-time), MetalPetal SurfaceBlur (bilateral di Metal); ada paten "skin map + bilateral pada
 gambar diperkecil" - perlu dicek bila app dijual.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.1/BaginCam-unsigned.ipa`. IPA v0.41.0 dihapus.
+
+## 2026-11-18 - Cek percantik masih buram, menu berkedip, ikon kecil -> v0.41.2 build 102
+
+Ditarik: log + IMG_7406 (1080p, Mati -> Standard -> Strong) + rekam layar IMG_7407 (58 fps), di
+`%TEMP%\claude\cek1118b`. Pembanding (lokal, git-ignored): `data/output/percantik_video_b101_1118.jpg`,
+`data/output/percantik_video_sim_1118.jpg`.
+Temuan:
+- Build 101 (dasar dari frame 200-270 px + CIEdgePreserveUpsample): Strong masih lembek seperti dicat (alis, kelopak,
+  hidung kabur) dan lebih berat: 1080p 14-29 ms/frame (build 100: 7-10).
+- "Kedip" saat memilih menu: preview MEMBEKU selama menu iOS terbuka (semua frame identik), lalu loncat ke gambar
+  sekarang saat menu ditutup. Pewaktu MTKView berhenti saat run loop main di mode tracking (menu).
+- Salah sentuh: 7 log `Fokus di layar` pada y 0,06-0,08 = baris ikon atas (chip ~30 pt, mode isi layar -> lapisan
+  fokus ada di bawahnya).
+- Sesi kamera "terputus alasan 1" 3x = app lain (rekam layar / pindah app), normal.
+Perubahan v0.41.2 build 102 (run 44240286249):
+- Percantik video: guided filter cepat (He, Sun, Tang 2010) di 1/2 (1080p) atau 1/4 (4K) resolusi, kotak r 4 / 6,
+  eps 0,0015 / 0,0030; detail halus dikembalikan keep 0,55 / 0,4 x (1 - a); mata, alis, bibir dilindungi elips dari
+  `VNDetectFaceLandmarksRequest` (async bersama segmentasi). Konteks CI RGBAf. Parameter diuji offline dulu
+  (scratchpad `beauty_sim.py`) di frame Mati IMG_7406: bintik pipi hilang, mata & hidung tetap tajam.
+  Log: `Percantik video: .. ms/frame, guided, wajah ..%, diterapkan ..%`; kernel gagal -> log error sekali.
+- `PreviewMTKView`: MTKView di-pause, digerakkan CADisplayLink sendiri di mode `.common` -> preview tetap jalan
+  saat menu terbuka.
+- Chip atas lebih besar (padding 12/10, min 42x38 pt; PRO 48x38), strip atas menahan sentuhan (ketukan di sela
+  ikon tidak memindah fokus). Overlay di bawahnya diturunkan 8-10 pt.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.2/BaginCam-unsigned.ipa`. IPA v0.41.1 dihapus.
