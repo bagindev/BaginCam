@@ -2311,3 +2311,23 @@ Perubahan v0.41.2 build 102 (run 44240286249):
 - Chip atas lebih besar (padding 12/10, min 42x38 pt; PRO 48x38), strip atas menahan sentuhan (ketukan di sela
   ikon tidak memindah fokus). Overlay di bawahnya diturunkan 8-10 pt.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.2/BaginCam-unsigned.ipa`. IPA v0.41.1 dihapus.
+
+## 2026-11-18 - Cek percantik build 102 + 3 tingkat + efek Dynamic Island -> v0.41.3 build 103
+
+Ditarik: log + IMG_7409 (1080p, Mati -> Standard -> Strong) + rekam layar IMG_7408 (ganti kamera), di
+`%TEMP%\claude\cek1118c`.
+Temuan build 102: percantik 1080p 15-20 ms/frame, wajah terdeteksi 86-100 %, frame hilang 0; preview saat menu
+terbuka 28-29 fps (tidak beku lagi). Crop 1:1: Strong mata tajam, pori pipi masih terlihat. Pengguna: "lumayan".
+Ada 10 baris log ganda (format diterapkan dua kali) - tidak berpengaruh.
+Perubahan v0.41.3 build 103 (run 44242239954):
+- `CameraManager.VideoBeautyLevel` (Mati / Soft / Standard / Strong, terpisah dari BeautyLevel foto):
+  Soft = Standard b102 (r 4, eps 0,0015, keep 0,55), Standard = Strong b102 (r 6, eps 0,003, keep 0,4),
+  Strong baru "porselen" (r 8, eps 0,006, keep 0,15, pencerah 0,16). Varian diuji offline di frame Mati IMG_7409
+  (`data/output/percantik_video_sim3_1118.jpg`): Strong A dipilih; dua lapis guided (B) mengaburkan tepi hidung.
+  Log menyebut tingkatnya.
+- `FlipFX.swift` (baru): efek saat ganti kamera, digambar app di posisi Dynamic Island (pulau asli tidak bisa
+  dianimasikan app yang terbuka). Pilihan di laci Tampilan "Efek ganti kamera": Mati, Pulau melebar (ikon kiri,
+  "Depan"/"Belakang" kanan), Cincin di lensa ala Pixel (bawaan; ke depan cincin digambar memutar, ke belakang cincin
+  melebar keluar), Denyut cahaya (3 gelombang di tepi pulau), Cincin + pulau. Posisi pulau: tepi aman atas >= 61 ->
+  y 14 pt (16 Pro/Max), >= 51 -> 11 pt, lebar 126, tinggi 37,33; lensa di ujung kanan.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.3/BaginCam-unsigned.ipa`. IPA v0.41.2 dihapus.
