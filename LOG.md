@@ -2356,3 +2356,22 @@ Perubahan v0.41.4 build 104 (run 44244834917):
   kamera) / 2x (device 2.6); skala tampil dipetakan di ContentView (`frontDisplay` / `frontDevice`).
 - Percantik Standard / Strong: guided filter di resolusi 2x lebih kecil + jari-jari setengah (jangkauan sama).
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.4/BaginCam-unsigned.ipa`. IPA v0.41.3 dihapus.
+
+## 2026-11-18 - Cek build 104 (screenshot + rekam layar 12:21) -> v0.41.5 build 105
+
+Ditarik: log + IMG_7415 (screenshot laci + menu efek) di `%TEMP%\claude\cek1118e`; rekam layar IMG_7414 dianalisis
+ulang. Pengguna: animasi bagus, minta dibalik saat ke kamera belakang; yang "dilingkari" berkedip.
+Temuan:
+- Build 104: TIDAK ADA satu pun log "Preview:" (12:34-12:39) dan preview di screenshot hitam. Penyebab: renderer
+  di antrean sendiri memakai satu layer; SwiftUI membuat tampilan preview baru lalu membongkar yang lama
+  (dismantle / didMoveToWindow nil) -> `attach(nil)` melepas layer tampilan BARU.
+- Berkedip di baris atas: chip percantik ("Strong") muncul / hilang tiap ganti kamera (hanya kamera depan) ->
+  chip format video bergeser dan tulisannya berganti "HEVC · 709" / "HEVC ·..." (rekam layar frame 213-216,
+  294-297, 580-582).
+Perubahan v0.41.5 build 105 (run 44246351061):
+- `attach(_:)` / `detach(_:)`: lepas hanya bila layer itu yang terpasang; PreviewMTKView menjaga ukuran drawable di
+  layoutSubviews. Log baru: "Preview: layer dipasang", "frame pertama digambar", "! Preview: gagal menggambar".
+- FlipFX: ke kamera belakang = kebalikan Lingkar (denyut MASUK dulu, lalu cahaya berputar berlawanan arah);
+  Denyut juga masuk saat ke belakang.
+- Chip percantik selalu ada di VIDEO biasa (redup 45 % di kamera belakang); teks chip boleh mengecil 80 %.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.5/BaginCam-unsigned.ipa`. IPA v0.41.4 dihapus.
