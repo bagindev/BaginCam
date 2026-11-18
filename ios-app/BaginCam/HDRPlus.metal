@@ -139,7 +139,8 @@ kernel void blur_v(device const float4* src  [[buffer(0)]],
 }
 
 // ---------- robust merge ----------
-struct MergeParams { uint count; float maxDiff; float invN; };
+// v0.42.6: black4 = 4 x black level, sigMean = rata-rata sinyal (tanpa black) superpixel blur referensi
+struct MergeParams { uint count; float maxDiff; float invN; float black4; float sigMean; };
 
 kernel void merge_accumulate(device const float4* refP   [[buffer(0)]],
                              device const float4* refB   [[buffer(1)]],
@@ -151,9 +152,15 @@ kernel void merge_accumulate(device const float4* refP   [[buffer(0)]],
                              uint gid [[thread_position_in_grid]])
 {
     if (gid >= p.count) return;
-    const float4 d = fabs(refB[gid] - compB[gid]);
+    const float4 rb = refB[gid];
+    const float4 d = fabs(rb - compB[gid]);
     const float diff = d.x + d.y + d.z + d.w;
-    const float w = p.maxDiff > 0.0f ? clamp(1.0f - diff / p.maxDiff, 0.0f, 1.0f) : 1.0f;
+    // v0.42.6: ambang ikut kecerahan (noise foton ~ akar sinyal). Dulu satu ambang global (didominasi langit
+    // terang) -> motor / orang gelap yang bergerak lolos dan berbayang (IMG_7449, 7457).
+    const float sig = max(rb.x + rb.y + rb.z + rb.w - p.black4, 0.0f);
+    const float sc = p.sigMean > 0.0f ? sqrt(clamp(sig / p.sigMean, 0.15f, 4.0f)) : 1.0f;
+    const float md = p.maxDiff * sc;
+    const float w = md > 0.0f ? clamp(1.0f - diff / md, 0.0f, 1.0f) : 1.0f;
     acc[gid] += (refP[gid] * (1.0f - w) + compP[gid] * w) * p.invN;
     // statistik bobot (dibulatkan 0..255) untuk log
     atomic_fetch_add_explicit(wsum, uint(w * 255.0f + 0.5f), memory_order_relaxed);

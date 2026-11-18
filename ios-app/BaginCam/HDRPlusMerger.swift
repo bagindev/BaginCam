@@ -16,7 +16,7 @@ private struct AlignParams {
     var tile: Int32, search: Int32, prevScale: Int32
 }
 private struct WarpParams { var W: UInt32, H: UInt32, ntx: UInt32, nty: UInt32 }
-private struct MergeParams { var count: UInt32, maxDiff: Float, invN: Float }
+private struct MergeParams { var count: UInt32, maxDiff: Float, invN: Float, black4: Float, sigMean: Float }
 private struct FreqParams {
     var W: UInt32, H: UInt32, ntx: UInt32, row0: UInt32, rows: UInt32, antx: UInt32, anty: UInt32
     var black: Float, range: Float, noiseS: Float, noiseO: Float, c: Float, invN: Float
@@ -87,7 +87,7 @@ final class HDRPlusMerger {
 
     // MARK: merge
     func merge(_ frames: [BayerFrame], noiseReduction: Double = 18, tile: Int = 16, search: Int = 2,
-               freq: FreqConfig? = nil, progress: ((Int, Int) -> Void)? = nil) -> Result? {
+               freq: FreqConfig? = nil, black: Float = 0, progress: ((Int, Int) -> Void)? = nil) -> Result? {
         guard let ref = frames.first, frames.count >= 1 else { return nil }
         let t0 = CFAbsoluteTimeGetCurrent()
         let W = ref.width, H = ref.height, pw = W / 2, ph = H / 2, np = pw * ph
@@ -160,8 +160,9 @@ final class HDRPlusMerger {
             enc.setBytes(&planeSize, length: MemoryLayout<SIMD2<UInt32>>.size, index: 2)
             dispatch(enc, "blur_v", pw, ph)
         }
+        var sigMean: Float = 0
         func encodeMerge(_ enc: MTLComputeCommandEncoder, comp: MTLBuffer, compBlur: MTLBuffer, maxDiff: Float) {
-            var p = MergeParams(count: UInt32(np), maxDiff: maxDiff, invN: 1.0 / Float(N))
+            var p = MergeParams(count: UInt32(np), maxDiff: maxDiff, invN: 1.0 / Float(N), black4: black * 4, sigMean: sigMean)
             enc.setBuffer(refP, offset: 0, index: 0)
             enc.setBuffer(refB, offset: 0, index: 1)
             enc.setBuffer(comp, offset: 0, index: 2)
@@ -193,9 +194,11 @@ final class HDRPlusMerger {
         let rp = refP.contents().bindMemory(to: SIMD4<Float>.self, capacity: np)
         let rb = refB.contents().bindMemory(to: SIMD4<Float>.self, capacity: np)
         var total: Double = 0
+        var sigTotal: Double = 0
         for i in stride(from: 0, to: np, by: 4) {   // sampling 1/4 cukup untuk rata-rata
             let a: SIMD4<Float> = rp[i]
             let b: SIMD4<Float> = rb[i]
+            sigTotal += Double(max(0, b.x + b.y + b.z + b.w - black * 4))
             let dx: Float = abs(a.x - b.x)
             let dy: Float = abs(a.y - b.y)
             let dz: Float = abs(a.z - b.z)
@@ -206,6 +209,7 @@ final class HDRPlusMerger {
         let rev = 0.5 * (36.0 - Double(Int(noiseReduction + 0.5)))
         let robustness = 0.12 * pow(1.3, rev) - 0.4529822
         let maxDiff = robustness > 0 ? noiseSD / Float(robustness) : 0
+        sigMean = black > 0 ? Float(sigTotal / Double((np + 3) / 4)) : 0     // tanpa black level: ambang global lama
 
         // --- 2. tiap frame pembanding ---
         var weights: [Float] = []

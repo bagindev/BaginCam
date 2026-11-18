@@ -64,7 +64,9 @@ enum RawDeveloper {
         if let hl = highlight, hl > 0.001 {
             // gain total 2^(baseline + exposure): taruh p99.9 di 0.9
             let ev = log2(0.9 / hl) - Double(f.baselineExposure)
-            f.exposure = Float(max(-3, min(0, ev)))
+            // v0.42.6: boleh MENCERAHKAN sampai highlight di 0.9 (dulu maks 0: burst HDR+ yang sengaja gelap tetap
+            // gelap - Ultra Wide baseline ~0 EV keluar 1,5-2 EV lebih gelap dari foto Apple, IMG_7437-7449)
+            f.exposure = Float(max(-3, min(0.8, ev)))
         }
         // v0.14: NR luma/warna, ketajaman, detail, HDR lokal, EV tambahan dari Tuning (bawaan = nilai lama)
         tuning.applyRAW(f)
@@ -72,25 +74,25 @@ enum RawDeveloper {
         // (~0.42 gamma = 0.17 linear) turunkan eksposur (v0.9.1: MF 139 vs Apple 108)
         let fullScale = f.scaleFactor
         f.scaleFactor = 0.125
+        var lift = 0.0
         if let small = f.outputImage {
-            let avg = CIFilter.areaAverage()
-            avg.inputImage = small
             let e = small.extent, m = CGFloat(max(0.05, min(1, metering)))
-            avg.extent = CGRect(x: e.midX - e.width * m / 2, y: e.midY - e.height * m / 2,
-                                width: e.width * m, height: e.height * m)
-            if let px = avg.outputImage {
-                var v = [Float](repeating: 0, count: 4)
-                context.render(px, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                               format: .RGBAf, colorSpace: nil)
-                let lum = Double(0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2])
+            let mr = CGRect(x: e.midX - e.width * m / 2, y: e.midY - e.height * m / 2,
+                            width: e.width * m, height: e.height * m)
+            if let st = lumaStats(small, mr) {
+                // v0.42.6: rata-rata biasa didominasi langit mendung terang -> dulu jalan / pohon ikut diturunkan.
+                // Kunci (rata-rata log, Reinhard) mengikuti bagian tengah foto.
+                let lum = st.mean, key = st.key
                 var adj = 0.0
-                if lum > 0.30 { adj = max(-1.2, log2(0.26 / lum)) }
+                var faced = false
+                if lum > 0.30 && key > 0.16 { adj = max(-1.2, log2(0.26 / lum)) }
                 // MALAM: adegan gelap dicerahkan seperti Night Sight (v0.10.0 maks +1 EV masih terlalu gelap:
                 // ruang tanpa lampu linear 0.027 -> sekarang target 0.16, maks +3 EV)
                 if night && lum < 0.15 { adj = min(3.0, log2(0.16 / max(lum, 0.003))) }
                 // wajah diprioritaskan (v0.9.5: selfie berlatar AC/plafon terang -> diturunkan -1.07 EV,
                 // wajah linear 0.15 vs foto Apple 0.28)
                 if metering >= 0.99, let face = faceLuminance(small) {
+                    faced = true
                     adj = max(-1.2, min(0.8, log2(0.24 / face)))
                     Log.hdr.notice("Kecerahan wajah: linear \(face, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
@@ -98,15 +100,55 @@ enum RawDeveloper {
                     f.exposure += Float(adj)
                     Log.hdr.notice("Kecerahan: rata-rata linear \(lum, privacy: .public) -> eksposur \(adj, privacy: .public) EV")
                 }
+                // v0.42.6: adegan siang yang masih gelap (kunci < 0.125) -> angkat tengah & bayangan dengan kurva
+                // x(1+k)/(1+kx): putih tetap putih, langit tidak terbakar (diuji pada IMG_7437-7459: median 0.5x
+                // 32-74 -> 72-109, foto yang sudah terang tidak berubah). Bukan MALAM / wajah (punya aturan sendiri).
+                let k2 = key * pow(2, adj)
+                if !night && !faced && adj <= 0 && k2 < 0.125 {
+                    lift = min(2.5, (0.15 - k2) / (k2 * 0.85))
+                }
+                Log.hdr.notice("Kecerahan: kunci log \(key, format: .fixed(precision: 3), privacy: .public), rata-rata \(lum, format: .fixed(precision: 3), privacy: .public), angkat tengah k \(lift, format: .fixed(precision: 2), privacy: .public)")
             }
             // v0.19: gaya warna (Cerah / Ala Apple ...) - setelah eksposur otomatis supaya tidak dibatalkan
             if styleEV != 0 { f.exposure += Float(styleEV) }
         }
         f.scaleFactor = fullScale
         Log.hdr.notice("Develop: baseline \(f.baselineExposure, privacy: .public) EV, exposure \(f.exposure, privacy: .public) EV, highlight p99.9 \(highlight ?? -1, privacy: .public)")
-        guard let img = f.outputImage else { return nil }
+        guard var img = f.outputImage else { return nil }
+        if lift > 0.01, let k = liftKernel, let o = k.apply(extent: img.extent, arguments: [img, Float(lift)]) {
+            img = o.settingProperties(img.properties)
+        }
         // piksel sudah tegak -> orientasi metadata harus 1 supaya tidak diputar dua kali
         return img.settingProperties(uprightProperties(img.properties))
+    }
+
+    /// v0.42.6: kurva angkat tengah (linear): 0 -> 0, 1 -> 1, bayangan x(1+k)
+    private static let liftKernel = CIColorKernel(source: """
+    kernel vec4 liftMid(__sample s, float k) {
+        vec3 c = max(s.rgb, vec3(0.0));
+        return vec4(c * (1.0 + k) / (1.0 + k * c), s.a);
+    }
+    """)
+
+    /// rata-rata & kunci (rata-rata log) luminans linear di `r` (gambar kecil)
+    private static func lumaStats(_ small: CIImage, _ r: CGRect) -> (mean: Double, key: Double)? {
+        let w = Int(r.width), h = Int(r.height)
+        guard w > 4, h > 4 else { return nil }
+        var buf = [Float](repeating: 0, count: w * h * 4)
+        let rr = CGRect(x: r.minX.rounded(.down), y: r.minY.rounded(.down), width: CGFloat(w), height: CGFloat(h))
+        context.render(small, toBitmap: &buf, rowBytes: w * 16, bounds: rr, format: .RGBAf, colorSpace: nil)
+        var sum = 0.0, lsum = 0.0
+        var n = 0
+        var i = 0
+        while i < w * h {
+            let y = Double(max(0, 0.2126 * buf[i * 4] + 0.7152 * buf[i * 4 + 1] + 0.0722 * buf[i * 4 + 2]))
+            sum += y
+            lsum += log(y + 0.001)
+            n += 1
+            i += 2
+        }
+        guard n > 0 else { return nil }
+        return (sum / Double(n), exp(lsum / Double(n)))
     }
 
     /// luminans linear rata-rata bagian tengah wajah terbesar (nil bila tidak ada wajah)

@@ -2520,3 +2520,60 @@ Perbaikan di sel 3:
 - Semua folder di My Drive yang namanya diawali "BaginCam" dicari, lalu dipilih yang `masuk`-nya berisi video.
   Pencarian diulang sampai 3x dengan jeda 10 s.
 - Notebook mencetak daftar folder beserta jumlah videonya, isi `masuk`, dan petunjuk kalau masih kosong.
+
+## 2026-11-18 - Cek foto sore: 0.5x & 1x gelap + berbayang; percantik foto beda dengan video -> v0.42.6 build 114
+
+Ditarik: log + IMG_7430-7461 (31 foto, semuanya BaginCam) di `%TEMP%\claude\cek1118k`.
+
+Temuan gelap:
+- Median kecerahan (0-255):
+  - 2x (crop 48MP, mesin Apple): 132-179;
+  - 1x HDR+: 93-116;
+  - 0.5x HDR+: 33-76, separuh bawah (jalan) 30-61.
+  - Jadi 0.5x sekitar 1,5-2 EV lebih gelap. IMG_7457 (1x senja, 12 frame): median 47.
+- Penyebab 1, `RawDeveloper.develop`: eksposur dibatasi `min(0, ev)`, jadi tidak pernah dicerahkan melewati
+  BaselineExposure DNG. Burst HDR+ sengaja gelap (ISO 32, 1/121). Baseline Ultra Wide 0,005-0,09 EV vs Utama
+  0,5-1,8 EV, sehingga 0.5x keluar segelap mentahnya.
+- Penyebab 2: satu-satunya koreksi kecerahan hanya menurunkan (rata-rata > 0,30). Rata-rata itu didominasi langit
+  mendung, contohnya 7450 diturunkan -0,59 EV. Pada 7457, satu titik terang (p99.9 = 0,977) menurunkan seluruh foto.
+
+Temuan bayangan:
+- IMG_7436 (1x fusi 48MP): bercak abu-abu berkontur di langit. Nilai langit putih 250-255 (48MP terbakar), bercak
+  sekitar 205 (langit HDR+).
+  - Ukuran "beda" Fusion48 membandingkan 48MP yang terbakar dengan HDR+ berawan. Selisihnya di sekitar ambang 0,45,
+    jadi penggantian hidup-mati mengikuti awan.
+  - Fusinya juga tetap jalan walau HDR+ harus digeser -95,-39 px dengan skor 0,563 (foto lain 0,16-0,44).
+  - Pembanding: `data/output/bercak_langit_fusi_7436.jpg`.
+- IMG_7449 (0.5x): tepi kembar samar di helm / bahu motor. IMG_7457: motor tembus pandang dan tercoreng (frame 48MP
+  1/60 s senja + merge).
+  - Merge spasial (yang dipakai; tidak ada log "Merge frekuensi") memakai satu ambang global
+    `maxDiff = 1,22 x noiseSD` yang didominasi area terang. Objek gelap yang bergerak lolos (bobot frame 0,82-0,90).
+
+Temuan percantik: foto / potret masih memakai cara lama, yaitu blur gaussian di seluruh mask orang dengan opacity
+35 % / 65 % (mata, alis, rambut, baju ikut kabur). Video sudah memakai guided filter + kulit + landmark.
+
+Uji offline pencerah (pada hasil foto, `data/output/cerah_sim_0_5x_1118.jpg`): kurva x(1+k)/(1+kx), target kunci log
+0,15.
+- Median 0.5x 32-74 -> 72-109; 7459 95 -> 114.
+- Foto yang sudah terang (7445, 7430; kunci >= 0,17) tidak berubah.
+- k maksimal 3 membuat 7457 agak pudar, jadi batasnya 2,5.
+
+Perubahan v0.42.6 build 114:
+- RawDeveloper:
+  - eksposur boleh positif sampai highlight aman (maks +0,8 EV);
+  - penurunan hanya bila rata-rata > 0,30 dan kunci log > 0,16;
+  - adegan siang gelap (kunci < 0,125, bukan MALAM / wajah) diberi kurva angkat tengah dengan k maks 2,5;
+  - log baru "Kecerahan: kunci log .., rata-rata .., angkat tengah k ..".
+- Fusion48:
+  - area terbakar 48MP selalu dari HDR+ (rasio lokal, tidak hidup-mati per awan);
+  - fusi batal bila skor penyelarasan > 0,5 (log "Fusi 48MP: dibatalkan - HDR+ tidak cocok ..").
+- Merge spasial (HDRPlus.metal): ambang tolak gerakan x akar(sinyal / rata-rata), dibatasi 0,15-4 (noise foton).
+  Area gelap ditolak lebih tegas. Black level dibaca dari DNG referensi (juga tanpa mode frekuensi).
+- Percantik foto / potret:
+  - `BeautyVideoProcessor.still` memakai mesin video yang sama (segmentasi + kulit Cb/Cr + guided filter +
+    detail halus + pencerah);
+  - lindungan mata / alis / bibir untuk SEMUA wajah sebagai mask gradien elips;
+  - skala guided mengikuti sisi pendek (acuan video 1080p);
+  - tingkat foto kini Mati / Soft / Standard / Strong, parameter sama dengan video (`params`);
+  - log "Percantik foto: N wajah, M lindungan, tingkat, guided 1/k".
+BELUM DIUJI DI HP.

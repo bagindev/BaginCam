@@ -21,11 +21,16 @@ enum Fusion48 {
         vec3 r = clamp(lh / la, vec3(0.25), vec3(4.0));
         float d = abs(log(dot(lh, w)) - log(max(dot(la * gg, w), 0.002)));
         float m = smoothstep(t, 2.0 * t, d);
-        vec3 rr = mix(r, gg, m);
+        float hot = smoothstep(0.80, 0.97, max(la.r, max(la.g, la.b)));
+        vec3 rr = mix(r, gg, m * (1.0 - hot));
         // area putih terbakar LUAS di foto 48MP (langit, lampu): detail highlight hanya ada di HDR+.
         // v0.18.2: diukur dari lowpass - teks / garis putih kecil tidak lagi diganti HDR+ (pinggiran menyala, IMG_7010)
         // v0.40.3: hanya bila HDR+ cocok di situ (m kecil) - langit terang dari HDR+ yang meleset = kabel dobel (IMG_7397)
-        float c = smoothstep(0.80, 0.97, max(lowA.r, max(lowA.g, lowA.b))) * (1.0 - m);
+        // v0.42.6: di area terbakar 48MP selisih tidak bisa diukur (48MP putih rata vs HDR+ berawan): ambang
+        // "beda" hidup-mati mengikuti awan -> bercak abu-abu berkontur di langit (IMG_7436). Area terbakar kini
+        // selalu dari HDR+ (lensa Utama; Ultra Wide tidak difusi sejak v0.40.3, HDR+ yang meleset dibatalkan).
+        float clip = smoothstep(0.80, 0.97, max(lowA.r, max(lowA.g, lowA.b)));
+        float c = clip * (1.0 - m * (1.0 - clip));
         return vec4(mix(a.rgb * rr, h.rgb, c), 1.0);
     }
     """)
@@ -64,6 +69,12 @@ enum Fusion48 {
         // v0.19: align(at, ht) -> sharpRatio = HDR+/48MP (terbalik; v0.18.3-0.18.5 semua fusi batal, rasio 0.4-0.7
         // padahal 48MP 1.2x lebih tajam - dikalibrasi dari foto debug IMG_7018-7026)
         let sharp48 = al.sharpRatio > 0 ? 1 / al.sharpRatio : 1
+        // v0.42.6: HDR+ tidak bisa diselaraskan dengan foto 48MP (HP bergeser jauh: IMG_7436 geser -95,-39 px,
+        // skor 0.563 -> bercak / tepi dobel) -> batal, pakai HDR+ biasa. Foto bagus sore itu skor 0.16-0.44.
+        if al.score > 0.5 {
+            Log.hdr.notice("Fusi 48MP: dibatalkan - HDR+ tidak cocok dengan foto 48MP (skor \(al.score, format: .fixed(precision: 3), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 0), privacy: .public),\(Double(al.dy), format: .fixed(precision: 0), privacy: .public) px)")
+            return nil
+        }
         if sharp48 < 0.85 {
             Log.hdr.notice("Fusi 48MP: dibatalkan - foto 48MP lebih buram dari HDR+ (48/HDR \(sharp48, format: .fixed(precision: 2), privacy: .public), geser \(Double(al.dx), format: .fixed(precision: 0), privacy: .public),\(Double(al.dy), format: .fixed(precision: 0), privacy: .public) px)")
             return nil
@@ -132,14 +143,14 @@ enum Fusion48 {
     /// geser (piksel CI, y ke atas) yang menyejajarkan `a` ke `h`: Vision (translasi) lalu dicek
     /// dengan selisih luma ternormalisasi - pilih kandidat terbaik (termasuk tanpa geser).
     /// sharpRatio = energi tepi a / h (di 1024 px): < 1 = a lebih buram
-    private static func align(_ h: CIImage, _ a: CIImage, rect: CGRect) -> (dx: CGFloat, dy: CGFloat, how: String, sharpRatio: Double) {
+    private static func align(_ h: CIImage, _ a: CIImage, rect: CGRect) -> (dx: CGFloat, dy: CGFloat, how: String, sharpRatio: Double, score: Double) {
         let s: CGFloat = 1024 / max(rect.width, rect.height)
         let sw = Int((rect.width * s).rounded(.down)), sh = Int((rect.height * s).rounded(.down))
         let sr = CGRect(x: 0, y: 0, width: sw, height: sh)
         let hs = h.transformed(by: CGAffineTransform(scaleX: s, y: s)).cropped(to: sr)
         let asm = a.transformed(by: CGAffineTransform(scaleX: s, y: s)).cropped(to: sr)
         guard let hcg = ctx.createCGImage(hs, from: sr, format: .RGBA8, colorSpace: sRGB),
-              let acg = ctx.createCGImage(asm, from: sr, format: .RGBA8, colorSpace: sRGB) else { return (0, 0, "render gagal", 1) }
+              let acg = ctx.createCGImage(asm, from: sr, format: .RGBA8, colorSpace: sRGB) else { return (0, 0, "render gagal", 1, 0) }
         let req = VNTranslationalImageRegistrationRequest(targetedCGImage: acg)
         try? VNImageRequestHandler(cgImage: hcg).perform([req])
         let t = (req.results?.first as? VNImageTranslationAlignmentObservation)?.alignmentTransform ?? .identity
@@ -152,7 +163,7 @@ enum Fusion48 {
         }
         let sharp = Double(edge(hv, sw, sh)) > 0 ? Double(edge(av, sw, sh) / edge(hv, sw, sh)) : 1
         let how = String(format: "%@ skor %.3f, vision %.1f,%.1f, energi tepi b/a %.2f", best.name, best.score, Double(t.tx), Double(t.ty), sharp)
-        return (best.dx / s, best.dy / s, how, sharp)
+        return (best.dx / s, best.dy / s, how, sharp, Double(best.score))
     }
 
     /// energi tepi rata-rata (luma ternormalisasi) - ukuran ketajaman

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import QuartzCore
 import Vision
 
@@ -81,6 +82,117 @@ final class BeautyVideoProcessor {
         return vec4(o, s.a);
     }
     """)
+
+    /// parameter tiap tingkat (video & foto): jari-jari box (piksel resolusi guided), eps, detail halus dikembalikan,
+    /// kekuatan, pencerah kulit
+    static func params(_ level: CameraManager.VideoBeautyLevel) -> (Double, Float, Float, Float, Float) {
+        switch level {
+        case .soft: return (4, 0.0015, 0.55, 0.85, 0.08)
+        case .standard: return (3, 0.0030, 0.40, 1.0, 0.14)
+        default: return (4, 0.0060, 0.15, 1.0, 0.16)
+        }
+    }
+
+    // MARK: foto (v0.42.6)
+
+    private static let stillCtx = CIContext(options: [.cacheIntermediates: false, .workingFormat: CIFormat.RGBAf,
+                                                      .workingColorSpace: NSNull()])
+    /// sama dengan beautyV, lindungan dari gambar mask `pr` (semua wajah) bukan 5 elips
+    private static let stillKernel = CIColorKernel(source: """
+    kernel vec4 beautyS(__sample s, __sample fs, __sample ma, __sample mb, __sample m, __sample pr,
+                        float amt, float keep, float lift) {
+        float prot = clamp(pr.r, 0.0, 1.0);
+        vec3 wy = vec3(0.299, 0.587, 0.114);
+        float y = dot(s.rgb, wy);
+        float cb = 0.5 + dot(s.rgb, vec3(-0.168736, -0.331264, 0.5));
+        float cr = 0.5 + dot(s.rgb, vec3(0.5, -0.418688, -0.081312));
+        float skin = smoothstep(0.50, 0.54, cr) * (1.0 - smoothstep(0.68, 0.72, cr))
+                   * smoothstep(0.26, 0.30, cb) * (1.0 - smoothstep(0.50, 0.54, cb))
+                   * smoothstep(0.06, 0.14, y);
+        vec3 q = clamp(ma.rgb * s.rgb + mb.rgb, 0.0, 1.0);
+        float aL = dot(ma.rgb, wy);
+        vec3 sm = q + (s.rgb - fs.rgb) * keep * (1.0 - aL);
+        float k = clamp(m.r, 0.0, 1.0) * skin * (1.0 - prot);
+        vec3 o = clamp(mix(s.rgb, sm, k * amt), 0.0, 1.0);
+        o = mix(o, o * (2.0 - o), k * lift);
+        return vec4(o, s.a);
+    }
+    """)
+
+    /// Percantik foto (FOTO / POTRET), sinkron. Sama dengan video: segmentasi orang + warna kulit + guided filter,
+    /// mata / alis / bibir semua wajah dilindungi. Skala guided mengikuti sisi pendek (video 1080p = acuan).
+    static func still(_ img: CGImage, level: CameraManager.VideoBeautyLevel) -> CGImage? {
+        guard level.active, let kern = stillKernel, let sqK = sqKernel, let aK = aKernel, let bK = bKernel else { return nil }
+        let handler = VNImageRequestHandler(cgImage: img, options: [:])
+        let lmReq = VNDetectFaceLandmarksRequest()
+        let seg = VNGeneratePersonSegmentationRequest()
+        seg.qualityLevel = .balanced
+        seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        guard (try? handler.perform([lmReq, seg])) != nil else { return nil }
+        let faces = (lmReq.results ?? []).filter { $0.boundingBox.width > 0.03 }
+        guard !faces.isEmpty, let maskPB = seg.results?.first?.pixelBuffer else { return nil }
+        let W = CGFloat(img.width), H = CGFloat(img.height)
+        let ext = CGRect(x: 0, y: 0, width: W, height: H)
+        let src = CIImage(cgImage: img, options: [.colorSpace: NSNull()])
+
+        // lindungan: elips mata / alis / bibir tiap wajah (sama dengan video), 1 di dalam 0.7 r -> 0 di tepi
+        var prot = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: ext)
+        var nEll = 0
+        for face in faces {
+            guard let l = face.landmarks else { continue }
+            let bb = face.boundingBox
+            let pad = bb.width * W * 0.03
+            let ells = [
+                ellipse(l.leftEye, bb, W: W, H: H, sx: 1.35, sy: 2.4, pad: pad),
+                ellipse(l.rightEye, bb, W: W, H: H, sx: 1.35, sy: 2.4, pad: pad),
+                ellipse(l.leftEyebrow, bb, W: W, H: H, sx: 1.15, sy: 1.9, pad: pad),
+                ellipse(l.rightEyebrow, bb, W: W, H: H, sx: 1.15, sy: 1.9, pad: pad),
+                ellipse(l.outerLips, bb, W: W, H: H, sx: 1.15, sy: 1.35, pad: pad),
+            ].compactMap { $0 }
+            for e in ells where e.z >= 1 && e.w >= 1 {
+                let g = CIFilter.radialGradient()
+                g.center = .zero
+                g.radius0 = Float(0.7 * e.z)
+                g.radius1 = Float(e.z)
+                g.color0 = CIColor(red: 1, green: 1, blue: 1)
+                g.color1 = CIColor(red: 0, green: 0, blue: 0)
+                guard let gi = g.outputImage else { continue }
+                let el = gi.transformed(by: CGAffineTransform(scaleX: 1, y: e.w / e.z)
+                    .concatenating(CGAffineTransform(translationX: e.x, y: e.y))).cropped(to: ext)
+                prot = el.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: prot]).cropped(to: ext)
+                nEll += 1
+            }
+        }
+        let rawMask = CIImage(cvPixelBuffer: maskPB, options: [.colorSpace: NSNull()])
+        let m = rawMask.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 2.0])
+            .cropped(to: rawMask.extent)
+            .transformed(by: CGAffineTransform(scaleX: W / rawMask.extent.width, y: H / rawMask.extent.height))
+        let short = Double(min(W, H))
+        let fs = src.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": max(0.8, short / 1080.0)])
+            .cropped(to: ext)
+        // resolusi guided = video 1080p (Soft 1/2, lainnya 1/4 dari 1080 sisi pendek)
+        let k = CGFloat(max(1, short * (level == .soft ? 2 : 4) / 1080))
+        let p = src.transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k), highQualityDownsample: true)
+        let pe = p.extent
+        let (r, eps, keep, amt, lift) = params(level)
+        func box(_ i: CIImage) -> CIImage {
+            i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: ["inputRadius": max(1.5, r)]).cropped(to: pe)
+        }
+        guard let sq = sqK.apply(extent: pe, arguments: [p]) else { return nil }
+        let mI = box(p), mII = box(sq)
+        guard let a = aK.apply(extent: pe, arguments: [mI, mII, eps]),
+              let b = bK.apply(extent: pe, arguments: [mI, a]) else { return nil }
+        let up = CGAffineTransform(scaleX: ext.width / pe.width, y: ext.height / pe.height)
+        let ma = box(a).transformed(by: up).cropped(to: ext)
+        let mb = box(b).transformed(by: up).cropped(to: ext)
+        guard let out = kern.apply(extent: ext, arguments: [src, fs, ma, mb, m, prot, amt, keep, lift]) else { return nil }
+        let cs = img.colorSpace ?? CGColorSpace(name: CGColorSpace.displayP3)!
+        let fmt: CIFormat = img.bitsPerComponent > 8 ? .RGBA16 : .RGBA8
+        Log.sr.notice("Percantik foto: \(faces.count, privacy: .public) wajah, \(nEll, privacy: .public) lindungan, \(level.rawValue, privacy: .public), guided 1/\(Double(k), format: .fixed(precision: 1), privacy: .public)")
+        return stillCtx.createCGImage(out, from: ext, format: fmt, colorSpace: cs)
+    }
 
     private static let okFormats: Set<OSType> = [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                                                  kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -191,13 +303,7 @@ final class BeautyVideoProcessor {
         let pe = p.extent
         // v0.41.3: Soft / Standard = Standard / Strong build 102; Strong = porselen (diuji offline: Strong A,
         // percantik_video_sim3_1118.jpg - pori hilang, mata & hidung tetap). Dua lapis guided (B) mengaburkan hidung.
-        let (r, eps, keep, amt, lift): (Double, Float, Float, Float, Float) = {
-            switch level {
-            case .soft: return (4, 0.0015, 0.55, 0.85, 0.08)
-            case .standard: return (3, 0.0030, 0.40, 1.0, 0.14)
-            default: return (4, 0.0060, 0.15, 1.0, 0.16)
-            }
-        }()
+        let (r, eps, keep, amt, lift) = Self.params(level)
         func box(_ i: CIImage) -> CIImage {
             i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: ["inputRadius": max(1.5, r / Double(hot))]).cropped(to: pe)
         }

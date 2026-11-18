@@ -68,24 +68,21 @@ final class CameraManager: NSObject, ObservableObject {
         var id: String { rawValue }
     }
 
+    /// percantik FOTO / POTRET. v0.42.6: mesin & tingkat sama dengan VIDEO (dulu blur gaussian di seluruh mask orang
+    /// 35 % / 65 % -> mata, alis, rambut ikut kabur, hasil beda dengan video)
     enum BeautyLevel: String, CaseIterable, Identifiable {
         case off = "Mati"
+        case soft = "Soft"
         case standard = "Standard"
         case strong = "Strong"
         var id: String { rawValue }
         var active: Bool { self != .off }
-        var maskOpacity: Double {
+        var video: VideoBeautyLevel {
             switch self {
-            case .off: return 0
-            case .standard: return 0.35
-            case .strong: return 0.65
-            }
-        }
-        var blurScale: Double {
-            switch self {
-            case .off: return 0
-            case .standard: return 1.0
-            case .strong: return 1.8
+            case .off: return .off
+            case .soft: return .soft
+            case .standard: return .standard
+            case .strong: return .strong
             }
         }
     }
@@ -3380,7 +3377,13 @@ final class CameraManager: NSObject, ObservableObject {
         let frames = pj.burstZoomed && pj.burstCrop >= 3 && frames.count > 8
             ? Self.pickSharp(frames, crop: Double(pj.burstCrop), black: Double(freq?.black ?? 0)) : frames
         let tm = CFAbsoluteTimeGetCurrent()
-        guard let r = merger.merge(frames, noiseReduction: noiseReduction, freq: freq, progress: { i, n in
+        // v0.42.6: black level untuk ambang tolak gerakan per kecerahan (merge spasial juga, bukan hanya frekuensi)
+        var mergeBlack: Float = freq?.black ?? 0
+        if mergeBlack == 0, let inf = DNGWriter.info(refDNG) {
+            let k = fs.full > Double(inf.white) * 1.5 ? (fs.full + 1) / Double(inf.white + 1) : 1
+            mergeBlack = Float(Double(inf.black) * k)
+        }
+        guard let r = merger.merge(frames, noiseReduction: noiseReduction, freq: freq, black: mergeBlack, progress: { i, n in
             self.report("Merge HDR+ \(freq != nil ? "frekuensi" : "spasial")", i, n, since: tm)
         }) else {
             finish("HDR+ gagal saat merge (lihat log)")
@@ -3698,33 +3701,8 @@ final class CameraManager: NSObject, ObservableObject {
         defer {
             Log.sr.notice("Percantik: \(img.width, privacy: .public)x\(img.height, privacy: .public), \(CFAbsoluteTimeGetCurrent() - t0, format: .fixed(precision: 2), privacy: .public) s, sisa memori \(DeviceCaps.availableMB, privacy: .public) MB")
         }
-        let faceReq = VNDetectFaceRectanglesRequest()
-        let faceHandler = VNImageRequestHandler(cgImage: img, options: [:])
-        guard (try? faceHandler.perform([faceReq])) != nil,
-              let faces = faceReq.results, !faces.isEmpty else { return nil }
-        let segReq = VNGeneratePersonSegmentationRequest()
-        segReq.qualityLevel = .balanced
-        let segHandler = VNImageRequestHandler(cgImage: img, options: [:])
-        guard (try? segHandler.perform([segReq])) != nil,
-              let mask = segReq.results?.first?.pixelBuffer else { return nil }
-        let rawMask = CIImage(cvPixelBuffer: mask)
-        let sx = CGFloat(img.width) / rawMask.extent.width
-        let sy = CGFloat(img.height) / rawMask.extent.height
-        let ciMask = rawMask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-        let opacity = level.maskOpacity
-        let softMask = ciMask.applyingFilter("CIColorMatrix", parameters: [
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: opacity)
-        ])
-        let ci = CIImage(cgImage: img)
-        let baseR = max(1.0, min(3.0, Double(min(img.width, img.height)) / 1200.0 * 2.0))
-        let r = baseR * level.blurScale
-        let blurred = ci.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": r])
-            .cropped(to: ci.extent)
-        let result = blurred.applyingFilter("CIBlendWithMask", parameters: [
-            "inputBackgroundImage": ci,
-            "inputMaskImage": softMask
-        ])
-        return RawDeveloper.cgImage(result)
+        // v0.42.6: mesin yang sama dengan percantik VIDEO (BeautyVideo.swift), resolusi penuh, semua wajah
+        return BeautyVideoProcessor.still(img, level: level.video)
     }
 
     // MARK: portrait bokeh
