@@ -1367,9 +1367,41 @@ struct ContentView: View {
         return t + (isNative(z) ? "✦" : "x")
     }
 
+    /// v0.42.1: kamera depan - satu tombol panah seperti kamera bawaan: lebar (sensor penuh) <-> bingkai selfie.
+    /// Cubit tetap bisa untuk zoom lebih dekat; ketuk tombol saat sudah di-zoom = kembali ke bingkai selfie.
+    private var frontFovButton: some View {
+        let wide = displayZoom < 0.75
+        let zoomed = displayZoom > 1.05
+        return HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Button {
+                setDisplayZoom(wide || zoomed ? 1 : 0.5)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            } label: {
+                Image(systemName: wide ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 15, weight: .bold))
+                    .rotationEffect(uiRot).animation(.easeInOut(duration: 0.25), value: level.captureAngle)
+                    .frame(width: 40, height: 40)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(wide ? Color.yellow.opacity(0.85) : Color.white.opacity(0.18), lineWidth: 1))
+                    .foregroundStyle(wide ? Color.yellow : Color.white)
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel(wide ? "Perkecil sudut pandang" : "Perlebar sudut pandang")
+            if zoomed {
+                Text(String(format: "%.1fx", displayZoom)).font(.caption.bold().monospacedDigit()).foregroundStyle(.yellow)
+            }
+            Spacer(minLength: 0)
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
     private var zoomRow: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
+                if frontZoomUI {
+                    frontFovButton
+                } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(zoomPresets, id: \.self) { z in
@@ -1417,6 +1449,7 @@ struct ContentView: View {
                                 if dialToken == t { withAnimation(.easeIn(duration: 0.2)) { dialActive = false } }
                             }
                         })
+                }
                 if cam.videoKind != .dual && (cam.autoLensAvailable || cam.shootMode != .video) {
                     zoomMenu
                 } else {
