@@ -2331,3 +2331,28 @@ Perubahan v0.41.3 build 103 (run 44242239954):
   melebar keluar), Denyut cahaya (3 gelombang di tepi pulau), Cincin + pulau. Posisi pulau: tepi aman atas >= 61 ->
   y 14 pt (16 Pro/Max), >= 51 -> 11 pt, lebar 126, tinggi 37,33; lensa di ujung kanan.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.3/BaginCam-unsigned.ipa`. IPA v0.41.2 dihapus.
+
+## 2026-11-18 - Cek build 103 (efek, menu, ganti kamera) + depan 0.5x -> v0.41.4 build 104
+
+Ditarik: log + rekam layar IMG_7414 (54 s, 44 fps) di `%TEMP%\claude\cek1118d`. Pengguna: efek Denyut bagus, minta
+yang melingkar penuh pulau; flicker menu masih ada; ganti kamera "ngejedag lalu ngezoom di 1x"; kamera depan minta
+0.5x lagi tapi bawaan 1x.
+Temuan (beda frame per frame):
+- Menu di laci terbuka: preview ~4 fps (frame 61-122 nyaris sama) - display link di main tetap kalah oleh main thread
+  yang menggambar menu + blur, apalagi selagi percantik Strong 23-34 ms/frame.
+- Ganti kamera: 1-2 frame gelap dari kamera baru (eksposur belum menyesuaikan) = kedip (frame 260-261, 319).
+- Kembali ke belakang: kamera virtual mulai 0.5x (log "Ultra Wide faktor 1.0"), zoom 1x baru dipasang ~0,4 s setelah
+  sesi jalan (log "Utama faktor 2.0") = "ngezoom". Format video juga dipasang 2x (log ganda).
+Perubahan v0.41.4 build 104 (run 44244834917):
+- PreviewRenderer digambar di antrean sendiri tiap frame kamera (CAMetalLayer.nextDrawable), bukan dari main;
+  batas fps lewat `fpsLimit`; callback UI (histogram, AI komposisi, peta zoom, log) dikirim ke main.
+  `PreviewMTKView` hanya wadah layer (display link dihapus). Log preview: "digambar di antrean sendiri".
+- `install(_:mirrored:zoom:)`: zoom device dipasang di dalam konfigurasi sesi (frame pertama sudah benar);
+  enterAIZoom menghitung basis lensa dulu; format video tidak lagi dipasang 2x. Preview menahan frame lama selama
+  ganti kamera + 0,25 s (frame gelap tidak tampil; rekaman tetap utuh).
+- Tirai blur (ultraThinMaterial) di preview 0,55 s saat ganti kamera, seperti kamera bawaan.
+- FlipFX "Lingkar" (bawaan baru): ekor cahaya berlari mengelilingi seluruh pulau ~1,15 putaran, lalu denyut keluar.
+- Kamera depan: tombol 0.5x (sensor penuh, device 1) / 1x (bingkai selfie, device 1.3, bawaan saat buka & ganti
+  kamera) / 2x (device 2.6); skala tampil dipetakan di ContentView (`frontDisplay` / `frontDevice`).
+- Percantik Standard / Strong: guided filter di resolusi 2x lebih kecil + jari-jari setengah (jangkauan sama).
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.4/BaginCam-unsigned.ipa`. IPA v0.41.3 dihapus.
