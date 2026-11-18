@@ -2412,3 +2412,21 @@ Perubahan v0.41.7 build 107 (run 44249541467):
 - Preview menahan frame terakhir selama pindah mode (+0,2 s setelah commit), `showVeil` tirai blur 0,5 s saat
   FOTO <-> VIDEO (juga dipakai ganti kamera).
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.7/BaginCam-unsigned.ipa`. IPA v0.41.6 dihapus.
+
+## 2026-11-18 - Sudut pandang VIDEO depan vs kamera bawaan -> v0.42.0 build 108, v0.42.1 build 109
+
+Ditarik: IMG_7419-7421 (bawaan VIDEO depan, BaginCam 1x, BaginCam .5x) di `%TEMP%\claude\cek1118h`; pembanding
+lokal `data/output/sudut_depan_bawaan_vs_kita_1118.jpg`. Juga dibandingkan FOTO vs VIDEO bawaan (IMG_7418).
+Temuan:
+- Bawaan: FOTO depan 3:4 sensor penuh (paling lebar); VIDEO 9:16 utuh dengan bar atas-bawah (sisi kiri-kanan sensor
+  terpotong karena 16:9); ada tombol panah perbesar / perkecil sudut pandang.
+- BaginCam VIDEO depan: 1x = crop 1.3 (bawaan sejak build 104) lebih sempit; .5x = sensor penuh tetapi "Isi layar"
+  memotong kiri-kanan preview ~18 % (rekaman tidak terpotong) -> tampak lebih sempit dari bawaan.
+Perubahan:
+- Build 108 (run 44250391485): pilihan "Rasio 3:4 - sudut lebar seperti FOTO" di chip format video (bawaan mati):
+  format 4:3 (1920x1440 / 4032x3024), preview 3:4, nama file "34", cadangan 9:16 bila lensa tidak punya. Ternyata
+  bukan yang dimaksud pengguna; tetap ada sebagai pilihan.
+- Build 109 (run 44250835634): kamera depan memakai SATU tombol panah seperti kamera bawaan (ganti tombol .5x / 1x /
+  2x): lebar (sensor penuh, device 1.0) <-> bingkai selfie (device 1.3); kuning saat lebar; setelah dicubit lebih
+  dekat, ketuk = kembali ke bingkai selfie. Roda zoom tidak dipakai di kamera depan (cubit tetap).
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.1/BaginCam-unsigned.ipa`. IPA v0.41.7 dihapus.
