@@ -2223,3 +2223,25 @@ Perubahan v0.40.3 build 98 (run 44064851196):
 - Drizzle dilewati bila bobot merge rata-rata < 0,75 (ada gerakan) -> merge biasa (log `Drizzle dilewati: ..`).
 - `nativeLong` = sisi foto terbesar dari semua format lensa -> 2x terang kembali ke crop 48MP tunggal.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.3/BaginCam-unsigned.ipa`. IPA v0.40.2 dihapus.
+
+## 2026-11-18 - Cek "app menyalakan semua fitur -> cepat panas?" + percantik video -> v0.40.4 build 99
+
+Pertanyaan: apakah saat app dibuka semua fitur otomatis menyala sehingga cepat panas; mungkinkah efek percantik di VIDEO.
+Temuan (kode + log 17 Nov):
+- Yang jalan otomatis saat app dibuka: sesi kamera (kamera virtual), preview Metal + LUT (CPU 0,2-2,4 ms, GPU ~1 ms
+  per frame - ringan), sensor gerak 20 Hz (waterpass / orientasi), AI Komposisi mode diam (deteksi wajah 320 px
+  ~0,5x/detik), timer angka eksposur 4x/detik, antrean AI video (cek tiap 2 s, tidak bekerja bila kosong). Histogram
+  hanya di PRO. Kedalaman hanya di POTRET. HDR+ / AI zoom / percantik hanya saat memotret. Jeda otomatis
+  (diam 45 s / 3 menit tanpa sentuh) masih jalan (log 15:26:54).
+- Pemborosan nyata: `LevelMonitor.flat` diisi 20x/detik tanpa cek perubahan dan angka eksposur (ISO, shutter, WB,
+  fokus, f, label lensa) diisi tiap 0,25 s walau sama -> @Published menembak tiap kali -> SELURUH ContentView (layar
+  kamera, ribuan baris) dihitung ulang ~20x/detik terus-menerus di main thread (tempat preview Metal juga digambar).
+  Di PRO ditambah histogram (@State) 5x/detik.
+Perubahan v0.40.4 build 99 (run 44231289139):
+- `flat`, angka eksposur (toleransi ISO / shutter 2 %, WB 30 K, fokus 0,005), level audio (0,5 dB) hanya diisi bila
+  berubah.
+- Histogram dipegang `HistogramState` + `HistogramBox` (hanya kotak histogram yang digambar ulang).
+- Log preview tiap 10 s ditambah `UI ..x/s` (jumlah hitung ulang layar utama per detik, `BodyCounter`).
+- Percantik VIDEO: mungkin (mode SINEMA sudah memproses tiap frame: 4K30 5-6,5 ms/frame). Belum dibuat - menunggu
+  keputusan pengguna.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.4/BaginCam-unsigned.ipa`. IPA v0.40.3 dihapus.
