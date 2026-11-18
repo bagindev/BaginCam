@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var fxFront = true
     /// v0.41.4: tirai blur di preview saat ganti kamera (menutupi jeda, seperti kamera bawaan)
     @State private var flipVeil = false
+    @State private var veilToken = 0
     private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
     /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
     /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
@@ -178,6 +179,7 @@ struct ContentView: View {
         .onChange(of: cam.totalZoom) { _, z in zoomNav.setZoom(z, fovTan1x: cam.fovTan1x) }
         .onChange(of: navEnabled) { _, v in zoomNav.enabled = v }
         .onChange(of: cam.previewFrozen) { _, v in renderer.frozen = v }
+        .onChange(of: cam.shootMode) { o, n in if (o == .video) != (n == .video) { showVeil(0.5) } }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }
         .onChange(of: zebraLevel) { _, v in renderer.zebraLevel = Float(v) }
@@ -1840,11 +1842,21 @@ struct ContentView: View {
         return CameraManager.usesVirtual(cam.mode) ? cam.aiLensLock == .front : cam.lens == .front
     }
 
+    /// v0.41.4 / v0.41.7: tirai blur di preview (ganti kamera, pindah FOTO <-> VIDEO), seperti kamera bawaan
+    private func showVeil(_ hold: Double) {
+        veilToken += 1
+        let t = veilToken
+        withAnimation(.easeOut(duration: 0.12)) { flipVeil = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+            guard t == veilToken else { return }
+            withAnimation(.easeIn(duration: 0.3)) { flipVeil = false }
+        }
+    }
+
     private func flipCamera() {
         fxFront = !isFront
         fxTick += 1
-        withAnimation(.easeOut(duration: 0.12)) { flipVeil = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { withAnimation(.easeIn(duration: 0.3)) { flipVeil = false } }
+        showVeil(0.55)
         if cam.videoKind == .dual {
             cam.swapDual()
         } else if cam.isRecording {

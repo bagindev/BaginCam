@@ -1027,7 +1027,7 @@ final class CameraManager: NSObject, ObservableObject {
             // v0.41.6: di VIDEO format video dipasang DI TRANSAKSI YANG SAMA. Dulu kamera baru dipasang dulu dengan
             // format bawaannya (commit), lalu format video di transaksi kedua -> 18 Nov 12:50 / 12:51 sesi error
             // -11800 tiga kali beruntun saat depan -> belakang (preview beku + blur ~6 s).
-            if inVideo && dual == nil { applyVideoFormat(nested: true) }
+            if inVideo && dual == nil { applyVideoFormat(nested: true, callerZoom: true) }
             if let z = zoom, (try? d.lockForConfiguration()) != nil {
                 d.videoZoomFactor = min(max(z, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
                 d.unlockForConfiguration()
@@ -1948,8 +1948,11 @@ final class CameraManager: NSObject, ObservableObject {
     private func enterVideo() {
         guard !inVideo else { applyVideoFormat(); syncDual(); return }
         inVideo = true
-        videoQueue.async { self.vbVideo = true }
+        videoQueue.async { self.vbVideo = true; self.holdPreviewUntil = CACurrentMediaTime() + 5 }
         shutter180Warned = false
+        // v0.41.7: photo output dilepas, mikrofon + format video dipasang dalam SATU transaksi (dulu dua: sesi
+        // dikonfigurasi ulang dua kali -> jeda lebih lama). Preview menahan frame terakhir di balik tirai blur,
+        // seperti kamera bawaan (rekam layar 18 Nov 13:07: FOTO <-> VIDEO ~0,3-0,5 s blur).
         session.beginConfiguration()
         if session.outputs.contains(photoOutput) { session.removeOutput(photoOutput) }
         session.automaticallyConfiguresCaptureDeviceForWideColor = false
@@ -1963,10 +1966,11 @@ final class CameraManager: NSObject, ObservableObject {
             session.addOutput(audioOutput)
             audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
         }
+        applyVideoFormat(nested: true)
         session.commitConfiguration()
+        videoQueue.async { self.holdPreviewUntil = CACurrentMediaTime() + 0.2 }
         Log.camera.notice("VIDEO: masuk, mikrofon \(self.audioInput != nil, privacy: .public)")
         applyTeleFallback()
-        applyVideoFormat()
         syncDual()
     }
 
@@ -1974,7 +1978,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func leaveVideo() {
         guard inVideo else { return }
         inVideo = false
-        videoQueue.async { self.vbVideo = false; self.beautyV.reset() }
+        videoQueue.async { self.vbVideo = false; self.beautyV.reset(); self.holdPreviewUntil = CACurrentMediaTime() + 5 }
         dualWanted = false
         syncDual()
         session.beginConfiguration()
@@ -1991,7 +1995,7 @@ final class CameraManager: NSObject, ObservableObject {
             applyAuto()
         }
         applyDepth()        // v0.38: VIDEO -> POTRET (photo output baru dipasang lagi di sini)
-        videoQueue.async { self.previewLog = false }
+        videoQueue.async { self.previewLog = false; self.holdPreviewUntil = CACurrentMediaTime() + 0.2 }
         Log.camera.notice("VIDEO: keluar")
         applyTeleFallback()
         DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
@@ -2089,9 +2093,9 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// sessionQueue: pasang format video sesuai pengaturan (dengan cadangan bila tidak tersedia)
-    /// `nested`: dipanggil dari dalam konfigurasi sesi yang sedang terbuka (install) - tanpa begin/commit sendiri,
-    /// zoom diatur pemanggil
-    private func applyVideoFormat(nested: Bool = false) {
+    /// `nested`: dipanggil dari dalam konfigurasi sesi yang sedang terbuka - tanpa begin/commit sendiri.
+    /// `callerZoom`: zoom diatur pemanggil (install: kamera baru)
+    private func applyVideoFormat(nested: Bool = false, callerZoom: Bool = false) {
         guard inVideo, dual == nil, let d = device else { return }
         let s = videoSnap
         var fps = s.timelapse > 1 ? 30 : (s.fps == .auto ? 30 : s.fps.rawValue)
@@ -2141,7 +2145,7 @@ final class CameraManager: NSObject, ObservableObject {
             } else {
                 Log.camera.error("VIDEO: format tidak mendukung \(fps, privacy: .public) fps, pakai default")
             }
-            if !nested {
+            if !callerZoom {
                 let base = isVirtual ? wideBase : (aiLockNative > 0 ? 1 / aiLockNative : 1)
                 d.videoZoomFactor = min(max(s.zoom * base, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
             }
