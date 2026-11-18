@@ -27,10 +27,15 @@ final class BeautyVideoProcessor {
     private var totalMs = 0.0
     private var lastW = 0, lastH = 0
     private var fmtWarned = false
+    private var method = ""
 
-    /// s = frame, b = frame diblur, m = mask orang; amt = kekuatan halus, lift = pencerah kulit
+    /// v0.41.1: pemisahan frekuensi. s = frame, fs = blur tipis (~1 px, batas detail halus), b = dasar halus yang
+    /// menghormati tepi (CIEdgePreserveUpsample dari frame kecil), m = mask orang.
+    /// Build 100 mencampur kulit 75-95 % dengan blur gaussian besar (Strong 4K ~11 px) -> pori, bulu mata, kontur
+    /// mata / hidung ikut hilang = wajah terlihat tidak fokus (IMG_7404). Sekarang yang dihaluskan hanya pita tengah
+    /// (noda, belang, jerawat kecil); detail halus (s - fs) dikembalikan `keep` bagian -> wajah tetap tajam.
     private static let kernel = CIColorKernel(source: """
-    kernel vec4 beautyV(__sample s, __sample b, __sample m, float amt, float lift) {
+    kernel vec4 beautyV(__sample s, __sample fs, __sample b, __sample m, float amt, float keep, float lift) {
         vec3 wy = vec3(0.299, 0.587, 0.114);
         float y = dot(s.rgb, wy);
         float cb = 0.5 + dot(s.rgb, vec3(-0.168736, -0.331264, 0.5));
@@ -38,10 +43,13 @@ final class BeautyVideoProcessor {
         float skin = smoothstep(0.50, 0.54, cr) * (1.0 - smoothstep(0.68, 0.72, cr))
                    * smoothstep(0.26, 0.30, cb) * (1.0 - smoothstep(0.50, 0.54, cb))
                    * smoothstep(0.06, 0.14, y);
-        float d = abs(y - dot(b.rgb, wy));
-        float tex = 1.0 - smoothstep(0.03, 0.10, d);
+        // tepi kuat (garis mata, bibir, lubang hidung) tetap dari frame asli
+        float d = abs(dot(fs.rgb, wy) - dot(b.rgb, wy));
+        float tex = 1.0 - smoothstep(0.06, 0.20, d);
         float k = clamp(m.r, 0.0, 1.0) * skin;
-        vec3 o = mix(s.rgb, b.rgb, k * tex * amt);
+        float w = k * tex * amt;
+        vec3 base = mix(fs.rgb, b.rgb, w);
+        vec3 o = clamp(base + (s.rgb - fs.rgb) * (1.0 - w * (1.0 - keep)), 0.0, 1.0);
         o = mix(o, o * (2.0 - o), k * lift);
         return vec4(o, s.a);
     }
@@ -99,18 +107,32 @@ final class BeautyVideoProcessor {
             .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 2.0])
             .cropped(to: rawMask.extent)
             .transformed(by: CGAffineTransform(scaleX: ext.width / rawMask.extent.width, y: ext.height / rawMask.extent.height))
-        // radius halus mengikuti ukuran frame (1080p: 3 px Standard, 5,4 px Strong); 4K diblur di 1/2 resolusi
         let short = Double(min(w, h))
-        let r = short / 1080.0 * 3.0 * level.blurScale
-        let ks: CGFloat = short > 1500 ? 2 : 1
-        let b = src.transformed(by: CGAffineTransform(scaleX: 1 / ks, y: 1 / ks))
-            .clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": r / Double(ks)])
-            .transformed(by: CGAffineTransform(scaleX: ks, y: ks))
+        let strong = level == .strong
+        // detail halus: blur ~1 px (1080p) - yang lebih halus dari ini dipertahankan
+        let fs = src.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": max(0.8, short / 1080.0)])
             .cropped(to: ext)
-        let amt: Float = level == .strong ? 0.95 : 0.75
-        let lift: Float = level == .strong ? 0.18 : 0.10
-        guard let out = kernel.apply(extent: ext, arguments: [src, b, m, amt, lift]) else { return nil }
+        // dasar halus: frame diperkecil (sisi pendek 270 / 200 px - noda hilang) lalu dibesarkan lagi mengikuti
+        // tepi frame asli (bilateral bersama) -> kontur wajah tetap di tempatnya
+        let small = src.transformed(by: CGAffineTransform(scaleX: CGFloat((strong ? 200 : 270) / short),
+                                                          y: CGFloat((strong ? 200 : 270) / short)), highQualityDownsample: true)
+        let b: CIImage
+        if let ep = CIFilter(name: "CIEdgePreserveUpsampleFilter", parameters: [
+            kCIInputImageKey: src, "inputSmallImage": small, "inputSpatialSigma": 3.0, "inputLumaSigma": strong ? 0.12 : 0.09,
+        ]), let o = ep.outputImage {
+            b = o.cropped(to: ext)
+            method = "tepi"
+        } else {
+            b = src.clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": short / 1080.0 * 3.0])
+                .cropped(to: ext)
+            method = "gaussian"
+        }
+        let amt: Float = strong ? 1.0 : 0.85
+        let keep: Float = strong ? 0.5 : 0.7
+        let lift: Float = strong ? 0.16 : 0.10
+        guard let out = kernel.apply(extent: ext, arguments: [src, fs, b, m, amt, keep, lift]) else { return nil }
         ctx.render(out, to: dst, bounds: ext, colorSpace: nil)
         CVBufferPropagateAttachments(pb, dst)
         applied += 1
@@ -121,7 +143,7 @@ final class BeautyVideoProcessor {
         totalMs += (CACurrentMediaTime() - t0) * 1000
         frames += 1
         guard frames >= 300 else { return }
-        Log.camera.notice("Percantik video: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public), \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, diterapkan \(self.applied * 100 / self.frames, privacy: .public)%, suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
+        Log.camera.notice("Percantik video: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public), \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, dasar \(self.method, privacy: .public), diterapkan \(self.applied * 100 / self.frames, privacy: .public)%, suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
         frames = 0; applied = 0; totalMs = 0
     }
 
