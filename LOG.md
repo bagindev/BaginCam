@@ -2430,3 +2430,18 @@ Perubahan:
   2x): lebar (sensor penuh, device 1.0) <-> bingkai selfie (device 1.3); kuning saat lebar; setelah dicubit lebih
   dekat, ketuk = kembali ke bingkai selfie. Roda zoom tidak dipakai di kamera depan (cubit tetap).
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.1/BaginCam-unsigned.ipa`. IPA v0.41.7 dihapus.
+
+## 2026-11-18 - Preview VIDEO 16:9 penuh + pemilih mikrofon -> v0.42.2 build 110, v0.42.3 build 111
+
+Permintaan: tampilan video 16:9 penuh; "pilihan input audio eksternal kok tidak muncul".
+Temuan: app belum pernah punya pemilih mikrofon (di LOG hanya riset `AVInputPickerInteraction` iOS 26; HP iOS 18.7).
+Sesi kamera mengatur sesi audio sendiri -> Bluetooth tidak pernah dipakai, mikrofon USB-C / kabel tergantung iOS.
+Perubahan:
+- Build 110 (run 44251918087): "Isi layar" VIDEO bawaan mati + dimatikan sekali untuk setelan lama
+  (`videoFillOff109`) -> preview menampilkan bingkai 16:9 utuh seperti kamera bawaan.
+- Build 111 (run 44252379140): `AudioInputs.swift` (baru) - sesi audio app playAndRecord / videoRecording
+  (+ allowBluetooth, defaultToSpeaker), `automaticallyConfiguresApplicationAudioSession = false`, input pilihan
+  `setPreferredInput` (disimpan `audioInputUID`, dipasang lagi saat dicolok ulang), daftar diperbarui saat rute
+  berubah. Ubin laci VIDEO "Mikrofon" + baris "Mikrofon: .." di chip format. Log: "Mikrofon: dipakai .. tersedia
+  [..]", "VIDEO: mikrofon rekaman ..". Catatan: Bluetooth = profil telepon iOS (16 kHz).
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.3/BaginCam-unsigned.ipa`. IPA v0.42.1 dihapus.
