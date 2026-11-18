@@ -90,6 +90,17 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// v0.41.3: tingkat percantik VIDEO (terpisah dari foto). Soft = Standard build 102, Standard = Strong build 102,
+    /// Strong = kulit porselen (pori hilang, seperti HP Cina / Pixel), mata / alis / bibir tetap tajam.
+    enum VideoBeautyLevel: String, CaseIterable, Identifiable {
+        case off = "Mati"
+        case soft = "Soft"
+        case standard = "Standard"
+        case strong = "Strong"
+        var id: String { rawValue }
+        var active: Bool { self != .off }
+    }
+
     /// jenis rekaman di mode VIDEO: biasa, SINEMA (bokeh latar real-time), DUAL (belakang + depan)
     enum VideoKind: String { case normal, cinematic, dual }
 
@@ -393,7 +404,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
     /// v0.41: percantik VIDEO kamera depan (terpisah dari percantik foto). Diproses tiap frame -> preview = rekaman.
-    @Published var videoBeauty: BeautyLevel = Prefs.raw("videoBeauty", .off) {
+    @Published var videoBeauty: VideoBeautyLevel = Prefs.raw("videoBeauty", .off) {
         didSet {
             Prefs.set("videoBeauty", videoBeauty.rawValue)
             let v = videoBeauty
@@ -401,7 +412,7 @@ final class CameraManager: NSObject, ObservableObject {
             Log.camera.notice("Percantik video: \(v.rawValue, privacy: .public)")
         }
     }
-    private var vbLevel: BeautyLevel = Prefs.raw("videoBeauty", .off)     // videoQueue
+    private var vbLevel: VideoBeautyLevel = Prefs.raw("videoBeauty", .off)     // videoQueue
     private var vbFront = false                                         // videoQueue: kamera depan terpasang
     private var vbVideo = false                                         // videoQueue: sesi VIDEO
     private lazy var beautyV = BeautyVideoProcessor()                   // videoQueue

@@ -30,6 +30,7 @@ final class BeautyVideoProcessor {
     private var lastW = 0, lastH = 0
     private var fmtWarned = false
     private var kernelWarned = false
+    private var lastLevel = ""
     private let lm = VNDetectFaceLandmarksRequest()
     private static let noEll = CIVector(x: 0, y: 0, z: 0, w: 0)
 
@@ -135,7 +136,7 @@ final class BeautyVideoProcessor {
     }
 
     /// frame yang sudah dipercantik, atau nil (format 10-bit / mask belum ada / gagal) -> pakai frame asli
-    func process(_ pb: CVPixelBuffer, level: CameraManager.BeautyLevel) -> CVPixelBuffer? {
+    func process(_ pb: CVPixelBuffer, level: CameraManager.VideoBeautyLevel) -> CVPixelBuffer? {
         guard level.active, ProcessInfo.processInfo.thermalState != .critical else { return nil }     // suhu kritis: dilewati
         guard let kernel = Self.kernel, let sqK = Self.sqKernel, let aK = Self.aKernel, let bK = Self.bKernel else {
             if !kernelWarned {
@@ -156,6 +157,7 @@ final class BeautyVideoProcessor {
         defer { stats(t0) }
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
         lastW = w; lastH = h
+        lastLevel = level.rawValue
         let (maskOpt, feats) = currentMask(pb)
         guard let mask = maskOpt, let dst = makeBuffer(w, h) else { return nil }
         if !feats.isEmpty { withFace += 1 }
@@ -167,7 +169,6 @@ final class BeautyVideoProcessor {
             .cropped(to: rawMask.extent)
             .transformed(by: CGAffineTransform(scaleX: ext.width / rawMask.extent.width, y: ext.height / rawMask.extent.height))
         let short = Double(min(w, h))
-        let strong = level == .strong
         let fs = src.clampedToExtent()
             .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": max(0.8, short / 1080.0)])
             .cropped(to: ext)
@@ -175,8 +176,15 @@ final class BeautyVideoProcessor {
         let k: CGFloat = short > 1500 ? 4 : 2
         let p = src.transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k), highQualityDownsample: true)
         let pe = p.extent
-        let r = strong ? 6.0 : 4.0
-        let eps: Float = strong ? 0.0030 : 0.0015
+        // v0.41.3: Soft / Standard = Standard / Strong build 102; Strong = porselen (diuji offline: Strong A,
+        // percantik_video_sim3_1118.jpg - pori hilang, mata & hidung tetap). Dua lapis guided (B) mengaburkan hidung.
+        let (r, eps, keep, amt, lift): (Double, Float, Float, Float, Float) = {
+            switch level {
+            case .soft: return (4, 0.0015, 0.55, 0.85, 0.08)
+            case .standard: return (6, 0.0030, 0.40, 1.0, 0.14)
+            default: return (8, 0.0060, 0.15, 1.0, 0.16)
+            }
+        }()
         func box(_ i: CIImage) -> CIImage {
             i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: ["inputRadius": r]).cropped(to: pe)
         }
@@ -189,9 +197,6 @@ final class BeautyVideoProcessor {
         let mb = box(b).transformed(by: up).cropped(to: ext)
         var e = feats
         while e.count < 5 { e.append(Self.noEll) }
-        let amt: Float = strong ? 1.0 : 0.85
-        let keep: Float = strong ? 0.4 : 0.55
-        let lift: Float = strong ? 0.14 : 0.08
         guard let out = kernel.apply(extent: ext, arguments: [src, fs, ma, mb, m, e[0], e[1], e[2], e[3], e[4],
                                                               amt, keep, lift]) else { return nil }
         ctx.render(out, to: dst, bounds: ext, colorSpace: nil)
@@ -204,7 +209,7 @@ final class BeautyVideoProcessor {
         totalMs += (CACurrentMediaTime() - t0) * 1000
         frames += 1
         guard frames >= 300 else { return }
-        Log.camera.notice("Percantik video: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public), \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, guided, wajah \(self.withFace * 100 / self.frames, privacy: .public)%, diterapkan \(self.applied * 100 / self.frames, privacy: .public)%, suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
+        Log.camera.notice("Percantik video: \(self.lastW, privacy: .public)x\(self.lastH, privacy: .public), \(self.totalMs / Double(self.frames), format: .fixed(precision: 1), privacy: .public) ms/frame, \(self.lastLevel, privacy: .public), wajah \(self.withFace * 100 / self.frames, privacy: .public)%, diterapkan \(self.applied * 100 / self.frames, privacy: .public)%, suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
         frames = 0; applied = 0; withFace = 0; totalMs = 0
     }
 

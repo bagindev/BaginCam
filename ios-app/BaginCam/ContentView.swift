@@ -20,6 +20,10 @@ struct ContentView: View {
     @AppStorage("videoFill") private var videoFill = true
     /// v0.40.2: LUT di preview (mati = preview lebih ringan; LUT tetap dibakar ke foto / video bila disetel)
     @AppStorage("previewLUT") private var previewLUT = true
+    /// v0.41.3: efek Dynamic Island saat ganti kamera
+    @AppStorage("flipFX") private var flipFX = FlipFX.ring.rawValue
+    @State private var fxTick = 0
+    @State private var fxFront = true
     private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
     /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
     /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
@@ -110,6 +114,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             if cam.idlePaused { idlePauseLayer }
             if cam.screenFlash { Color(red: 1, green: 0.97, blue: 0.92).ignoresSafeArea().allowsHitTesting(false) }
+            FlipFXOverlay(trigger: fxTick, toFront: fxFront, style: FlipFX(rawValue: flipFX) ?? .ring)
         }
         .background(TouchSpyView { touch.mark() })
         .sheet(isPresented: $showSettings) {
@@ -894,7 +899,7 @@ struct ContentView: View {
     /// v0.41: percantik video selfie
     private var videoBeautyChip: some View {
         Menu {
-            ForEach(CameraManager.BeautyLevel.allCases) { l in
+            ForEach(CameraManager.VideoBeautyLevel.allCases) { l in
                 Button { cam.videoBeauty = l } label: { check(l.rawValue, cam.videoBeauty == l) }
             }
             Text("Menghaluskan kulit di video kamera depan (langsung terlihat di layar). Hanya SDR - HLG / Log tidak")
@@ -1814,6 +1819,8 @@ struct ContentView: View {
     }
 
     private func flipCamera() {
+        fxFront = !isFront
+        fxTick += 1
         if cam.videoKind == .dual {
             cam.swapDual()
         } else if cam.isRecording {

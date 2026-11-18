@@ -17,6 +17,7 @@ struct ControlDrawer: View {
     let compScan: () -> Void
     let open: (Target) -> Void
     @AppStorage("videoFullScreen") private var videoFull = true
+    @AppStorage("flipFX") private var flipFX = FlipFX.ring.rawValue
 
     private var isVideo: Bool { cam.shootMode == .video }
     private var hasBokeh: Bool { cam.shootMode == .portrait || (isVideo && cam.videoKind == .cinematic) }
@@ -128,7 +129,7 @@ struct ControlDrawer: View {
     @ViewBuilder private var videoTiles: some View {
         if cam.videoKind == .normal && isFront {
             menuTile(cam.videoBeauty.rawValue, "Percantik", on: cam.videoBeauty.active) {
-                ForEach(CameraManager.BeautyLevel.allCases) { l in
+                ForEach(CameraManager.VideoBeautyLevel.allCases) { l in
                     pick(l.rawValue, cam.videoBeauty == l) { cam.videoBeauty = l }
                 }
                 Text("Video kamera depan, hanya SDR")
@@ -272,6 +273,11 @@ struct ControlDrawer: View {
     // MARK: - tampilan
     @ViewBuilder private var viewTiles: some View {
         toggleTile("grid", "Grid", showGrid) { showGrid.toggle() }
+        menuTile(flipFX, "Efek ganti kamera", on: flipFX != FlipFX.off.rawValue) {
+            ForEach(FlipFX.allCases) { f in
+                pick(f.detail, flipFX == f.rawValue) { flipFX = f.rawValue }
+            }
+        }
         toggleTile("level", "Waterpass", showLevel) { showLevel.toggle() }
         toggleTile("scope", "Peaking", peaking) { peaking.toggle() }
         toggleTile("line.diagonal", "Zebra", zebra) { zebra.toggle() }
