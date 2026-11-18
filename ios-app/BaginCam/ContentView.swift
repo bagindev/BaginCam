@@ -17,7 +17,7 @@ struct ContentView: View {
     private var videoFullActive: Bool { videoFull && cam.shootMode == .video }
     /// v0.40: jendela bidik video mengisi seluruh layar (tanpa bar hitam atas-bawah); sisi kiri-kanan rekaman 16:9
     /// tidak terlihat di preview (layar 19,5:9 lebih ramping dari video)
-    @AppStorage("videoFill") private var videoFill = true
+    @AppStorage("videoFill") private var videoFill = false
     /// v0.40.2: LUT di preview (mati = preview lebih ringan; LUT tetap dibakar ke foto / video bila disetel)
     @AppStorage("previewLUT") private var previewLUT = true
     /// v0.41.3: efek Dynamic Island saat ganti kamera
@@ -169,6 +169,12 @@ struct ContentView: View {
             showHistogram = proOn
             cam.start()
             level.start()
+            // v0.42.2: preview VIDEO menampilkan bingkai 16:9 penuh seperti kamera bawaan (isi layar memotong kiri-kanan
+            // ~18 %, terlihat lebih sempit dari bawaan - IMG_7419-7421). Sekali: setelan lama dimatikan.
+            if !UserDefaults.standard.bool(forKey: "videoFillOff109") {
+                UserDefaults.standard.set(true, forKey: "videoFillOff109")
+                videoFill = false
+            }
             if luts.selected == nil {
                 luts.select(luts.items.first { $0.name.contains("STANDARD") } ?? luts.items.first)
             }
@@ -1976,7 +1982,7 @@ private struct AssistPanel: View {
     @Binding var showHistogram: Bool
     let close: () -> Void
     @AppStorage("videoFullScreen") private var videoFull = true
-    @AppStorage("videoFill") private var videoFill = true
+    @AppStorage("videoFill") private var videoFill = false
     @AppStorage("previewLUT") private var previewLUT = true
 
     var body: some View {
