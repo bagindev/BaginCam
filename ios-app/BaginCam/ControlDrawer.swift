@@ -17,7 +17,7 @@ struct ControlDrawer: View {
     let compScan: () -> Void
     let open: (Target) -> Void
     @AppStorage("videoFullScreen") private var videoFull = true
-    @AppStorage("flipFX") private var flipFX = FlipFX.ring.rawValue
+    @AppStorage("flipFX") private var flipFX = FlipFX.orbit.rawValue
 
     private var isVideo: Bool { cam.shootMode == .video }
     private var hasBokeh: Bool { cam.shootMode == .portrait || (isVideo && cam.videoKind == .cinematic) }

@@ -7,13 +7,22 @@ import CoreImage.CIFilterBuiltins
 
 /// Render frame kamera ke layar dengan Metal (Core Image di GPU):
 /// digital zoom -> LUT -> focus peaking -> zebra, plus histogram luminans.
-/// Semua properti diakses dari main thread (draw MTKView berjalan di main).
+/// v0.41.4: digambar di antrean sendiri tiap ada frame kamera baru (CAMetalLayer.nextDrawable), BUKAN dari main
+/// thread. Dulu (display link di main) preview turun ke ~4 fps selama menu / laci iOS terbuka (rekam layar 18 Nov
+/// 12:21, frame 61-122 sama) karena main thread sibuk menggambar menu + blur. Properti diisi dari main (nilai
+/// sederhana); callback ke UI (histogram, AI komposisi, peta zoom) dikirim ke main.
 final class PreviewRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let ciContext: CIContext
     private let lock = NSLock()
     private var latest: CIImage?
+    private let renderQueue = DispatchQueue(label: "bagincam.preview", qos: .userInteractive)
+    private var rendering = false                 // dijaga lock
+    private weak var layer: CAMetalLayer?         // dijaga lock
+    private var lastRender = 0.0                  // renderQueue
+    /// batas fps preview (panas kritis: 20)
+    var fpsLimit = 30
 
     var lutFilter: CIFilter?
     /// beku = frame terakhir tetap tampil (saat capture mengganti zoom/lensa di belakang layar)
@@ -52,18 +61,50 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         super.init()
     }
 
-    /// Dipanggil dari antrean video kamera.
+    /// layer tujuan (main, dari PreviewMTKView); nil = tidak menggambar
+    func attach(_ l: CAMetalLayer?) {
+        lock.lock(); layer = l; lock.unlock()
+    }
+
+    /// Dipanggil dari antrean video kamera. Frame baru langsung digambar di antrean preview.
     func push(_ image: CIImage) {
-        lock.lock(); if !frozen { latest = image }; lock.unlock()
+        lock.lock()
+        if frozen { lock.unlock(); return }
+        latest = image
+        let start = !rendering && layer != nil
+        if start { rendering = true }
+        lock.unlock()
+        if start { renderQueue.async { self.renderLoop() } }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func draw(in view: MTKView) {}
 
-    func draw(in view: MTKView) {
-        lock.lock(); let frame = latest; lock.unlock()
-        guard var image = frame, frame !== lastDrawn,
-              let drawable = view.currentDrawable,
-              let commandBuffer = queue.makeCommandBuffer() else { return }
+    /// renderQueue: gambar frame terbaru sampai tidak ada yang baru
+    private func renderLoop() {
+        while true {
+            lock.lock()
+            let frame = latest, l = layer
+            if frame == nil || frame === lastDrawn || l == nil {
+                rendering = false
+                lock.unlock()
+                return
+            }
+            lock.unlock()
+            // batas fps (frame kamera bisa 60 fps saat merekam 60p)
+            let minGap = 1.0 / Double(max(fpsLimit, 1)) - 0.004
+            let now = CACurrentMediaTime()
+            if now - lastRender < minGap { Thread.sleep(forTimeInterval: minGap - (now - lastRender)) }
+            lastRender = CACurrentMediaTime()
+            autoreleasepool { render(frame!, layer: l!) }
+        }
+    }
+
+    private func render(_ frame: CIImage, layer: CAMetalLayer) {
+        let ds = layer.drawableSize
+        guard ds.width > 8, ds.height > 8, let drawable = layer.nextDrawable(),
+              let commandBuffer = queue.makeCommandBuffer() else { lastDrawn = frame; return }
+        var image = frame
         let tDraw = CACurrentMediaTime()
 
         // digital zoom (crop tengah) - sama persis dengan crop AI Zoom saat memotret
@@ -74,7 +115,6 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         }
         // v0.12.1: perkecil ke ukuran layar DULU (4K = 8 MP -> ~1-2 MP), baru LUT / peaking / zebra / histogram.
         // Dulu semua filter jalan di 4K penuh 30x per detik -> GPU kerja keras, HP cepat panas saat video.
-        let ds = view.drawableSize
         do {
             let e = image.extent
             let k = max(ds.width / e.width, ds.height / e.height)
@@ -85,7 +125,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             }
         }
         let extent = image.extent
-        if let cb = onAnalysis, frameCounter % 8 == 0 { cb(image) }
+        if let cb = onAnalysis, frameCounter % 8 == 0 { let im = image; DispatchQueue.main.async { cb(im) } }
 
         // luminans sinyal (sebelum LUT) untuk zebra / peaking / histogram
         var luma: CIImage?
@@ -108,7 +148,10 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             if let out = sharpenFilter.outputImage?.cropped(to: extent) { image = out }
         }
 
-        if let nav = navigator, nav.wantsRef { nav.offer(image, context: ciContext) }
+        if let nav = navigator, nav.wantsRef {
+            let im = image, ctx = ciContext
+            DispatchQueue.main.async { nav.offer(im, context: ctx) }
+        }
 
         if peaking, let l = luma {
             let edges = CIFilter.edges()
@@ -149,7 +192,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             y: (ds.height - image.extent.height) / 2 - image.extent.origin.y))
 
         let dest = CIRenderDestination(width: Int(ds.width), height: Int(ds.height),
-                                       pixelFormat: view.colorPixelFormat,
+                                       pixelFormat: layer.pixelFormat,
                                        commandBuffer: commandBuffer,
                                        mtlTextureProvider: { drawable.texture })
         _ = try? ciContext.startTask(toRender: image, from: CGRect(origin: .zero, size: ds),
@@ -175,8 +218,11 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             let fps = Double(statFrames) / el, cpu = statCPU / Double(max(statFrames, 1)) * 1000
             let on = [lutFilter != nil ? "LUT" : nil, sharpen > 0.01 ? "tajam" : nil, histogramEnabled ? "histogram" : nil,
                       zebra ? "zebra" : nil, peaking ? "peaking" : nil, navigator?.wantsRef == true ? "peta" : nil].compactMap { $0 }
+            let dsw = Int(ds.width), dsh = Int(ds.height), onTxt = on.joined(separator: ", ")
+            DispatchQueue.main.async {
             let ui = Double(BodyCounter.take()) / el
-            Log.camera.notice("Preview: \(fps, format: .fixed(precision: 1), privacy: .public) fps, UI \(ui, format: .fixed(precision: 1), privacy: .public)x/s, CPU \(cpu, format: .fixed(precision: 1), privacy: .public) ms, GPU \(gpu, format: .fixed(precision: 1), privacy: .public) ms per frame, \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public), aktif [\(on.joined(separator: ", "), privacy: .public)], suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
+            Log.camera.notice("Preview: \(fps, format: .fixed(precision: 1), privacy: .public) fps, UI \(ui, format: .fixed(precision: 1), privacy: .public)x/s, CPU \(cpu, format: .fixed(precision: 1), privacy: .public) ms, GPU \(gpu, format: .fixed(precision: 1), privacy: .public) ms per frame, \(dsw, privacy: .public)x\(dsh, privacy: .public), aktif [\(onTxt, privacy: .public)], suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public), digambar di antrean sendiri")
+            }
             statStart = CACurrentMediaTime()
             statFrames = 0
             statCPU = 0
@@ -209,7 +255,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         // akar supaya bin kecil tetap terlihat
         bins = bins.map { $0.squareRoot() }
         if let m = bins.max(), m > 0 { bins = bins.map { $0 / m } }
-        onHistogram?(bins)
+        if let cb = onHistogram { DispatchQueue.main.async { cb(bins) } }
     }
 }
 
@@ -225,9 +271,11 @@ struct MetalPreview: UIViewRepresentable {
         let v = PreviewMTKView(frame: .zero, device: renderer.device)
         v.colorPixelFormat = .bgra8Unorm
         v.framebufferOnly = false          // wajib supaya Core Image bisa menulis ke drawable
-        v.preferredFramesPerSecond = fps
         v.delegate = renderer
-        v.startLink()
+        v.isPaused = true                  // v0.41.4: tidak pakai pewaktu MTKView - digambar dari antrean preview
+        v.enableSetNeedsDisplay = false
+        v.renderer = renderer
+        renderer.fpsLimit = fps
         v.backgroundColor = .black
         if #available(iOS 17.2, *), let action = onHardwareShutter {
             let volEvent = onVolumeEvent
@@ -246,55 +294,22 @@ struct MetalPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MTKView, context: Context) {
-        if uiView.preferredFramesPerSecond != fps { uiView.preferredFramesPerSecond = fps }
-        (uiView as? PreviewMTKView)?.setFps(fps)
+        if renderer.fpsLimit != fps { renderer.fpsLimit = fps }
     }
 
     static func dismantleUIView(_ uiView: MTKView, coordinator: ()) {
-        (uiView as? PreviewMTKView)?.stopLink()
+        (uiView as? PreviewMTKView)?.renderer?.attach(nil)
     }
 }
 
-/// v0.41.2: MTKView digerakkan CADisplayLink sendiri di mode run loop `.common`. Pewaktu bawaan MTKView berhenti
-/// selama menu / daftar pilihan iOS terbuka (run loop di mode tracking) -> preview membeku lalu "loncat" saat menu
-/// ditutup (rekam layar 18 Nov 11:44, terasa berkedip).
+/// v0.41.4: MTKView hanya wadah CAMetalLayer; gambar dikirim PreviewRenderer dari antrean preview.
+/// (v0.41.2 memakai CADisplayLink di main - tetap tersendat saat menu karena main thread sibuk.)
 final class PreviewMTKView: MTKView {
-    private var link: CADisplayLink?
-    private var fps = 30
-
-    func startLink() {
-        isPaused = true
-        enableSetNeedsDisplay = false
-        guard link == nil else { return }
-        let l = CADisplayLink(target: LinkTarget(self), selector: #selector(LinkTarget.tick))
-        l.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(fps, 30)), maximum: Float(fps), preferred: Float(fps))
-        l.add(to: .main, forMode: .common)
-        link = l
-    }
-
-    func setFps(_ f: Int) {
-        guard f != fps else { return }
-        fps = f
-        link?.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(f, 30)), maximum: Float(f), preferred: Float(f))
-    }
-
-    func stopLink() {
-        link?.invalidate()
-        link = nil
-    }
+    weak var renderer: PreviewRenderer?
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { stopLink() } else if link == nil { startLink() }
-    }
-
-    fileprivate func tick() { draw() }
-
-    /// target lemah - CADisplayLink menahan target-nya
-    private final class LinkTarget: NSObject {
-        weak var view: PreviewMTKView?
-        init(_ v: PreviewMTKView) { view = v }
-        @objc func tick() { view?.tick() }
+        renderer?.attach(window == nil ? nil : layer as? CAMetalLayer)
     }
 }
 

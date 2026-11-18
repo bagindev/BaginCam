@@ -173,7 +173,9 @@ final class BeautyVideoProcessor {
             .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": max(0.8, short / 1080.0)])
             .cropped(to: ext)
         // guided filter di resolusi rendah (1080p: 1/2, 4K: 1/4), koefisien dibesarkan lagi ("fast guided filter")
-        let k: CGFloat = short > 1500 ? 4 : 2
+        // v0.41.4: Standard / Strong di resolusi 2x lebih kecil lagi dengan jari-jari setengah = jangkauan sama,
+        // piksel 4x lebih sedikit (Strong build 103: 23-34 ms/frame, preview ikut tersendat)
+        let k: CGFloat = (short > 1500 ? 4 : 2) * (level == .soft ? 1 : 2)
         let p = src.transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k), highQualityDownsample: true)
         let pe = p.extent
         // v0.41.3: Soft / Standard = Standard / Strong build 102; Strong = porselen (diuji offline: Strong A,
@@ -181,8 +183,8 @@ final class BeautyVideoProcessor {
         let (r, eps, keep, amt, lift): (Double, Float, Float, Float, Float) = {
             switch level {
             case .soft: return (4, 0.0015, 0.55, 0.85, 0.08)
-            case .standard: return (6, 0.0030, 0.40, 1.0, 0.14)
-            default: return (8, 0.0060, 0.15, 1.0, 0.16)
+            case .standard: return (3, 0.0030, 0.40, 1.0, 0.14)
+            default: return (4, 0.0060, 0.15, 1.0, 0.16)
             }
         }()
         func box(_ i: CIImage) -> CIImage {

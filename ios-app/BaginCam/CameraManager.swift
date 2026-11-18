@@ -296,6 +296,9 @@ final class CameraManager: NSObject, ObservableObject {
     /// mode yang memakai kamera virtual (lensa otomatis seperti kamera bawaan): AI ZOOM & FOTO
     /// v0.38.1: zoom kamera depan (sensor 12MP; 4x = 1008 px asli, lebih dari itu tidak berguna)
     static let frontMaxZoom: CGFloat = 3      // v0.38.4: 4x -> 3x (3x pun sudah buram, IMG_7381)
+    /// v0.41.4: zoom device kamera depan saat dibuka / ganti kamera = bingkai selfie kamera bawaan (tampil "1x";
+    /// sensor penuh tampil "0.5x")
+    static let frontDefaultZoom: CGFloat = 1.3
 
     static func usesVirtual(_ m: Mode) -> Bool { m == .aiZoom || m == .heif || m == .hdrplus }
     @Published var srModel: SRModel = Prefs.raw("srModel", .fast) { didSet { Prefs.set("srModel", srModel.rawValue) } }
@@ -415,6 +418,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var vbLevel: VideoBeautyLevel = Prefs.raw("videoBeauty", .off)     // videoQueue
     private var vbFront = false                                         // videoQueue: kamera depan terpasang
     private var vbVideo = false                                         // videoQueue: sesi VIDEO
+    private var holdPreviewUntil: CFTimeInterval = 0                    // videoQueue: preview ditahan (ganti kamera)
     private lazy var beautyV = BeautyVideoProcessor()                   // videoQueue
     /// v0.38.4: foto kamera depan disimpan seperti cermin (sama dengan preview). Mati = seperti dilihat orang lain
     /// (tulisan terbaca normal, sama dengan bawaan kamera iPhone). Preview tetap cermin.
@@ -1007,8 +1011,11 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     /// Pasang device ke session (fisik atau virtual).
-    private func install(_ d: AVCaptureDevice, mirrored: Bool) {
+    /// `zoom`: v0.41.4 - faktor zoom device dipasang DI DALAM konfigurasi, jadi frame pertama sudah benar. Dulu zoom
+    /// disetel setelah sesi jalan -> kembali ke kamera belakang tampil 0.5x (Ultra Wide) ~0,4 s lalu loncat ke 1x.
+    private func install(_ d: AVCaptureDevice, mirrored: Bool, zoom: CGFloat? = nil) {
         guard let input = try? AVCaptureDeviceInput(device: d) else { return }
+        videoQueue.async { self.holdPreviewUntil = CACurrentMediaTime() + 5 }     // tahan preview selama ganti kamera
         session.beginConfiguration()
         if let cur = currentInput { session.removeInput(cur) }
         if session.canAddInput(input) {
@@ -1016,6 +1023,10 @@ final class CameraManager: NSObject, ObservableObject {
             currentInput = input
             device = d
             applyFocusRange(d)
+            if let z = zoom, (try? d.lockForConfiguration()) != nil {
+                d.videoZoomFactor = min(max(z, d.minAvailableVideoZoomFactor), d.maxAvailableVideoZoomFactor)
+                d.unlockForConfiguration()
+            }
         } else if let cur = currentInput, session.canAddInput(cur) {
             session.addInput(cur)
         }
@@ -1036,6 +1047,9 @@ final class CameraManager: NSObject, ObservableObject {
             photoOutput.maxPhotoQualityPrioritization = .quality
         }
         session.commitConfiguration()
+        // v0.41.4: 1-2 frame pertama kamera baru masih gelap (eksposur belum menyesuaikan) -> kedip gelap
+        // (rekam layar 18 Nov 12:21, frame 260-261 / 319). Preview menahan frame lama ~0,25 s lagi.
+        videoQueue.async { self.holdPreviewUntil = CACurrentMediaTime() + 0.25 }
         applyLive()
         applyDepth()        // v0.38: tiap ganti kamera (app dibuka, balik kamera, kunci lensa, kembali dari burst)
         let flashOK = photoOutput.supportedFlashModes.contains(.on)
@@ -1061,13 +1075,13 @@ final class CameraManager: NSObject, ObservableObject {
             switchDevice(to: .wide, mode: .aiZoom)
             return
         }
-        install(vd, mirrored: false)
-        isVirtual = true
-        aiLockNative = 0
         let cons = vd.constituentDevices
         let sw = vd.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
         var bases: [AVCaptureDevice.DeviceType: CGFloat] = [:]
         for (i, c) in cons.enumerated() { bases[c.deviceType] = i == 0 ? 1 : (i - 1 < sw.count ? sw[i - 1] : 1) }
+        install(vd, mirrored: false, zoom: startZoom * (bases[.builtInWideAngleCamera] ?? 1))
+        isVirtual = true
+        aiLockNative = 0
         lensBase = bases
         wideBase = bases[.builtInWideAngleCamera] ?? 1
         let maxZ: CGFloat = 100  // di atas batas hardware: preview di-crop tambahan, capture tetap crop sendiri
@@ -1106,11 +1120,10 @@ final class CameraManager: NSObject, ObservableObject {
         aeafLocked = false
         let native: CGFloat = l == .tele ? 5 : (l == .ultraWide ? 0.5 : 1)
         // v0.38.1: kamera depan punya zoom sendiri (1-4x), selalu mulai dari 1x = sensor penuh
-        let tz = zoom ?? (l == .front ? 1 : max(totalZoom, l == nil ? 1 : native))
+        let tz = zoom ?? (l == .front ? Self.frontDefaultZoom : max(totalZoom, l == nil ? 1 : native))
         sessionQueue.async {
             guard let l else {
-                self.enterAIZoom(zoom: tz)
-                if self.inVideo { self.applyVideoFormat() }   // v0.12: dulu format video hilang setelah kembali ke Auto
+                self.enterAIZoom(zoom: tz)      // enterAIZoom sudah memasang format video (dulu dipanggil 2x)
                 return
             }
             guard let d = AVCaptureDevice.default(l.deviceType, for: .video, position: l.position) else {
@@ -1118,7 +1131,7 @@ final class CameraManager: NSObject, ObservableObject {
                 return
             }
             self.isVirtual = false
-            self.install(d, mirrored: l == .front)
+            self.install(d, mirrored: l == .front, zoom: min(max(tz / native, 1), d.maxAvailableVideoZoomFactor))
             self.aiLockNative = native
             self.applyRawMode(.aiZoom)
             self.applyAuto()
@@ -4049,6 +4062,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             recorder?.faceTrackCrop = ft
         }
         recorder?.appendVideo(pb, pts: CMTimeSubtract(rawPTS, shift))
+        if holdPreviewUntil > 0 && CACurrentMediaTime() < holdPreviewUntil { return }
         if previewLog {
             // Apple Log: nilai mentah (tanpa manajemen warna) -> LUT Log -> Rec.709 untuk dilihat
             let raw = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])

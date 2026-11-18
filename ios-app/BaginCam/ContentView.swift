@@ -21,9 +21,11 @@ struct ContentView: View {
     /// v0.40.2: LUT di preview (mati = preview lebih ringan; LUT tetap dibakar ke foto / video bila disetel)
     @AppStorage("previewLUT") private var previewLUT = true
     /// v0.41.3: efek Dynamic Island saat ganti kamera
-    @AppStorage("flipFX") private var flipFX = FlipFX.ring.rawValue
+    @AppStorage("flipFX") private var flipFX = FlipFX.orbit.rawValue
     @State private var fxTick = 0
     @State private var fxFront = true
+    /// v0.41.4: tirai blur di preview saat ganti kamera (menutupi jeda, seperti kamera bawaan)
+    @State private var flipVeil = false
     private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
     /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
     /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
@@ -114,7 +116,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             if cam.idlePaused { idlePauseLayer }
             if cam.screenFlash { Color(red: 1, green: 0.97, blue: 0.92).ignoresSafeArea().allowsHitTesting(false) }
-            FlipFXOverlay(trigger: fxTick, toFront: fxFront, style: FlipFX(rawValue: flipFX) ?? .ring)
+            FlipFXOverlay(trigger: fxTick, toFront: fxFront, style: FlipFX(rawValue: flipFX) ?? .orbit)
         }
         .background(TouchSpyView { touch.mark() })
         .sheet(isPresented: $showSettings) {
@@ -1055,6 +1057,7 @@ struct ContentView: View {
         }, fps: cam.thermal >= 3 ? 20 : 30)      // v0.40.1: 20 fps hanya saat kritis (suhu 2 = 17-19 fps, tersendat dibanding kamera bawaan)
             .modifier(PreviewAspect(ratio: videoFillActive ? nil : (cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0)))
             .clipped()
+            .overlay { if flipVeil { Rectangle().fill(.ultraThinMaterial).allowsHitTesting(false).transition(.opacity) } }
             .overlay { ratioMask }
             .overlay { frameGuideOverlay }
             .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
@@ -1285,6 +1288,7 @@ struct ContentView: View {
 
     private var minZoom: Double {
         if cam.videoKind == .dual { return cam.availableLenses.contains(.ultraWide) ? 0.5 : 1 }
+        if frontZoomUI { return 0.5 }
         switch cam.aiLensLock {
         case .tele?: return cam.autoTele && !cam.isRecording ? Double(cam.minAutoZoom) : 5
         case .ultraWide?: return 0.5
@@ -1294,13 +1298,29 @@ struct ContentView: View {
     }
     private var maxZoom: Double {
         if cam.videoKind == .dual { return 15 }
+        if frontZoomUI { return Self.frontDisplay(Double(cam.maxTotalZoom)) }
         // v0.38.4: video dibatasi zoom yang benar-benar terekam (hardware), bukan crop preview
         if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty { return min(Double(cam.maxTotalZoom), Double(cam.videoMaxZoom)) }
         return Double(cam.maxTotalZoom)
     }
-    private var displayZoom: Double { Double(cam.totalZoom) }
 
-    private func setDisplayZoom(_ z: Double, immediate: Bool = false) { cam.setTotalZoom(CGFloat(z), immediate: immediate) }
+    /// v0.41.4: skala zoom tampil kamera depan. 0.5x = sensor penuh (zoom device 1), 1x = bingkai selfie kamera bawaan
+    /// (device 1.3, bawaan saat dibuka / ganti kamera), 2x = device 2.6. Di bawah 1x linear 0.5 -> 1 = device 1 -> 1.3.
+    private var frontZoomUI: Bool { isFront && cam.videoKind != .dual && CameraManager.usesVirtual(cam.mode) }
+    private static func frontDisplay(_ d: Double) -> Double {
+        let k = Double(CameraManager.frontDefaultZoom)
+        return d <= k ? 0.5 + (d - 1) / (k - 1) * 0.5 : d / k
+    }
+    private static func frontDevice(_ z: Double) -> Double {
+        let k = Double(CameraManager.frontDefaultZoom)
+        return z <= 1 ? 1 + (max(z, 0.5) - 0.5) * 2 * (k - 1) : z * k
+    }
+
+    private var displayZoom: Double { frontZoomUI ? Self.frontDisplay(Double(cam.totalZoom)) : Double(cam.totalZoom) }
+
+    private func setDisplayZoom(_ z: Double, immediate: Bool = false) {
+        cam.setTotalZoom(CGFloat(frontZoomUI ? Self.frontDevice(z) : z), immediate: immediate)
+    }
 
     /// v0.39: peta zoom - kamera belakang, bukan DUAL
     private var navEnabled: Bool { showsZoom && !isFront && cam.videoKind != .dual }
@@ -1313,10 +1333,9 @@ struct ContentView: View {
     }
 
     private var zoomPresets: [Double] {
-        // v0.38.1: kamera depan - 1x = sensor penuh (lebih lebar dari selfie kamera bawaan), 1.3x = bingkai selfie
-        // kamera bawaan, 2x / 3x = crop + HDR+ multi-frame
-        if isFront && cam.videoKind != .dual {
-            return [1, 1.3, 2].filter { $0 <= maxZoom + 0.01 }
+        // v0.41.4: kamera depan - 0.5x = sensor penuh, 1x = bingkai selfie kamera bawaan (bawaan), 2x = crop
+        if frontZoomUI {
+            return [0.5, 1, 2].filter { $0 <= maxZoom + 0.01 }
         }
         if cam.shootMode == .video && !cam.nativeZoomPoints.isEmpty {
             // video: titik native (lensa + crop sensor 48 MP) + 10x
@@ -1821,6 +1840,8 @@ struct ContentView: View {
     private func flipCamera() {
         fxFront = !isFront
         fxTick += 1
+        withAnimation(.easeOut(duration: 0.12)) { flipVeil = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { withAnimation(.easeIn(duration: 0.3)) { flipVeil = false } }
         if cam.videoKind == .dual {
             cam.swapDual()
         } else if cam.isRecording {

@@ -11,6 +11,7 @@ enum FlipFX: String, CaseIterable, Identifiable {
     case island = "Pulau"
     case ring = "Cincin"
     case pulse = "Denyut"
+    case orbit = "Lingkar"
     case ringIsland = "Cincin + pulau"
     var id: String { rawValue }
     var detail: String {
@@ -19,6 +20,7 @@ enum FlipFX: String, CaseIterable, Identifiable {
         case .island: return "Pulau melebar (ala Dynamic Island)"
         case .ring: return "Cincin di lensa (ala Pixel)"
         case .pulse: return "Denyut cahaya"
+        case .orbit: return "Lingkar penuh + denyut"
         case .ringIsland: return "Cincin + pulau melebar"
         }
     }
@@ -32,7 +34,7 @@ struct FlipFXOverlay: View {
     @State private var front = true
     @State private var shownStyle: FlipFX = .off
 
-    private static let duration = 1.25
+    private static let duration = 1.9
 
     var body: some View {
         GeometryReader { g in
@@ -45,6 +47,9 @@ struct FlipFXOverlay: View {
                         case .island: islandFX(e, isl)
                         case .ring: ringFX(e, isl)
                         case .pulse: pulseFX(e, isl)
+                        case .orbit:
+                            orbitFX(e, isl)
+                            pulseFX(e - 0.62, isl)
                         case .ringIsland:
                             islandFX(e, isl)
                             ringFX(e, isl)
@@ -148,6 +153,38 @@ struct FlipFXOverlay: View {
                 .shadow(color: .white.opacity(0.6), radius: 4)
                 .position(c)
         }
+    }
+
+    // MARK: lingkar - cahaya berlari mengelilingi seluruh pulau, lalu denyut keluar
+
+    @ViewBuilder private func orbitFX(_ e: Double, _ isl: CGRect) -> some View {
+        let head = Self.easeInOut(e / 0.65) * 1.15          // sedikit lebih dari satu putaran
+        let tail = 0.4
+        let fade = 1 - Self.clamp((e - 0.62) / 0.25)
+        let col: Color = front ? .yellow : .white
+        let r = isl.insetBy(dx: -3, dy: -3)
+        ZStack {
+            // jejak samar seluruh tepi (muncul selama putaran)
+            Capsule().stroke(col.opacity(0.25 * Self.clamp(head)), lineWidth: 1.5)
+            let segs = Self.segments(head: head, tail: tail)
+            ForEach(0..<segs.count, id: \.self) { i in
+                Capsule()
+                    .trim(from: segs[i].0, to: segs[i].1)
+                    .stroke(col, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .shadow(color: col.opacity(0.9), radius: 5)
+            }
+        }
+        .frame(width: r.width, height: r.height)
+        .opacity(fade)
+        .position(x: r.midX, y: r.midY)
+    }
+
+    /// potongan trim untuk ekor cahaya [head - tail, head] yang bisa melewati titik 1 -> 0
+    private static func segments(head: Double, tail: Double) -> [(Double, Double)] {
+        let a = head - tail, b = head
+        if b <= 0 { return [] }
+        if b <= 1 { return [(max(0, a), b)] }
+        return a < 1 ? [(a, 1), (0, b - 1)] : [(a - 1, b - 1)]
     }
 
     // MARK: denyut cahaya di tepi pulau
