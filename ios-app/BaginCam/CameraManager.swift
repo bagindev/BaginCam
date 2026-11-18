@@ -967,6 +967,8 @@ final class CameraManager: NSObject, ObservableObject {
         if merger == nil { Log.hdr.error("HDRPlusMerger tidak tersedia (Metal)") }
 
         session.beginConfiguration()
+        // v0.42.3: sesi audio diatur app (AudioInputs) supaya mikrofon eksternal / Bluetooth bisa dipilih
+        session.automaticallyConfiguresApplicationAudioSession = false
         session.sessionPreset = .photo
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         videoOutput.alwaysDiscardsLateVideoFrames = true
@@ -1956,6 +1958,7 @@ final class CameraManager: NSObject, ObservableObject {
         guard !inVideo else { applyVideoFormat(); syncDual(); return }
         inVideo = true
         videoQueue.async { self.vbVideo = true; self.holdPreviewUntil = CACurrentMediaTime() + 5 }
+        AudioInputs.shared.configure()      // v0.42.3: sesi audio + mikrofon pilihan sebelum input audio dipasang
         shutter180Warned = false
         // v0.41.7: photo output dilepas, mikrofon + format video dipasang dalam SATU transaksi (dulu dua: sesi
         // dikonfigurasi ulang dua kali -> jeda lebih lama). Preview menahan frame terakhir di balik tirai blur,
@@ -2289,6 +2292,8 @@ final class CameraManager: NSObject, ObservableObject {
                 d.setPrimaryConstituentDeviceSwitchingBehavior(.restricted, restrictedSwitchingBehaviorConditions: [.videoZoomChanged])
                 d.unlockForConfiguration()
             }
+            let micIn = AVAudioSession.sharedInstance().currentRoute.inputs.first.map { "\($0.portName) (\(AudioInputs.kind($0.portType)))" } ?? "-"
+            Log.camera.notice("VIDEO: mikrofon rekaman \(micIn, privacy: .public)")
             Log.camera.notice("VIDEO: rekam \(name, privacy: .public) \(cfg.width, privacy: .public)x\(cfg.height, privacy: .public), sudut \(Double(angle), privacy: .public), audio \(audio, privacy: .public), faceTrack \(ftActive, privacy: .public)")
             DispatchQueue.main.async {
                 self.recordStart = Date()

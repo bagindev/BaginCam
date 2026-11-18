@@ -6,6 +6,7 @@ struct ControlDrawer: View {
 
     @ObservedObject var cam: CameraManager
     @ObservedObject var luts: LUTLibrary
+    @ObservedObject private var mics = AudioInputs.shared
     @Binding var peaking: Bool
     @Binding var peakColor: String
     @Binding var zebra: Bool
@@ -127,6 +128,16 @@ struct ControlDrawer: View {
     }
 
     @ViewBuilder private var videoTiles: some View {
+        // v0.42.3: pilih mikrofon (USB-C / kabel / Bluetooth)
+        menuTile(micShort, "Mikrofon", on: !mics.preferred.isEmpty) {
+            pick("Otomatis (yang terakhir dicolok)", mics.preferred.isEmpty) { mics.preferred = "" }
+            ForEach(mics.items) { m in
+                pick(m.label, mics.preferred == m.id) { mics.preferred = m.id }
+            }
+            Text("Dipakai: \(mics.current)")
+            Text("Bluetooth (DJI Mic / AirPods) memakai mode telepon iOS: suara 16 kHz. Untuk kualitas penuh pakai penerima USB-C / kabel.")
+        }
+        .disabled(cam.isRecording)
         if cam.videoKind == .normal && isFront {
             menuTile(cam.videoBeauty.rawValue, "Percantik", on: cam.videoBeauty.active) {
                 ForEach(CameraManager.VideoBeautyLevel.allCases) { l in
@@ -335,6 +346,12 @@ struct ControlDrawer: View {
     private func toggleTile(_ icon: String, _ title: String, _ on: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) { face(icon, title, on: on, symbol: true) }
             .buttonStyle(.plain)
+    }
+
+    private var micShort: String {
+        let c = mics.current
+        if let r = c.range(of: " (") { return String(c[..<r.lowerBound]) }
+        return c
     }
 
     private func menuTile<C: View>(_ value: String, _ title: String, on: Bool = false,

@@ -801,6 +801,12 @@ struct ContentView: View {
     /// v0.12.4: satu menu Format = resolusi · fps · time-lapse · codec · warna · stabilisasi
     private var videoFormatChip: some View {
         SoftMenu {
+            SoftSection("Mikrofon: \(AudioInputs.shared.current)") {
+                Button { AudioInputs.shared.preferred = "" } label: { check("Otomatis (yang terakhir dicolok)", AudioInputs.shared.preferred.isEmpty) }
+                ForEach(AudioInputs.shared.items) { m in
+                    Button { AudioInputs.shared.preferred = m.id } label: { check(m.label, AudioInputs.shared.preferred == m.id) }
+                }
+            }
             if cam.videoKind == .normal {
                 Toggle("Rasio 3:4 - sudut lebar seperti FOTO", isOn: $cam.videoOpenGate)
                 if cam.videoOpenGate && cam.faceTrack { Text("Face track memakai 9:16") }
