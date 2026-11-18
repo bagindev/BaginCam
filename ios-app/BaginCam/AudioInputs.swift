@@ -66,6 +66,11 @@ final class AudioInputs: ObservableObject {
         DispatchQueue.main.async { self.apply() }
     }
 
+    /// lepas sesi audio (app ditinggal) - musik app lain boleh lanjut, indikator mikrofon padam
+    func release() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
     /// main
     func apply() {
         let s = AVAudioSession.sharedInstance()

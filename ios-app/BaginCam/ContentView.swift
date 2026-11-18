@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Susunan ala GCam (v0.10): chip cepat di atas, bar info di preview, zoom di atas shutter,
 /// baris shutter (thumbnail · shutter · balik kamera), mode MALAM · FOTO · PRO, laci Pro di kanan bawah.
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var cam = CameraManager()
     @StateObject private var luts = LUTLibrary()
     @State private var renderer = PreviewRenderer()
@@ -185,6 +186,8 @@ struct ContentView: View {
         .onChange(of: cam.totalZoom) { _, z in zoomNav.setZoom(z, fovTan1x: cam.fovTan1x) }
         .onChange(of: navEnabled) { _, v in zoomNav.enabled = v }
         .onChange(of: cam.previewFrozen) { _, v in renderer.frozen = v }
+        // v0.42.5: sensor kamera ditutup saat app ditinggal, dibuka lagi saat kembali
+        .onChange(of: scenePhase) { _, p in if p == .active { cam.appActive(resume: !showViewer) } else { cam.appInactive() } }
         .onChange(of: cam.shootMode) { o, n in if (o == .video) != (n == .video) { showVeil(0.5) } }
         .onChange(of: zebra) { _, v in renderer.zebra = v }
         .onChange(of: peaking) { _, v in renderer.peaking = v }

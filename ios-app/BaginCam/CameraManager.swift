@@ -890,7 +890,10 @@ final class CameraManager: NSObject, ObservableObject {
                 if video { self.enterVideo() }
                 if let dc = self.dual {
                     if !dc.session.isRunning { dc.session.startRunning() }
-                } else if !self.session.isRunning { self.session.startRunning() }
+                } else if !self.session.isRunning {
+                    if self.inVideo { AudioInputs.shared.configure() }     // v0.42.5: sesi audio dilepas saat app ditinggal
+                    self.session.startRunning()
+                }
                 self.setStatus("Siap")
             }
         }
@@ -917,6 +920,28 @@ final class CameraManager: NSObject, ObservableObject {
     func stop() {
         sessionQueue.async { self.session.stopRunning(); self.dual?.session.stopRunning() }
         readoutTimer?.invalidate()
+    }
+
+    /// v0.42.5 (main): app ditinggal (app switcher, Pusat Kontrol, notifikasi, latar) -> sensor & mikrofon ditutup.
+    /// Dulu sesi tetap jalan sampai iOS memutusnya di latar: saat app hanya "tidak aktif" (app switcher dll.) titik
+    /// hijau kamera tetap menyala dan HP tetap panas. Tidak saat merekam / memotret.
+    private(set) var pausedForBackground = false
+    func appInactive() {
+        guard !pausedForBackground, !isRecording, !isCapturing, countdown == 0 else { return }
+        pausedForBackground = true
+        torch = false
+        stop()
+        sessionQueue.async { AudioInputs.shared.release() }
+        Log.camera.notice("Kamera ditutup: app ditinggal")
+    }
+
+    /// main: app aktif lagi. `resume` false = layar lain (galeri) masih menutupi kamera.
+    func appActive(resume: Bool) {
+        guard pausedForBackground else { return }
+        pausedForBackground = false
+        guard resume, !idlePaused else { return }
+        start()
+        Log.camera.notice("Kamera dibuka lagi: app aktif")
     }
 
     /// v0.15: jeda kamera bila tidak dipakai (tidak saat rekam / memotret / hitung mundur)
