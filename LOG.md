@@ -2375,3 +2375,23 @@ Perubahan v0.41.5 build 105 (run 44246351061):
   Denyut juga masuk saat ke belakang.
 - Chip percantik selalu ada di VIDEO biasa (redup 45 % di kamera belakang); teks chip boleh mengecil 80 %.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.5/BaginCam-unsigned.ipa`. IPA v0.41.4 dihapus.
+
+## 2026-11-18 - Cek build 105 (rekam layar IMG_7416, ss IMG_7417) -> v0.41.6 build 106
+
+Ditarik: log + IMG_7416 (45 s) + IMG_7417 di `%TEMP%\claude\cek1118f`. Pengguna: menu laci & menu atas terasa
+berkedip saat dibuka.
+Temuan:
+- Preview build 105 jalan: "layer dipasang", "frame pertama digambar", 30 fps di antrean sendiri.
+- Sesi kamera error -11800 tiga kali beruntun saat kamera depan -> belakang di VIDEO (12:50:11, 12:51:34, 12:52:01),
+  tepat setelah format video dipasang; preview beku + tirai blur ~6 s (rekam layar 13,5-20 s, 26-30 s). Kamera baru
+  dipasang di satu transaksi (format bawaan) lalu format video di transaksi kedua.
+- Kedip menu laci: selama UIMenu terbuka, ubin di belakangnya berubah ("Garis bingkai", "Layar penuh",
+  "AI usai rekam", "AI Upscale", "709", "LUT" hilang) lalu muncul lagi saat ditutup (frame 80-85, 409-416).
+  Chip atas: UIMenu "berubah bentuk" dari tombol (chip ikut redup / hilang).
+Perubahan v0.41.6 build 106 (run 44248012291):
+- `SoftMenu.swift` (baru): SoftMenu (popover kecil, presentationCompactAdaptation .popover) menggantikan semua 20
+  `Menu` di ContentView dan `menuTile` laci; submenu -> `SoftSection` (baris buka-tutup), Section di menu ->
+  `SoftGroup`; pilihan menutup panel, saklar tidak.
+- `install()` di VIDEO memanggil `applyVideoFormat(nested: true)` di dalam transaksi yang sama (format + kamera
+  sekali commit); panggilan format kedua di enterAIZoom / kunci lensa dihapus. Log error sesi menyebut error dasar.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.6/BaginCam-unsigned.ipa`. IPA v0.41.5 dihapus.
