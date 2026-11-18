@@ -2245,3 +2245,22 @@ Perubahan v0.40.4 build 99 (run 44231289139):
 - Percantik VIDEO: mungkin (mode SINEMA sudah memproses tiap frame: 4K30 5-6,5 ms/frame). Belum dibuat - menunggu
   keputusan pengguna.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.40.4/BaginCam-unsigned.ipa`. IPA v0.40.3 dihapus.
+
+## 2026-11-18 - Percantik VIDEO kamera depan -> v0.41.0 build 100
+
+Permintaan: tambahkan efek percantik di mode VIDEO, untuk selfie dulu.
+Perubahan v0.41.0 build 100 (run 44233825727):
+- `BeautyVideo.swift` (baru) `BeautyVideoProcessor`, pola sama dengan SINEMA: dipanggil di `captureOutput` (antrean
+  video) sebelum perekam & preview -> yang terlihat di layar = yang direkam. Segmentasi orang Vision `.fast` async
+  (mask terbaru). Kernel `beautyV`: halus = campur frame dengan blur gaussian (1080p 3 px Standard / 5,4 px Strong,
+  4K diblur di 1/2 resolusi) hanya di (mask orang) x (warna kulit Cb 0,28-0,52 / Cr 0,52-0,70) x (tekstur halus:
+  beda luma ke blur < 0,03-0,10) -> mata, alis, bibir, rambut tetap tajam. Pencerah kulit o*(2-o) (Standard 0,10,
+  Strong 0,18). Keluaran BGRA seperti SINEMA.
+- Hanya: VIDEO biasa (bukan SINEMA / DUAL), kamera depan, format 8-bit (HLG / Log 10-bit dilewati, log sekali),
+  dilewati saat suhu kritis.
+- Setelan terpisah `videoBeauty` (Prefs, bawaan Mati) - tidak ikut percantik foto. Chip wajah di pil atas VIDEO saat
+  kamera depan + ubin "Percantik" di laci.
+- Log tiap 300 frame: `Percantik video: WxH, .. ms/frame, diterapkan ..%, suhu ..`. Tidak ada baris ini sama sekali
+  saat percantik nyala = kernel gagal dibuat.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.0/BaginCam-unsigned.ipa` (berisi juga perbaikan build 98 & 99). IPA v0.40.4
+dihapus.
