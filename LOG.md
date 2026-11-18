@@ -2465,3 +2465,42 @@ Perubahan:
   (+ sesi audio dipasang lagi di VIDEO), tidak bila galeri masih terbuka / kamera dijeda. Log "Kamera ditutup: app
   ditinggal" / "Kamera dibuka lagi: app aktif".
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.5/BaginCam-unsigned.ipa`. IPA v0.42.3 dihapus.
+
+## 2026-11-18 - AI pertajam video di Google Colab (notebook, langkah 1)
+
+Permintaan pengguna: proses AI pertajam video di cloud (Google Colab). App upload, lalu hasilnya diunduh.
+Usul yang disetujui ("oke boleh"):
+- Google Drive dipakai sebagai kotak surat (`BaginCam/masuk` -> Colab GPU -> `BaginCam/selesai`).
+- Notebook dulu, dicoba manual. Tombol "Kirim ke Colab" / "Ambil hasil" di app menyusul setelah hasilnya terbukti.
+- Tidak memakai tunnel ngrok/cloudflared dari Colab, karena dilarang di Colab gratis dan tidak stabil.
+
+File baru: `tools/colab_video/` (`bagincam_ai_video.py`, `make_notebook.py`, `BaginCam_AI_video.ipynb`, `README.md`).
+- Model:
+  - `vsr` RealBasicVSR (model video; bobot OpenMMLab sha256 52f77c2c...);
+  - `cepat` / `detail` Real-ESRGAN (sama dengan app; sha256 8dc7edb9... / 4fa0d389...).
+- Arsitektur ditulis ulang identik dengan mmagic/basicsr: kunci state_dict cocok `strict=True`, bobot `generator_ema`.
+- VSR dipotong 10-40 frame (40% memori GPU) dengan tumpang tindih 4 frame dicampur linear. Jumlah putaran
+  pembersih dikunci per video. Kepala upsample diproses per pita baris supaya hemat memori.
+- ffmpeg:
+  - decode RGB 16-bit CFR tegak, matriks warna sesuai sumber;
+  - encode HEVC 10-bit (NVENC > libx265 > libx264);
+  - audio pertama, metadata, dan tag warna (via setparams) disalin;
+  - hasil `NAMA_AIV.mov`, asli dipindah ke `masuk/_sudah`, catatan di `selesai/_catatan.txt`.
+- Notebook meminta GPU T4. Form pengaturan: model, mode pertajam/perbesar 2x, kekuatan, input maks
+  1920/1280/960, UJI_DETIK (bawaan 5 s).
+- Bisa dibuka langsung dari GitHub:
+  https://colab.research.google.com/github/bagindev/BaginCam/blob/main/tools/colab_video/BaginCam_AI_video.ipynb
+
+Uji lokal (CPU, IMG_7409 1080x1920 SDR, bahan di `%TEMP%\claude\colabvsr`):
+- Kepala per pita vs utuh: selisih maks 4e-7.
+- Potongan 540 px diturunkan ke 135 px, lalu AI 4x:
+  - PSNR bicubic 40,6 dB vs RealBasicVSR 33,7 dB (wajar untuk model GAN);
+  - ketajaman (gradien): asli 0,0065, bicubic 0,0041, AI 0,0077;
+  - visual: bulu mata, rambut, dan kelopak mata tersusun kembali.
+  - Pembanding: `data/output/colab_vsr_cek_1118.jpg`.
+- Pipa penuh (potongan 8, tumpang tindih 3): beda antar frame hasil mengikuti video asli dan tidak melonjak di
+  sambungan. Hasil HEVC Main10 bt709, audio AAC, dan creation_time terbawa.
+- Kedua mesin (vsr dan cepat) jalan. Kode di notebook identik dengan .py (dicek dengan ast).
+- CPU 2,1 s/frame pada input 152x270, jadi ini hanya uji kebenaran.
+BELUM DIUJI: GPU Colab (kecepatan nyata T4, NVENC) dan video HDR HLG. Menunggu pengguna menjalankan dengan 1
+video dan UJI_DETIK 5.
