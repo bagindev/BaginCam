@@ -1808,12 +1808,17 @@ final class CameraManager: NSObject, ObservableObject {
     private func updateReadout() {
         guard let d = device, session.isRunning else { return }
         // nilai bisa NaN sebelum kamera stabil -> UI memakai Int(...) (crash v0.10.0)
-        liveISO = d.iso.isFinite ? d.iso : 0
-        let s = d.exposureDuration.seconds
-        liveShutter = s.isFinite ? s : 0
-        liveLens = d.lensPosition.isFinite ? d.lensPosition : 0
-        liveAperture = d.lensAperture
-        activeLensLabel = lensLabel(for: d)
+        // v0.40.4: hanya diisi bila berubah. Dulu diisi tiap 0,25 s walau sama -> seluruh layar dihitung ulang 4x/detik.
+        let iso = d.iso.isFinite ? d.iso : 0
+        if abs(iso - liveISO) > max(1, liveISO * 0.02) || (iso == 0) != (liveISO == 0) { liveISO = iso }
+        let s0 = d.exposureDuration.seconds
+        let s = s0.isFinite ? s0 : 0
+        if abs(s - liveShutter) > liveShutter * 0.02 || (s == 0) != (liveShutter == 0) { liveShutter = s }
+        let lp = d.lensPosition.isFinite ? d.lensPosition : 0
+        if abs(lp - liveLens) >= 0.005 { liveLens = lp }
+        if d.lensAperture != liveAperture { liveAperture = d.lensAperture }
+        let ll = lensLabel(for: d)
+        if ll != activeLensLabel { activeLensLabel = ll }
         let macro = d.isVirtualDevice && d.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && totalZoom >= 0.95
         if macro != macroActive { macroActive = macro }
         let ha = captureAngle()
@@ -1823,7 +1828,7 @@ final class CameraManager: NSObject, ObservableObject {
         let g = d.deviceWhiteBalanceGains
         guard maxGain >= 1, g.redGain > 0, g.greenGain > 0, g.blueGain > 0 else { return }
         let temp = d.temperatureAndTintValues(for: Self.clamp(g, maxGain)).temperature
-        if temp.isFinite { liveTemp = temp }
+        if temp.isFinite && abs(temp - liveTemp) >= 30 { liveTemp = temp }
     }
 
     private static func name(of type: AVCaptureDevice.DeviceType) -> String {
@@ -2380,7 +2385,9 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// main (~4x/detik): meter audio, ISO otomatis untuk shutter 180 derajat, sisa waktu rekam
     private func videoReadout() {
-        if let ch = audioOutput.connections.first?.audioChannels.first { audioLevel = ch.averagePowerLevel }
+        if let ch = audioOutput.connections.first?.audioChannels.first, abs(ch.averagePowerLevel - audioLevel) >= 0.5 {
+            audioLevel = ch.averagePowerLevel
+        }
         readoutTick += 1
         if readoutTick % 8 == 0 {
             let free = (try? URL(fileURLWithPath: NSHomeDirectory())

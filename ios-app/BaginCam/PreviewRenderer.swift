@@ -175,7 +175,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             let fps = Double(statFrames) / el, cpu = statCPU / Double(max(statFrames, 1)) * 1000
             let on = [lutFilter != nil ? "LUT" : nil, sharpen > 0.01 ? "tajam" : nil, histogramEnabled ? "histogram" : nil,
                       zebra ? "zebra" : nil, peaking ? "peaking" : nil, navigator?.wantsRef == true ? "peta" : nil].compactMap { $0 }
-            Log.camera.notice("Preview: \(fps, format: .fixed(precision: 1), privacy: .public) fps, CPU \(cpu, format: .fixed(precision: 1), privacy: .public) ms, GPU \(gpu, format: .fixed(precision: 1), privacy: .public) ms per frame, \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public), aktif [\(on.joined(separator: ", "), privacy: .public)], suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
+            let ui = Double(BodyCounter.take()) / el
+            Log.camera.notice("Preview: \(fps, format: .fixed(precision: 1), privacy: .public) fps, UI \(ui, format: .fixed(precision: 1), privacy: .public)x/s, CPU \(cpu, format: .fixed(precision: 1), privacy: .public) ms, GPU \(gpu, format: .fixed(precision: 1), privacy: .public) ms per frame, \(Int(ds.width), privacy: .public)x\(Int(ds.height), privacy: .public), aktif [\(on.joined(separator: ", "), privacy: .public)], suhu \(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)")
             statStart = CACurrentMediaTime()
             statFrames = 0
             statCPU = 0
@@ -245,6 +246,25 @@ struct MetalPreview: UIViewRepresentable {
 
     func updateUIView(_ uiView: MTKView, context: Context) {
         if uiView.preferredFramesPerSecond != fps { uiView.preferredFramesPerSecond = fps }
+    }
+}
+
+/// v0.40.4: penghitung hitung ulang layar utama (main thread) - untuk log
+enum BodyCounter {
+    private static var n = 0
+    static func tick() { n += 1 }
+    static func take() -> Int { defer { n = 0 }; return n }
+}
+
+/// v0.40.4: bin histogram dipegang objek sendiri - dulu @State di ContentView -> layar dihitung ulang 5x/detik di PRO
+final class HistogramState: ObservableObject {
+    @Published var bins: [Float] = []
+}
+
+struct HistogramBox: View {
+    @ObservedObject var s: HistogramState
+    var body: some View {
+        if !s.bins.isEmpty { HistogramView(bins: s.bins) }
     }
 }
 
@@ -326,9 +346,10 @@ final class LevelMonitor: ObservableObject {
             self.steadyTicks = self.rotSmooth < 0.035 ? self.steadyTicks + 1 : 0
             let st = self.steadyTicks >= 16
             if st != self.steady { self.steady = st }
-            self.flat = abs(g.z) > 0.85
+            let fl = abs(g.z) > 0.85
+            if fl != self.flat { self.flat = fl }       // v0.40.4: dulu diisi 20x/detik -> layar dihitung ulang 20x/detik
             var a = atan2(g.x, -g.y) * 180 / .pi          // potret tegak = 0
-            if !self.flat {
+            if !fl {
                 let q = (a / 90).rounded() * 90                     // kuadran terdekat
                 if abs(a - q) < 35 {                                // histeresis: hanya bila jelas
                     var ang = 90 + q                                // 0 -> 90, -90 -> 0, 90 -> 180, 180 -> 270

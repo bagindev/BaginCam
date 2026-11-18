@@ -30,7 +30,9 @@ struct ContentView: View {
     }
     @State private var lightSavedBrightness: CGFloat = 0.5
     @State private var proControl: ProControl = .ev
-    @State private var histogram: [Float] = []
+    /// v0.40.4: @State berisi objek - bin baru tidak menggambar ulang seluruh layar
+    @State private var histo = HistogramState()
+    @State private var histoOn = false
     @State private var showHistogram = true
     @AppStorage("zebra") private var zebra = false
     @AppStorage("peaking") private var peaking = false
@@ -75,6 +77,7 @@ struct ContentView: View {
     }
 
     var body: some View {
+        let _ = BodyCounter.tick()
         ZStack {
             Color.black.ignoresSafeArea()
             if videoFullActive {
@@ -145,7 +148,8 @@ struct ContentView: View {
             HardwareInput.shared.gimbalActive = cam.gimbalMode
             let lv = level
             cam.motionLevel = { [weak lv] in lv?.rotationLevel ?? -1 }
-            r.onHistogram = { bins in histogram = bins }
+            let hs = histo
+            r.onHistogram = { [weak hs] bins in hs?.bins = bins }
             r.zebra = zebra
             r.peaking = peaking
             r.zebraLevel = Float(zebraLevel)
@@ -174,14 +178,15 @@ struct ContentView: View {
         // v0.40.2: penajaman zoom hanya untuk rekaman (preview tidak ditajamkan - lebih ringan)
         .onChange(of: faceTracker.cropRect) { _, r in cam.faceTrackerCrop = cam.faceTrack ? r : nil }
         .onChange(of: level.steady) { _, v in cam.deviceSteady = v }
-        .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histogram = [] } }
+        .onChange(of: showHistogram) { _, v in renderer.histogramEnabled = v; if !v { histo.bins = [] } }
+        .onReceive(histo.$bins.map { !$0.isEmpty }.removeDuplicates()) { v in if v != histoOn { histoOn = v } }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType(filenameExtension: "cube") ?? .data]) { result in
             if case .success(let url) = result { luts.importLUT(from: url) }
         }
         .modifier(CompHooks(cam: cam, comp: comp, level: level, update: updateComp, maxZoom: { compMaxZoom }))
         .modifier(PowerHooks(cam: cam, level: level, touch: touch, busy: { showUpscale || showSettings || showViewer || showAssist || showDrawer },
-                             histogram: { on in renderer.histogramEnabled = on && showHistogram; if !on { histogram = [] } }))
+                             histogram: { on in renderer.histogramEnabled = on && showHistogram; if !on { histo.bins = [] } }))
     }
 
     // MARK: - baris 1: chip cepat
@@ -1029,8 +1034,8 @@ struct ContentView: View {
             .overlay { if cam.gimbalMode && cam.gimbalGuideOn { GimbalOverlay(guide: gimbalGuide) } }
             .overlay { if cam.faceTrack { FaceTrackOverlay(tracker: faceTracker) } }
             .overlay(alignment: .topTrailing) {
-                if showHistogram && !histogram.isEmpty {
-                    HistogramView(bins: histogram)
+                if showHistogram && histoOn {
+                    HistogramBox(s: histo)
                         .padding(.top, (cam.shootMode == .video ? 72 : 40) + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
                 }
             }
@@ -1041,7 +1046,7 @@ struct ContentView: View {
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay(alignment: .topTrailing) {
                 ZoomNavigatorView(nav: zoomNav)
-                    .padding(.top, (cam.shootMode == .video ? 72 : 40) + (showHistogram && !histogram.isEmpty ? 64 : 0)
+                    .padding(.top, (cam.shootMode == .video ? 72 : 40) + (showHistogram && histoOn ? 64 : 0)
                              + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
             }
             .overlay { countdownLayer }
