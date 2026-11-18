@@ -356,6 +356,11 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var videoFps: VideoFps = Prefs.raw("videoFps", .f30) { didSet { Prefs.set("videoFps", videoFps.rawValue); videoChanged() } }
     @Published var videoCodec: VideoCodec = Prefs.raw("videoCodec", .hevc) { didSet { Prefs.set("videoCodec", videoCodec.rawValue); videoChanged() } }
     @Published var videoColor: VideoColor = Prefs.raw("videoColor", .sdr) { didSet { Prefs.set("videoColor", videoColor.rawValue); videoChanged() } }
+    /// v0.42: video 3:4 sensor penuh. Video 9:16 memotong kiri-kanan sensor (kamera bawaan juga) -> lebih sempit dari
+    /// FOTO 3:4 (rekam layar kamera bawaan 18 Nov 13:07). 3:4 = sudut pandang sama dengan FOTO.
+    @Published var videoOpenGate: Bool = Prefs.get("videoOpenGate", false) { didSet { Prefs.set("videoOpenGate", videoOpenGate); videoChanged() } }
+    /// format 3:4 benar-benar terpasang (main)
+    @Published private(set) var videoOpenActive = false
     @Published var videoStab: VideoStab = Prefs.raw("videoStab", .standard) { didSet { Prefs.set("videoStab", videoStab.rawValue); videoChanged() } }
     @Published var slowPlayback: Int = Prefs.get("slowPlayback", 30) { didSet { Prefs.set("slowPlayback", slowPlayback) } }
     @Published var timelapse: Int = Prefs.get("timelapse", 1) { didSet { Prefs.set("timelapse", timelapse); videoChanged() } }
@@ -1906,6 +1911,8 @@ final class CameraManager: NSObject, ObservableObject {
         var stab: VideoStab = .standard
         var timelapse = 1
         var zoom: CGFloat = 1
+        /// v0.42: rasio 3:4 sensor penuh (sudut pandang sama dengan FOTO)
+        var open = false
     }
 
     private func makeVideoSnap() -> VideoSnap {
@@ -1913,7 +1920,7 @@ final class CameraManager: NSObject, ObservableObject {
         // v0.22: face track butuh 4K sumber supaya crop ke 1080p tetap tajam
         var s = VideoSnap(res: faceTrack ? .uhd : videoRes, fps: videoFps, codec: videoCodec, color: videoColor,
                   stab: gimbalMode && [.action, .cinematic, .cinematicExtended].contains(videoStab) ? .standard : videoStab,
-                  timelapse: timelapse, zoom: totalZoom)
+                  timelapse: timelapse, zoom: totalZoom, open: videoOpenGate && videoKind == .normal && !faceTrack)
         if videoKind == .cinematic {
             // segmentasi + blur per frame di Rec.709; sampai 4K 60 fps (slow-mo tidak)
             if s.fps.rawValue > 60 { s.fps = .f60 }
@@ -1998,7 +2005,7 @@ final class CameraManager: NSObject, ObservableObject {
         videoQueue.async { self.previewLog = false; self.holdPreviewUntil = CACurrentMediaTime() + 0.2 }
         Log.camera.notice("VIDEO: keluar")
         applyTeleFallback()
-        DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.updateZoomQuality() }
+        DispatchQueue.main.async { self.videoInfo = ""; self.nativeZoomPoints = []; self.videoOpenActive = false; self.updateZoomQuality() }
     }
 
     private static let tenBitFmt: FourCharCode = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
@@ -2074,11 +2081,16 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// format kamera untuk resolusi / fps / warna; 10-bit (x420) untuk HLG & Log
     private func pickVideoFormat(_ d: AVCaptureDevice, res: VideoRes, fps: Int, color: VideoColor,
-                                 stab: VideoStab) -> AVCaptureDevice.Format? {
+                                 stab: VideoStab, open: Bool = false) -> AVCaptureDevice.Format? {
         let want = res.size
         let c = d.formats.filter { f in
             let dim = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-            guard dim.width == want.w, dim.height == want.h else { return false }
+            if open {
+                // 3:4 (lanskap 4:3) dengan lebar setara resolusi pilihan: 1080p -> 1920x1440, 4K -> 3840x2880 / 4032x3024
+                guard dim.width * 3 == dim.height * 4, dim.width >= want.w, dim.width <= want.w * 21 / 20 + 200 else { return false }
+            } else {
+                guard dim.width == want.w, dim.height == want.h else { return false }
+            }
             guard Self.supportsFps(f, fps), f.supportedColorSpaces.contains(color.avSpace) else { return false }
             let sub = CMFormatDescriptionGetMediaSubType(f.formatDescription)
             return color.tenBit ? sub == Self.tenBitFmt
@@ -2102,31 +2114,41 @@ final class CameraManager: NSObject, ObservableObject {
         let needFps = s.fps == .auto && s.timelapse <= 1 ? 60 : fps
         var res = s.res, color = s.color
         var note = ""
-        var f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
-        if f == nil && s.fps == .auto { f = pickVideoFormat(d, res: res, fps: 30, color: color, stab: s.stab) }
+        var openUsed = false
+        // v0.42: 3:4 dicoba dulu bila dipilih; tidak ada -> 16:9 biasa
+        func pick(_ r: VideoRes, _ fp: Int, _ c: VideoColor) -> AVCaptureDevice.Format? {
+            if s.open, let f = pickVideoFormat(d, res: r, fps: fp, color: c, stab: s.stab, open: true) { openUsed = true; return f }
+            openUsed = false
+            return pickVideoFormat(d, res: r, fps: fp, color: c, stab: s.stab)
+        }
+        var f = pick(res, needFps, color)
+        if f == nil && s.fps == .auto { f = pick(res, 30, color) }
         if f == nil && res == .hd {
             // 720p tidak ada di semua lensa / warna -> 1080p
             for alt in [needFps, 30] where f == nil {
-                f = pickVideoFormat(d, res: .fhd, fps: alt, color: color, stab: s.stab)
+                f = pick(.fhd, alt, color)
                 if f != nil { res = .fhd; if alt != needFps { fps = alt }; note = "720p tidak tersedia di lensa ini -> 1080p" }
             }
         }
         if f == nil && needFps > 60 && res == .uhd {
             res = .fhd
-            f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
+            f = pick(res, needFps, color)
             if f != nil { note = "\(needFps) fps hanya 1080p" }
         }
         if f == nil && needFps > 60 {
             for alt in [120, 60] where alt < needFps && f == nil {
-                f = pickVideoFormat(d, res: res, fps: alt, color: color, stab: s.stab)
+                f = pick(res, alt, color)
                 if f != nil { fps = alt; note = "maks \(alt) fps di lensa ini" }
             }
         }
         if f == nil && color != .sdr {
             color = .sdr
-            f = pickVideoFormat(d, res: res, fps: needFps, color: color, stab: s.stab)
+            f = pick(res, needFps, color)
             if f != nil { note = "\(s.color.short) tidak tersedia di lensa ini -> Rec.709" }
         }
+        if s.open && !openUsed && f != nil && note.isEmpty { note = "3:4 tidak tersedia di lensa ini -> 9:16" }
+        let openNow = openUsed && f != nil
+        DispatchQueue.main.async { if self.videoOpenActive != openNow { self.videoOpenActive = openNow } }
         guard let fmt = f else {
             Log.camera.error("VIDEO: tidak ada format \(s.res.rawValue, privacy: .public) \(needFps, privacy: .public) fps \(s.color.short, privacy: .public)")
             setStatus("Format video \(s.res.rawValue) \(needFps) fps \(s.color.short) tidak tersedia")
@@ -2170,7 +2192,7 @@ final class CameraManager: NSObject, ObservableObject {
         let log = color == .log
         videoQueue.async { self.previewLog = log }
         let fpsText = s.timelapse > 1 ? "TL \(s.timelapse)x" : (s.fps == .auto ? "Auto" : "\(fps)")
-        let info = "\(res.rawValue) · \(fpsText) · \(s.codec.short) · \(color.short)"
+        let info = "\(res.rawValue)\(openNow ? " 3:4" : "") · \(fpsText) · \(s.codec.short) · \(color.short)"
         Log.camera.notice("VIDEO: format \(info, privacy: .public), maks \(self.maxFps(fmt), privacy: .public) fps, stabil \(stabUsed.rawValue, privacy: .public) (pilihan \(s.stab.rawValue, privacy: .public)) \(note, privacy: .public)")
         DispatchQueue.main.async {
             self.videoInfo = info
@@ -2253,6 +2275,7 @@ final class CameraManager: NSObject, ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tag = s.timelapse > 1 ? "TL\(s.timelapse)x" : (playback != fps ? "\(fps)to\(playback)" : "\(fps)")
         let resLabel = (videoKind == .cinematic ? "SINEMA" : "") + (ftActive ? "FT1080p" : (dims.width >= 3840 ? "4K" : (dims.width >= 1920 ? "1080p" : "720p")))
+            + (dims.width * 3 == dims.height * 4 ? "34" : "")
         let name = "BaginCam_\(f.string(from: Date()))_\(resLabel)\(tag)_\(codec.short.replacingOccurrences(of: " ", with: ""))_\(lut != nil ? "LUT" : color.short).mov"
         let cfg = VideoConfig(url: dir.appendingPathComponent(name), width: outW, height: outH,
                               sensorFps: fps, playbackFps: playback, timelapse: max(1, s.timelapse), codec: codec,

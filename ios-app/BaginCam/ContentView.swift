@@ -27,7 +27,7 @@ struct ContentView: View {
     /// v0.41.4: tirai blur di preview saat ganti kamera (menutupi jeda, seperti kamera bawaan)
     @State private var flipVeil = false
     @State private var veilToken = 0
-    private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual }
+    private var videoFillActive: Bool { videoFullActive && videoFill && cam.videoKind != .dual && !cam.videoOpenActive }
     /// v0.40.1: isi layar - preview mulai dari ujung atas layar; elemen di atas preview diturunkan sejauh tepi atas
     /// preview 16:9 yang lama supaya tidak menutup Dynamic Island / baris atas (screenshot 17 Nov 16:02)
     private var fillTopInset: CGFloat {
@@ -795,6 +795,10 @@ struct ContentView: View {
     /// v0.12.4: satu menu Format = resolusi · fps · time-lapse · codec · warna · stabilisasi
     private var videoFormatChip: some View {
         SoftMenu {
+            if cam.videoKind == .normal {
+                Toggle("Rasio 3:4 - sudut lebar seperti FOTO", isOn: $cam.videoOpenGate)
+                if cam.videoOpenGate && cam.faceTrack { Text("Face track memakai 9:16") }
+            }
             SoftSection("Resolusi: \(cam.videoRes.rawValue)") {
                 ForEach(VideoRes.allCases) { r in
                     Button { cam.videoRes = r } label: { check(r.rawValue, cam.videoRes == r) }
@@ -841,7 +845,7 @@ struct ContentView: View {
         } label: {
             let rate = cam.timelapse > 1 ? "TL \(cam.timelapse)x" : cam.videoFps.label
             chip(cam.videoKind == .normal
-                 ? "\(cam.videoRes.rawValue) · \(rate) · \(cam.videoCodec.short) · \(cam.videoColor.short)"
+                 ? "\(cam.videoRes.rawValue)\(cam.videoOpenActive ? " 3:4" : "") · \(rate) · \(cam.videoCodec.short) · \(cam.videoColor.short)"
                  : "\(cam.videoRes.rawValue) · \(rate)", icon: "video", on: true)
         }
         .disabled(cam.isRecording)
@@ -1060,7 +1064,7 @@ struct ContentView: View {
         }, onVolumeEvent: { isPrimary, phase in
             Log.camera.notice("Volume: primary=\(isPrimary, privacy: .public) phase=\(phase, privacy: .public)")
         }, fps: cam.thermal >= 3 ? 20 : 30)      // v0.40.1: 20 fps hanya saat kritis (suhu 2 = 17-19 fps, tersendat dibanding kamera bawaan)
-            .modifier(PreviewAspect(ratio: videoFillActive ? nil : (cam.shootMode == .video ? 9.0 / 16.0 : 3.0 / 4.0)))
+            .modifier(PreviewAspect(ratio: videoFillActive ? nil : (cam.shootMode == .video && !cam.videoOpenActive ? 9.0 / 16.0 : 3.0 / 4.0)))
             .clipped()
             .overlay { if flipVeil { Rectangle().fill(.ultraThinMaterial).allowsHitTesting(false).transition(.opacity) } }
             .overlay { ratioMask }
