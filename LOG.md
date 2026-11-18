@@ -2264,3 +2264,25 @@ Perubahan v0.41.0 build 100 (run 44233825727):
   saat percantik nyala = kernel gagal dibuat.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.0/BaginCam-unsigned.ipa` (berisi juga perbaikan build 98 & 99). IPA v0.40.4
 dihapus.
+
+## 2026-11-18 - Cek percantik video "Strong wajah tidak fokus" -> v0.41.1 build 101
+
+Ditarik: log 18 Nov + IMG_7404 (4K30, Standard -> Strong 4,9 s -> Standard 11,3 s -> Strong 21,8 s), di
+`%TEMP%\claude\cek1118a` (tidak disimpan di repo).
+Temuan:
+- Build 99 terbukti: `UI 3,9-6,6x/s` (dulu ~20x/s). Percantik video 1080p 7,4-9,8 ms/frame, 4K 8,4-12,2 ms/frame,
+  diterapkan 100 %, suhu 0, frame hilang 0.
+- Crop 1:1: Strong mencampur kulit 95 % dengan blur gaussian ~11 px (4K) -> pori, bulu mata, kontur kelopak / hidung
+  hilang = terlihat tidak fokus; Standard juga cukup lembek. Bintik gelap tetap ada (kontras tinggi lolos ambang tekstur).
+- Sampingan: 11:26:45 sesi kamera error -11800 saat keluar VIDEO dengan kamera depan (sebelum percantik dinyalakan),
+  pulih otomatis 1,4 s. Baru sekali - dipantau.
+Perubahan v0.41.1 build 101 (run 44238007908):
+- Kernel `beautyV` diganti pemisahan frekuensi: fs = blur ~1 px (1080p), dasar halus b = `CIEdgePreserveUpsampleFilter`
+  (frame diperkecil ke sisi pendek 270 / 200 px lalu dibesarkan mengikuti tepi frame asli, luma sigma 0,09 / 0,12),
+  cadangan gaussian 3 px. Hasil = mix(fs, b, w) + (s - fs) x (1 - w (1 - keep)); keep Standard 0,7 / Strong 0,5;
+  ambang tepi 0,06-0,20 (beda fs vs b). Pencerah 0,10 / 0,16.
+- Log `Percantik video` ditambah `dasar tepi|gaussian`.
+Referensi metode: frequency separation (retouching), guided filter (He, Sun, Tang ECCV 2010), GPUPixel (Apache-2.0,
+filter skin smoothing real-time), MetalPetal SurfaceBlur (bilateral di Metal); ada paten "skin map + bilateral pada
+gambar diperkecil" - perlu dicek bila app dijual.
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.1/BaginCam-unsigned.ipa`. IPA v0.41.0 dihapus.
