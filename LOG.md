@@ -2504,3 +2504,19 @@ Uji lokal (CPU, IMG_7409 1080x1920 SDR, bahan di `%TEMP%\claude\colabvsr`):
 - CPU 2,1 s/frame pada input 152x270, jadi ini hanya uji kebenaran.
 BELUM DIUJI: GPU Colab (kecepatan nyata T4, NVENC) dan video HDR HLG. Menunggu pengguna menjalankan dengan 1
 video dan UJI_DETIK 5.
+
+## 2026-11-18 - Colab: "Tidak ada video di BaginCam/masuk" padahal video ada di Drive
+
+Laporan pengguna:
+- Drive menampilkan `My Drive/BaginCam/masuk/BaginCam_20261118_141408_1080p30_HEVC_709.MOV`.
+- Notebook (GPU T4 aktif) menulis "Tidak ada video ...".
+
+Dugaan: ada dua folder "BaginCam" di My Drive. Satu dibuat notebook di run pertama, satu dibuat pengguna. Drive
+mengizinkan nama ganda, dan notebook membaca folder yang kosong. Kemungkinan lain: sinkronisasi Drive di Colab
+terlambat (file di-upload setelah mount).
+
+Perbaikan di sel 3:
+- `drive.mount(force_remount=True)`.
+- Semua folder di My Drive yang namanya diawali "BaginCam" dicari, lalu dipilih yang `masuk`-nya berisi video.
+  Pencarian diulang sampai 3x dengan jeda 10 s.
+- Notebook mencetak daftar folder beserta jumlah videonya, isi `masuk`, dan petunjuk kalau masih kosong.

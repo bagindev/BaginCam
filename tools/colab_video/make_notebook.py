@@ -66,11 +66,33 @@ from google.colab import drive
 gpu = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total', '--format=csv,noheader'],
                      capture_output=True, text=True).stdout.strip()
 print('GPU:', gpu or 'TIDAK ADA - pilih Runtime > Change runtime type > T4 GPU')
-drive.mount('/content/drive')
-root = f'/content/drive/MyDrive/{FOLDER}'
+drive.mount('/content/drive', force_remount=True)     # baca isi Drive terbaru (file yang baru di-upload)
+import glob, time
+VID = ('.mov', '.mp4', '.m4v')
+my = '/content/drive/MyDrive'
+
+
+def vids(d):
+    return [p for p in glob.glob(f'{d}/*') if p.lower().endswith(VID)]
+
+
+# cari folder masuk yang berisi video: Drive boleh punya beberapa folder bernama sama ("BaginCam" ganda)
+for coba in range(3):
+    roots = sorted(d for d in glob.glob(f'{my}/*') if os.path.isdir(d) and os.path.basename(d).lower().startswith(FOLDER.lower()))
+    isi = [(r, len(vids(f'{r}/masuk'))) for r in roots]
+    if any(n for _, n in isi):
+        break
+    time.sleep(10)        # sinkron Drive kadang terlambat beberapa detik setelah upload
+print('Folder ditemukan:', ', '.join(f'{os.path.basename(r)} ({n} video di masuk)' for r, n in isi) or '-')
+root = next((r for r, n in isi if n), roots[0] if roots else f'{my}/{FOLDER}')
 masuk, selesai = f'{root}/masuk', f'{root}/selesai'
 os.makedirs(masuk, exist_ok=True)
 os.makedirs(selesai, exist_ok=True)
+lain = sorted(os.listdir(masuk))
+print(f'Isi {masuk}:', ', '.join(lain) or '(kosong)')
+if not vids(masuk):
+    print('\\nTIDAK ADA VIDEO. Kemungkinan ada dua folder "BaginCam" di My Drive: hapus yang kosong / pindahkan '
+          'videonya ke folder yang dipakai di atas, lalu jalankan lagi sel ini.')
 
 sys.path.insert(0, '/content')
 import bagincam_ai_video as bav
