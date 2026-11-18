@@ -222,11 +222,12 @@ struct MetalPreview: UIViewRepresentable {
     var fps = 30
 
     func makeUIView(context: Context) -> MTKView {
-        let v = MTKView(frame: .zero, device: renderer.device)
+        let v = PreviewMTKView(frame: .zero, device: renderer.device)
         v.colorPixelFormat = .bgra8Unorm
         v.framebufferOnly = false          // wajib supaya Core Image bisa menulis ke drawable
         v.preferredFramesPerSecond = fps
         v.delegate = renderer
+        v.startLink()
         v.backgroundColor = .black
         if #available(iOS 17.2, *), let action = onHardwareShutter {
             let volEvent = onVolumeEvent
@@ -246,6 +247,54 @@ struct MetalPreview: UIViewRepresentable {
 
     func updateUIView(_ uiView: MTKView, context: Context) {
         if uiView.preferredFramesPerSecond != fps { uiView.preferredFramesPerSecond = fps }
+        (uiView as? PreviewMTKView)?.setFps(fps)
+    }
+
+    static func dismantleUIView(_ uiView: MTKView, coordinator: ()) {
+        (uiView as? PreviewMTKView)?.stopLink()
+    }
+}
+
+/// v0.41.2: MTKView digerakkan CADisplayLink sendiri di mode run loop `.common`. Pewaktu bawaan MTKView berhenti
+/// selama menu / daftar pilihan iOS terbuka (run loop di mode tracking) -> preview membeku lalu "loncat" saat menu
+/// ditutup (rekam layar 18 Nov 11:44, terasa berkedip).
+final class PreviewMTKView: MTKView {
+    private var link: CADisplayLink?
+    private var fps = 30
+
+    func startLink() {
+        isPaused = true
+        enableSetNeedsDisplay = false
+        guard link == nil else { return }
+        let l = CADisplayLink(target: LinkTarget(self), selector: #selector(LinkTarget.tick))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(fps, 30)), maximum: Float(fps), preferred: Float(fps))
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    func setFps(_ f: Int) {
+        guard f != fps else { return }
+        fps = f
+        link?.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(f, 30)), maximum: Float(f), preferred: Float(f))
+    }
+
+    func stopLink() {
+        link?.invalidate()
+        link = nil
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { stopLink() } else if link == nil { startLink() }
+    }
+
+    fileprivate func tick() { draw() }
+
+    /// target lemah - CADisplayLink menahan target-nya
+    private final class LinkTarget: NSObject {
+        weak var view: PreviewMTKView?
+        init(_ v: PreviewMTKView) { view = v }
+        @objc func tick() { view?.tick() }
     }
 }
 

@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.41.1"
-    CURRENT_PROJECT_VERSION: "101"
+    MARKETING_VERSION: "0.41.2"
+    CURRENT_PROJECT_VERSION: "102"
 targets:
   BaginCam:
     type: application

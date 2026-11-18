@@ -192,13 +192,18 @@ struct ContentView: View {
     // MARK: - baris 1: chip cepat
     private var topBar: some View {
         HStack(spacing: 6) {
-            topLeft.frame(width: 46, alignment: .leading)
+            topLeft.frame(width: 50, alignment: .leading)
             Spacer(minLength: 0)
             processPill
             Spacer(minLength: 0)
-            proToggle.frame(width: 46, alignment: .trailing)
+            proToggle.frame(width: 50, alignment: .trailing)
         }
-        .padding(.top, 6)
+        .padding(.vertical, 4)
+        // v0.41.2: seluruh strip atas menahan sentuhan - ketukan di sela ikon tidak lagi memindah fokus kamera
+        // (log 18 Nov: 7 "Fokus di layar" pada y 0,06-0,08 = baris ikon)
+        .contentShape(Rectangle())
+        .onTapGesture {}
+        .padding(.top, 2)
     }
 
     @ViewBuilder private var topLeft: some View {
@@ -292,8 +297,8 @@ struct ContentView: View {
         } label: {
             let lit = proOn || !cam.isAuto
             Text("PRO")
-                .font(.caption2.weight(.heavy))
-                .frame(width: 42, height: 30)
+                .font(.caption.weight(.heavy))
+                .frame(width: 48, height: 38)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().stroke(lit ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
                 .foregroundStyle(lit ? Color.yellow : Color.white)
@@ -532,8 +537,11 @@ struct ContentView: View {
         }
         .font(.footnote.weight(.semibold))
         .lineLimit(1)
-        .padding(.horizontal, 10).padding(.vertical, 6)
+        // v0.41.2: lebih besar (dulu tinggi ~30 pt, meleset ke fokus sentuh di bawahnya)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(minWidth: 42, minHeight: 38)
         .background(.ultraThinMaterial, in: Capsule())
+        .contentShape(Capsule())
         .overlay(Capsule().stroke(on ? Color.yellow.opacity(0.85) : Color.white.opacity(0.14), lineWidth: 1))
         .foregroundStyle(on ? Color.yellow : Color.white)
         .environment(\.colorScheme, .dark)
@@ -1049,7 +1057,7 @@ struct ContentView: View {
             .overlay(alignment: .topTrailing) {
                 if showHistogram && histoOn {
                     HistogramBox(s: histo)
-                        .padding(.top, (cam.shootMode == .video ? 72 : 40) + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
+                        .padding(.top, (cam.shootMode == .video ? 82 : 48) + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
                 }
             }
             .overlay(alignment: .leading) {
@@ -1059,7 +1067,7 @@ struct ContentView: View {
             .overlay { if showLevel { LevelOverlay(level: level) } }
             .overlay(alignment: .topTrailing) {
                 ZoomNavigatorView(nav: zoomNav)
-                    .padding(.top, (cam.shootMode == .video ? 72 : 40) + (showHistogram && histoOn ? 64 : 0)
+                    .padding(.top, (cam.shootMode == .video ? 82 : 48) + (showHistogram && histoOn ? 64 : 0)
                              + (videoFullActive && proOn ? 46 : 0) + fillTopInset).padding(8)
             }
             .overlay { countdownLayer }
@@ -1086,7 +1094,7 @@ struct ContentView: View {
                 UIScreen.main.brightness = new == .off ? lightSavedBrightness : max(lightSavedBrightness, new.brightness)
             }
             .overlay(alignment: .top) {
-                if cam.shootMode == .video { videoInfoRow.padding(.top, (videoFullActive ? (proOn ? 76 : 30) : 0) + fillTopInset) } else { infoRow }
+                if cam.shootMode == .video { videoInfoRow.padding(.top, (videoFullActive ? (proOn ? 86 : 40) : 0) + fillTopInset) } else { infoRow }
             }
     }
 
