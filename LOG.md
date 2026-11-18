@@ -1793,7 +1793,7 @@ Pengguna menjawab "oke" atas tiga usul dari cek senja + penghapusan zip Colab.
   README. Setelan tersimpan "Tajam" jatuh ke Cepat. Workflow `convert-sr-model.yml` dan `convert_sr.py` dibiarkan
   (masih bisa membuat model itu lagi bila perlu).
 Build: run 43705930708 sukses. IPA: `data/ipa-v0.33.0/BaginCam-unsigned.ipa` (36,9 MB). IPA v0.32.0 dihapus.
-BELUM DIUJI DI HP.
+BELUM DIUJI DI HP. Build 114 (run 44289825783) sukses. IPA: `data/ipa-v0.42.6/BaginCam-unsigned.ipa`. IPA v0.42.5 dihapus.
 Kebersihan: `data/bursts/colab/` (2 zip burst 430 MB + salinan notebook) dihapus; DNG sumbernya masih ada di
 `%TEMP%\claude\burst77` (genggam) dan `burst78` (tripod). D: 2,5 GB kosong sebelum IPA baru.
 
@@ -2102,7 +2102,7 @@ Ditarik: log + IMG_7372-7378. Pembanding: `data/output/zoom_depan_1117.jpg`, `zo
 Perubahan v0.38.3 build 91:
 - Detail asli zoom Apple: x2 hanya untuk sensor 48MP; sensor 12MP = sisi sensor / crop.
 - POTRET yang di-zoom: tanpa AI super-res (Lanczos), dan 12MP bila detail asli < 3000 px.
-BELUM DIUJI DI HP.
+BELUM DIUJI DI HP. Build 114 (run 44289825783) sukses. IPA: `data/ipa-v0.42.6/BaginCam-unsigned.ipa`. IPA v0.42.5 dihapus.
 Build: run 44046027983 sukses. IPA: `data/ipa-v0.38.3/BaginCam-unsigned.ipa`. IPA v0.38.2 dihapus.
 
 ## 2026-11-17 - Cek zoom depan FOTO (build 90) + cermin selfie + zoom video -> v0.38.4 build 92, v0.38.5 build 93
@@ -2576,4 +2576,4 @@ Perubahan v0.42.6 build 114:
   - skala guided mengikuti sisi pendek (acuan video 1080p);
   - tingkat foto kini Mati / Soft / Standard / Strong, parameter sama dengan video (`params`);
   - log "Percantik foto: N wajah, M lindungan, tingkat, guided 1/k".
-BELUM DIUJI DI HP.
+BELUM DIUJI DI HP. Build 114 (run 44289825783) sukses. IPA: `data/ipa-v0.42.6/BaginCam-unsigned.ipa`. IPA v0.42.5 dihapus.
