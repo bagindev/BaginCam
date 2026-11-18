@@ -22,6 +22,8 @@ final class BeautyVideoProcessor {
     private let lock = NSLock()
     private var maskBusy = false
     private var latestMask: CVPixelBuffer?
+    private var lastVision = 0.0                     // dijaga lock
+    private var lastFace = 0.0                       // antrean video: terakhir wajah terlihat
     private var latestFeat: [CIVector] = []          // dijaga lock: elips lindungan (mata, alis, bibir) dalam piksel
     private var pool: CVPixelBufferPool?
     private var poolW = 0, poolH = 0
@@ -96,10 +98,14 @@ final class BeautyVideoProcessor {
 
     /// antrean mask (async; frame sekarang memakai mask & landmark terbaru)
     private func currentMask(_ pb: CVPixelBuffer) -> (CVPixelBuffer?, [CIVector]) {
+        // v0.42.4: Vision (segmentasi + landmark wajah) paling sering ~8x/detik (panas: 4x) - dulu tiap frame (30x),
+        // padahal mask & posisi mata cukup diperbarui jarang (elips lindungan sudah diberi jarak). Hemat ANE / GPU / panas.
+        let now = CACurrentMediaTime()
+        let gap = ProcessInfo.processInfo.thermalState.rawValue >= 2 ? 0.25 : 0.12
         lock.lock()
         let m = latestMask, f = latestFeat
-        let start = !maskBusy
-        if start { maskBusy = true }
+        let start = !maskBusy && now - lastVision >= gap
+        if start { maskBusy = true; lastVision = now }
         lock.unlock()
         if start {
             maskQueue.async {
@@ -159,6 +165,9 @@ final class BeautyVideoProcessor {
         lastW = w; lastH = h
         lastLevel = level.rawValue
         let (maskOpt, feats) = currentMask(pb)
+        // v0.42.4: tidak ada wajah > 1 s (kamera tidak mengarah ke orang) -> percantik dilewati, deteksi tetap jalan
+        if !feats.isEmpty { lastFace = t0 }
+        guard t0 - lastFace < 1.0 else { return nil }
         guard let mask = maskOpt, let dst = makeBuffer(w, h) else { return nil }
         if !feats.isEmpty { withFace += 1 }
         let src = CIImage(cvPixelBuffer: pb, options: [.colorSpace: NSNull()])
@@ -175,7 +184,9 @@ final class BeautyVideoProcessor {
         // guided filter di resolusi rendah (1080p: 1/2, 4K: 1/4), koefisien dibesarkan lagi ("fast guided filter")
         // v0.41.4: Standard / Strong di resolusi 2x lebih kecil lagi dengan jari-jari setengah = jangkauan sama,
         // piksel 4x lebih sedikit (Strong build 103: 23-34 ms/frame, preview ikut tersendat)
-        let k: CGFloat = (short > 1500 ? 4 : 2) * (level == .soft ? 1 : 2)
+        // v0.42.4: suhu >= 2 -> resolusi guided 2x lebih kecil lagi (jangkauan sama, hasil sedikit lebih kasar)
+        let hot: CGFloat = ProcessInfo.processInfo.thermalState.rawValue >= 2 ? 2 : 1
+        let k: CGFloat = (short > 1500 ? 4 : 2) * (level == .soft ? 1 : 2) * hot
         let p = src.transformed(by: CGAffineTransform(scaleX: 1 / k, y: 1 / k), highQualityDownsample: true)
         let pe = p.extent
         // v0.41.3: Soft / Standard = Standard / Strong build 102; Strong = porselen (diuji offline: Strong A,
@@ -188,7 +199,7 @@ final class BeautyVideoProcessor {
             }
         }()
         func box(_ i: CIImage) -> CIImage {
-            i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: ["inputRadius": r]).cropped(to: pe)
+            i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: ["inputRadius": max(1.5, r / Double(hot))]).cropped(to: pe)
         }
         guard let sq = sqK.apply(extent: pe, arguments: [p]) else { return nil }
         let mI = box(p), mII = box(sq)
