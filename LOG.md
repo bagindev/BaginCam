@@ -2395,3 +2395,20 @@ Perubahan v0.41.6 build 106 (run 44248012291):
 - `install()` di VIDEO memanggil `applyVideoFormat(nested: true)` di dalam transaksi yang sama (format + kamera
   sekali commit); panggilan format kedua di enterAIZoom / kunci lensa dihapus. Log error sesi menyebut error dasar.
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.6/BaginCam-unsigned.ipa`. IPA v0.41.5 dihapus.
+
+## 2026-11-18 - Cek "masih sering error" + rekam layar kamera bawaan -> v0.41.7 build 107
+
+Ditarik: log + IMG_7418 (rekam layar kamera bawaan, FOTO <-> VIDEO kamera depan) di `%TEMP%\claude\cek1118g`.
+Temuan:
+- Build 106 di log hanya ~1 s dipakai (13:05:27-28, lalu dua kali dibuka 13:06 tanpa aktivitas); TIDAK ada error
+  sesi tercatat. Tidak ada laporan crash / jetsam BaginCam hari ini (`pymobiledevice3 crash ls`). Log sudah disimpan
+  saat app ditinggal (willResignActive / didEnterBackground). Error yang dilihat pengguna belum terekam - minta rekam
+  layar + "cek" segera setelah terjadi.
+- Kamera bawaan: pindah FOTO <-> VIDEO = tirai blur ~0,3-0,5 s, kamera tidak berhenti, zoom tetap.
+- BaginCam masuk VIDEO dengan dua transaksi sesi (lepas photo output + pasang mikrofon, lalu format video).
+Perubahan v0.41.7 build 107 (run 44249541467):
+- `enterVideo`: photo output, mikrofon, dan format video dalam SATU transaksi (`applyVideoFormat(nested: true)`);
+  parameter `callerZoom` (install mengatur zoom sendiri, enterVideo memakai zoom snapshot).
+- Preview menahan frame terakhir selama pindah mode (+0,2 s setelah commit), `showVeil` tirai blur 0,5 s saat
+  FOTO <-> VIDEO (juga dipakai ganti kamera).
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.41.7/BaginCam-unsigned.ipa`. IPA v0.41.6 dihapus.
