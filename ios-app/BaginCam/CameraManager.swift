@@ -392,6 +392,19 @@ final class CameraManager: NSObject, ObservableObject {
     private var pendingStop: DispatchWorkItem?
     @Published var compCrop: Bool = Prefs.get("compCrop", true) { didSet { Prefs.set("compCrop", compCrop) } }
     @Published var beautyLevel: BeautyLevel = Prefs.raw("beautyLevel", .off) { didSet { Prefs.set("beautyLevel", beautyLevel.rawValue) } }
+    /// v0.41: percantik VIDEO kamera depan (terpisah dari percantik foto). Diproses tiap frame -> preview = rekaman.
+    @Published var videoBeauty: BeautyLevel = Prefs.raw("videoBeauty", .off) {
+        didSet {
+            Prefs.set("videoBeauty", videoBeauty.rawValue)
+            let v = videoBeauty
+            videoQueue.async { self.vbLevel = v; if !v.active { self.beautyV.reset() } }
+            Log.camera.notice("Percantik video: \(v.rawValue, privacy: .public)")
+        }
+    }
+    private var vbLevel: BeautyLevel = Prefs.raw("videoBeauty", .off)     // videoQueue
+    private var vbFront = false                                         // videoQueue: kamera depan terpasang
+    private var vbVideo = false                                         // videoQueue: sesi VIDEO
+    private lazy var beautyV = BeautyVideoProcessor()                   // videoQueue
     /// v0.38.4: foto kamera depan disimpan seperti cermin (sama dengan preview). Mati = seperti dilihat orang lain
     /// (tulisan terbaca normal, sama dengan bawaan kamera iPhone). Preview tetap cermin.
     @Published var selfieMirror: Bool = Prefs.get("selfieMirror", true) {
@@ -996,6 +1009,7 @@ final class CameraManager: NSObject, ObservableObject {
             session.addInput(cur)
         }
         frontMirrored = mirrored
+        videoQueue.async { self.vbFront = mirrored; self.beautyV.reset() }
         for conn in [videoOutput.connection(with: .video), photoOutput.connection(with: .video)] {
             guard let c = conn else { continue }
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
@@ -1907,6 +1921,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func enterVideo() {
         guard !inVideo else { applyVideoFormat(); syncDual(); return }
         inVideo = true
+        videoQueue.async { self.vbVideo = true }
         shutter180Warned = false
         session.beginConfiguration()
         if session.outputs.contains(photoOutput) { session.removeOutput(photoOutput) }
@@ -1932,6 +1947,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func leaveVideo() {
         guard inVideo else { return }
         inVideo = false
+        videoQueue.async { self.vbVideo = false; self.beautyV.reset() }
         dualWanted = false
         syncDual()
         session.beginConfiguration()
@@ -4013,7 +4029,11 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             return
         }
         guard var pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        if cineOn, let out = cine.process(pb, intensity: cineIntensity) { pb = out }
+        if cineOn {
+            if let out = cine.process(pb, intensity: cineIntensity) { pb = out }
+        } else if vbVideo && vbFront && vbLevel.active, let out = beautyV.process(pb, level: vbLevel) {
+            pb = out        // v0.41: percantik video kamera depan
+        }
         if faceTrack, let ft = faceTrackerCrop {
             recorder?.faceTrackCrop = ft
         }

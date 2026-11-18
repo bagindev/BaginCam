@@ -221,6 +221,7 @@ struct ContentView: View {
         case .video:
             HStack(spacing: 6) {
                 if cam.videoKind == .cinematic { bokehChip }
+                if cam.videoKind == .normal && isFront { videoBeautyChip }
                 videoFormatChip
             }
         }
@@ -882,6 +883,18 @@ struct ContentView: View {
     }
 
     /// percantik wajah (foto)
+    /// v0.41: percantik video selfie
+    private var videoBeautyChip: some View {
+        Menu {
+            ForEach(CameraManager.BeautyLevel.allCases) { l in
+                Button { cam.videoBeauty = l } label: { check(l.rawValue, cam.videoBeauty == l) }
+            }
+            Text("Menghaluskan kulit di video kamera depan (langsung terlihat di layar). Hanya SDR - HLG / Log tidak")
+        } label: {
+            chip(cam.videoBeauty.active ? cam.videoBeauty.rawValue : "", icon: "face.smiling", on: cam.videoBeauty.active)
+        }
+    }
+
     private var beautyChip: some View {
         Menu {
             ForEach(CameraManager.BeautyLevel.allCases) { l in

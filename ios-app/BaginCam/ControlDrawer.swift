@@ -126,6 +126,14 @@ struct ControlDrawer: View {
     }
 
     @ViewBuilder private var videoTiles: some View {
+        if cam.videoKind == .normal && isFront {
+            menuTile(cam.videoBeauty.rawValue, "Percantik", on: cam.videoBeauty.active) {
+                ForEach(CameraManager.BeautyLevel.allCases) { l in
+                    pick(l.rawValue, cam.videoBeauty == l) { cam.videoBeauty = l }
+                }
+                Text("Video kamera depan, hanya SDR")
+            }
+        }
         menuTile(cam.videoStab.rawValue, "Stabilisasi") {
             ForEach(VideoStab.allCases) { st in
                 pick(st.rawValue, cam.videoStab == st) { cam.videoStab = st }
