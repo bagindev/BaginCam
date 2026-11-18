@@ -2445,3 +2445,23 @@ Perubahan:
   berubah. Ubin laci VIDEO "Mikrofon" + baris "Mikrofon: .." di chip format. Log: "Mikrofon: dipakai .. tersedia
   [..]", "VIDEO: mikrofon rekaman ..". Catatan: Bluetooth = profil telepon iOS (16 kHz).
 BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.3/BaginCam-unsigned.ipa`. IPA v0.42.1 dihapus.
+
+## 2026-11-18 - Cek "kenapa cepat panas" + sensor tetap menyala saat app diminimalkan -> v0.42.4 build 112, v0.42.5 build 113
+
+Ditarik: log di `%TEMP%\claude\cek1118i`.
+Temuan panas:
+- 13:39:27 dibuka suhu 0 -> 13:41:10 suhu 1 (1 m 43 s, VIDEO depan + percantik Soft 14-17 ms/frame) -> 13:42:51
+  dibuka lagi suhu 2. HP di-charge sepanjang tes (11:41-13:42 "baterai 90% (mengisi)") dan kamera dipakai > 2 jam.
+- Preview ringan (GPU 0,5-1,6 ms/frame). Beban terbesar: percantik video (guided filter 14-17 ms/frame) + Vision
+  segmentasi + landmark wajah TIAP frame (30x/detik).
+- Header log tanpa isi (13:06, 13:42) = app diluncurkan iOS di latar (prewarm), bukan crash.
+- Tidak ada penanganan app ditinggal: sesi kamera jalan terus sampai iOS memutus di latar; saat app hanya tidak
+  aktif (app switcher, Pusat Kontrol, notifikasi) titik hijau tetap menyala.
+Perubahan:
+- Build 112 (run 44253707472): Vision percantik paling sering 8x/detik (suhu >= 2: 4x); tanpa wajah > 1 s
+  percantik dilewati (deteksi tetap); suhu >= 2 guided filter di resolusi 2x lebih kecil (jari-jari setengah).
+- Build 113 (run 44254174915): `scenePhase` != active -> `appInactive()` (stop sesi, senter mati, sesi audio
+  dilepas `AudioInputs.release()`), kecuali merekam / memotret / hitung mundur; aktif lagi -> `appActive()` start()
+  (+ sesi audio dipasang lagi di VIDEO), tidak bila galeri masih terbuka / kamera dijeda. Log "Kamera ditutup: app
+  ditinggal" / "Kamera dibuka lagi: app aktif".
+BELUM DIUJI DI HP. IPA: `data/ipa-v0.42.5/BaginCam-unsigned.ipa`. IPA v0.42.3 dihapus.
