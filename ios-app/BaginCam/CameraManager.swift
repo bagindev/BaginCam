@@ -3183,14 +3183,14 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    /// v0.18.5: Documents/Debug - simpan 12 file terakhir
+    /// v0.18.5: Documents/Debug - simpan 16 file terakhir (v0.42.9: + masker gerak fusi)
     static func saveDebug(_ data: Data, name: String) {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Debug", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: dir.appendingPathComponent(name))
         let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        for f in files.dropLast(12) { try? FileManager.default.removeItem(at: f) }
+        for f in files.dropLast(16) { try? FileManager.default.removeItem(at: f) }
         Log.camera.notice("Debug: \(name, privacy: .public) (\(data.count / 1024, privacy: .public) KB)")
     }
 
@@ -3471,7 +3471,8 @@ final class CameraManager: NSObject, ObservableObject {
                 var fused = false
                 if let fd = fusion {
                     procStatus("HDR+: fusi detail 48MP...")
-                    if let fr = Fusion48.fuse(hdr: img, appleData: fd, targetLong: res.longSide) {
+                    let dbgName = self.debugFusionS ? dir?.lastPathComponent : nil
+                    if let fr = Fusion48.fuse(hdr: img, appleData: fd, targetLong: res.longSide, debugName: dbgName) {
                         img = fr.image.settingProperties(img.properties)
                         saved.append(fr.note)
                         fused = true

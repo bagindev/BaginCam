@@ -2626,3 +2626,45 @@ Perubahan v0.42.8 build 116 (`ZoomNavigator`):
   Basi = 3x berturut-turut grid NCC < 0,3. Bila basi, peta disembunyikan sampai zoom < 6x (log "disembunyikan
   sampai zoom < 6x").
 BELUM DIUJI DI HP. Build 116 (run 44453060663) sukses. IPA: `data/ipa-v0.42.8/BaginCam-unsigned.ipa`. IPA v0.42.7 dihapus.
+
+## 2026-11-19 - Cek build 116 (foto sore-malam): bayangan di Fusi 48MP -> v0.42.9 build 117
+
+Ditarik: log + IMG_7471-7490 + `Documents/Debug` (foto 48MP mentah) di `%TEMP%\claude\cek1119c`.
+- Terpasang 0.42.8 (116).
+- Kecerahan (perbaikan build 114) berhasil:
+  - median 0.5x / 1x sekarang 86-135 (dulu 33-76);
+  - "angkat tengah" aktif di adegan gelap (k 1.35-2.5).
+- Peta zoom: tidak ada log "acuan tidak cocok" lagi, tapi tidak ada screenshot peta, jadi belum bisa dinilai visual.
+- 50x / 75x (IMG_7483/84/87/88/90): tekstur seperti lukisan. Sumbernya hanya ~512 px detail asli (batas fisik).
+- Log putus pada 18:01:35, setelah IMG_7485 tersimpan, lalu app mulai lagi 18:03:59. Tidak ada laporan crash baru
+  di HP, jadi penyebabnya belum diketahui.
+
+Masalah utama: bayangan Fusi 48MP.
+- IMG_7478 (geser HDR+ -39,-184 px, skor 0.327): bercak biru di kemeja dan sosok orang tembus pandang di layar
+  iklan.
+- IMG_7481 (geser 45,6 px): pengendara motor dobel / transparan.
+- IMG_7474: halo di daun.
+
+Penyebab:
+- Timestamp EXIF menunjukkan foto 48MP diambil ~0,2 s sebelum frame HDR+.
+- Masker lama hanya membandingkan kecerahan lowpass (beda > 1,6x). Objek bergerak dengan kecerahan mirip, atau
+  beda warna saja, tetap lolos, dan rasio lowpass HDR+ (sigma 24) menempelkan objek itu ke foto 48MP.
+
+Simulasi offline (`scratchpad/fusesim.py`; lowH ditaksir dari blur hasil):
+- Masker kroma absolut (vs rasio global, bahkan vs matriks warna 3x3) salah menandai 37-77 % IMG_7474: warna
+  HDR+ (LUT / tuning) memang beda per warna. Dibuang.
+- Uji struktur (NCC) hanya menangkap tepi bayangan bila dipakai pada data lowpass, sehingga di HP dipakai HDR+
+  asli di 1/4 resolusi.
+
+Perubahan v0.42.9 build 117 (`Fusion48`):
+- Masker gerak baru di 1/4 resolusi, render float (`RGBAf`):
+  - NCC lokal (jendela sigma 3 px) dari log-luma dan kroma log(B/R), dengan syarat ada tekstur dan cukup terang;
+  - dilebarkan (morphology max ~1,5 sigma lowpass) lalu dihaluskan.
+- Area ditolak memakai rasio tetangga yang cocok (konvolusi ternormalisasi, sigma 4x lowpass), dengan cadangan
+  rasio global. Dulu langsung rasio global.
+- Fusi dibatalkan bila:
+  - HP bergeser > 1,5 % sisi panjang (86 px di 5712), seperti IMG_7478;
+  - masker gerak > 40 % gambar.
+- Log baru "Fusi 48MP: masker gerak X% gambar".
+- Bila "Simpan foto 48MP mentah (debug)" aktif, masker disimpan sebagai `Documents/Debug/<burst>_gerak.jpg`
+  (overlay merah). Debug kini menyimpan 16 file.
