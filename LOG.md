@@ -2603,4 +2603,4 @@ Perubahan v0.42.7 build 115:
     lagi ..").
   - Adegan polos (simpangan < 6) tidak dinilai.
 - PreviewRenderer mengirim frame ke peta paling sering ~3x/detik (dulu tiap frame ke main thread).
-BELUM DIUJI DI HP.
+BELUM DIUJI DI HP. Build 115 (run 44451807648) sukses. IPA: `data/ipa-v0.42.7/BaginCam-unsigned.ipa` (berisi juga build 114). IPA v0.42.6 dihapus.
