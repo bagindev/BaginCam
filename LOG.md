@@ -2625,4 +2625,4 @@ Perubahan v0.42.8 build 116 (`ZoomNavigator`):
 - Basi dinilai pada grid kasar 12 kolom (tata letak terang / gelap), dan hanya bila preview tidak polos.
   Basi = 3x berturut-turut grid NCC < 0,3. Bila basi, peta disembunyikan sampai zoom < 6x (log "disembunyikan
   sampai zoom < 6x").
-BELUM DIUJI DI HP.
+BELUM DIUJI DI HP. Build 116 (run 44453060663) sukses. IPA: `data/ipa-v0.42.8/BaginCam-unsigned.ipa`. IPA v0.42.7 dihapus.
