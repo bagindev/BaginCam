@@ -43,6 +43,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
     var onAnalysis: ((CIImage) -> Void)?
     /// v0.39: peta zoom - gambar acuan diambil dari frame yang tampil
     weak var navigator: ZoomNavigator?
+    private var navSentAt = 0.0          // antrean render
 
     private var frameCounter = 0
     // v0.40.2: statistik render preview (log tiap 10 s)
@@ -168,9 +169,17 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             if let out = sharpenFilter.outputImage?.cropped(to: extent) { image = out }
         }
 
-        if let nav = navigator, nav.wantsRef {
+        // v0.42.7: frame ke peta zoom paling sering ~3x/detik (dulu tiap frame dikirim ke main thread)
+        if let nav = navigator, CACurrentMediaTime() - navSentAt > 0.3 {
             let im = image, ctx = ciContext
-            DispatchQueue.main.async { nav.offer(im, context: ctx) }
+            if nav.wantsRef {
+                navSentAt = CACurrentMediaTime()
+                DispatchQueue.main.async { nav.offer(im, context: ctx) }
+            } else if nav.wantsProbe {
+                // peta zoom dicocokkan dengan preview (koreksi posisi / deteksi acuan basi)
+                navSentAt = CACurrentMediaTime()
+                DispatchQueue.main.async { nav.probe(im, context: ctx) }
+            }
         }
 
         if peaking, let l = luma {

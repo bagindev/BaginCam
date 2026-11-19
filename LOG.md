@@ -2577,3 +2577,30 @@ Perubahan v0.42.6 build 114:
   - tingkat foto kini Mati / Soft / Standard / Strong, parameter sama dengan video (`params`);
   - log "Percantik foto: N wajah, M lindungan, tingkat, guided 1/k".
 BELUM DIUJI DI HP. Build 114 (run 44289825783) sukses. IPA: `data/ipa-v0.42.6/BaginCam-unsigned.ipa`. IPA v0.42.5 dihapus.
+
+## 2026-11-19 - Peta zoom ("kolom bantu") salah saat zoom ganti-ganti, harus zoom out dulu -> v0.42.7 build 115
+
+Laporan pengguna (IMG_7466, rekam VIDEO 25x, Tele 5x + crop 5x):
+- Peta kanan atas menampilkan mobil dan jalan, padahal preview menampilkan pagar dan pohon.
+- Kotak kuning sebesar 1/5 peta.
+- Kadang salah saat zoom diganti-ganti, dan baru benar setelah zoom out.
+Ditarik: log + IMG_7462-7466 di `%TEMP%\claude\cek1119a`.
+
+Penyebab (`ZoomNavigator`):
+- Gambar acuan hanya diambil selama zoom < 6x. Pindah 10x / 25x / 40x atau merekam lama di zoom tinggi berarti peta
+  memakai gambar lama (bisa menit lalu, tempat lain).
+- Posisi kotak hanya dari gyro, yang tidak tahu HP dibawa berjalan dan makin melenceng.
+- Acuan juga bisa diambil saat zoom masih ramp: frame belum sesuai angka zoom, jadi ukuran kotak salah.
+
+Perubahan v0.42.7 build 115:
+- Acuan diambil juga saat zoom kembali ke tingkat acuan / lebih lebar (mis. 40x -> 10x), tidak perlu < 6x.
+  Acuan hanya diambil setelah zoom diam 0,6 s.
+- Peta disembunyikan bila kotak > 60 % acuan (tidak berguna).
+- `probe`: tiap ~0,5 s preview sekarang dicocokkan (NCC, sampel 2 px, cari +-8 px) dengan potongan peta di posisi
+  kotak.
+  - Cocok (>= 0,45): pusat kotak dikunci ke posisi itu (koreksi melenceng gyro).
+  - 2x tidak cocok: acuan basi, peta disembunyikan, dan acuan baru diambil (log "Peta zoom: acuan tidak cocok
+    lagi ..").
+  - Adegan polos (simpangan < 6) tidak dinilai.
+- PreviewRenderer mengirim frame ke peta paling sering ~3x/detik (dulu tiap frame ke main thread).
+BELUM DIUJI DI HP.

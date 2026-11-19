@@ -11,6 +11,7 @@ import SwiftUI
 final class ZoomNavigator: ObservableObject {
     static let showAt: CGFloat = 8          // peta tampil mulai zoom ini
     static let refBelow: CGFloat = 6        // gambar acuan diperbarui selama zoom di bawah ini
+    static let maxBox: CGFloat = 0.6        // kotak > 60 % gambar acuan = peta tidak berguna -> disembunyikan
 
     @Published private(set) var visible = false
     /// kotak zoom sekarang di gambar acuan (0..1, kiri-atas)
@@ -28,10 +29,25 @@ final class ZoomNavigator: ObservableObject {
     private var lastOffer = 0.0
     private var lastStamp = 0.0
     private let motion = CMMotionManager()
+    // v0.42.7: acuan dulu hanya diambil saat zoom < 6x -> pindah 10x / 25x / 40x atau merekam lama di zoom tinggi =
+    // peta memakai gambar lama (tempat lain, IMG_7466) sampai zoom out. Sekarang: acuan juga diambil saat zoom kembali
+    // ke tingkat acuan / lebih lebar, hanya setelah zoom diam, dan dicocokkan terus dengan preview.
+    private var zoomChangedAt = 0.0
+    private var lastProbe = 0.0
+    private var misses = 0
+    private var stale = false               // acuan terbukti tidak cocok dengan preview -> sembunyi, minta acuan baru
+    private var refGray: [Float] = []
+    private var refW = 0, refH = 0
 
-    var wantsRef: Bool { enabled && zoom < Self.refBelow }
+    var wantsRef: Bool {
+        guard enabled else { return false }
+        return zoom < Self.refBelow || ref == nil || stale || zoom <= refZoom * 1.02
+    }
+    /// minta frame preview untuk dicocokkan dengan peta (tiap ~0,5 s selama peta tampil)
+    var wantsProbe: Bool { visible && !outside }
 
     func setZoom(_ z: CGFloat, fovTan1x t: Double) {
+        if abs(z - zoom) > 0.001 { zoomChangedAt = CACurrentMediaTime() }
         zoom = z
         if t > 0.01 { fovTan1x = t }
         refresh()
@@ -40,7 +56,8 @@ final class ZoomNavigator: ObservableObject {
     /// gambar yang sedang tampil di layar (sudah di-crop zoom preview & diperkecil ke ukuran layar)
     func offer(_ image: CIImage, context: CIContext) {
         let now = CACurrentMediaTime()
-        guard wantsRef, now - lastOffer > 0.4 else { return }
+        // zoom masih bergerak (ramp) -> frame belum sesuai angka zoom
+        guard wantsRef, now - lastOffer > 0.4, now - zoomChangedAt > 0.6 else { return }
         lastOffer = now
         let e = image.extent
         guard e.width > 8, e.height > 8 else { return }
@@ -49,15 +66,100 @@ final class ZoomNavigator: ObservableObject {
             .transformed(by: CGAffineTransform(scaleX: k, y: k))
         guard let cg = context.createCGImage(small, from: small.extent) else { return }
         ref = cg
+        refW = cg.width
+        refH = cg.height
+        refGray = Self.gray(cg, refW, refH)
         refZoom = zoom
         refTanW = fovTan1x / Double(max(zoom, 0.1))
         refTanH = refTanW * Double(e.height / e.width)
         tiltX = 0
         tiltY = 0
+        misses = 0
+        if stale { stale = false }
+        refresh()
+    }
+
+    /// cocokkan preview sekarang dengan potongan peta di posisi kotak (NCC, cari +-8 px): cocok -> posisi kotak
+    /// dikoreksi (gyro tidak melenceng); 2x tidak cocok -> acuan basi, peta disembunyikan & acuan baru diminta
+    func probe(_ image: CIImage, context: CIContext) {
+        let now = CACurrentMediaTime()
+        guard wantsProbe, now - lastProbe > 0.5, now - zoomChangedAt > 0.8, refW > 0, refGray.count == refW * refH else { return }
+        lastProbe = now
+        let tw = Int(rect.width * CGFloat(refW)), th = Int(rect.height * CGFloat(refH))
+        guard tw >= 16, th >= 16, tw < refW, th < refH else { return }
+        let e = image.extent
+        guard e.width > 8, e.height > 8 else { return }
+        let small = image.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(tw) / e.width, y: CGFloat(th) / e.height))
+        guard let cg = context.createCGImage(small, from: CGRect(x: 0, y: 0, width: tw, height: th)) else { return }
+        let t = Self.gray(cg, tw, th)
+        guard t.count == tw * th else { return }
+        // templat (sampel tiap 2 px), dinormalisasi
+        var idx: [Int] = []
+        var y = 0
+        while y < th { var x = 0; while x < tw { idx.append(y * tw + x); x += 2 }; y += 2 }
+        let n = Float(idx.count)
+        var tm: Float = 0
+        for i in idx { tm += t[i] }
+        tm /= n
+        var tv: Float = 0
+        for i in idx { let d = t[i] - tm; tv += d * d }
+        let tsd = sqrt(tv / n)
+        guard tsd > 6 else { return }          // adegan polos (langit, dinding): tidak bisa dinilai
+        let px0 = Int(rect.minX * CGFloat(refW)), py0 = Int(rect.minY * CGFloat(refH))
+        let R = 8
+        var best: Float = -1, bx = px0, by = py0
+        for dy in stride(from: -R, through: R, by: 1) {
+            let oy = py0 + dy
+            guard oy >= 0, oy + th <= refH else { continue }
+            for dx in stride(from: -R, through: R, by: 1) {
+                let ox = px0 + dx
+                guard ox >= 0, ox + tw <= refW else { continue }
+                var sr: Float = 0, srr: Float = 0, srt: Float = 0
+                for i in idx {
+                    let ty = i / tw, tx = i - ty * tw
+                    let r = refGray[(oy + ty) * refW + ox + tx]
+                    sr += r; srr += r * r; srt += r * (t[i] - tm)
+                }
+                let rm = sr / n
+                let rsd = sqrt(max(srr / n - rm * rm, 0))
+                guard rsd > 1 else { continue }
+                let ncc = srt / n / (rsd * tsd)
+                if ncc > best { best = ncc; bx = ox; by = oy }
+            }
+        }
+        if best >= 0.45 {
+            misses = 0
+            // pusat kotak dikunci ke posisi yang cocok (koreksi melenceng gyro)
+            let cx = (Double(bx) + Double(tw) / 2) / Double(refW), cy = (Double(by) + Double(th) / 2) / Double(refH)
+            tiltY = atan((0.5 - cx) * 2 * refTanW)
+            tiltX = atan((0.5 - cy) * 2 * refTanH)
+            updateRect()
+        } else {
+            misses += 1
+            if misses >= 2 && !stale {
+                stale = true
+                Log.camera.notice("Peta zoom: acuan tidak cocok lagi dengan preview (NCC \(best, format: .fixed(precision: 2), privacy: .public), zoom \(Double(self.zoom), format: .fixed(precision: 1), privacy: .public)x, acuan \(Double(self.refZoom), format: .fixed(precision: 1), privacy: .public)x) - disembunyikan, acuan diperbarui")
+                refresh()
+            }
+        }
+    }
+
+    private static func gray(_ cg: CGImage, _ w: Int, _ h: Int) -> [Float] {
+        var px = [UInt8](repeating: 0, count: w * h)
+        let ok = px.withUnsafeMutableBytes { buf -> Bool in
+            guard let c = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            c.interpolationQuality = .medium
+            c.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        return ok ? px.map { Float($0) } : []
     }
 
     private func refresh() {
-        let show = enabled && zoom >= Self.showAt && ref != nil
+        let f = refZoom / max(zoom, 0.1)
+        let show = enabled && zoom >= Self.showAt && ref != nil && !stale && f <= Self.maxBox
         if show != visible { visible = show }
         let needMotion = enabled && zoom >= 2
         if needMotion && !motion.isDeviceMotionActive && motion.isDeviceMotionAvailable {
