@@ -2668,3 +2668,4 @@ Perubahan v0.42.9 build 117 (`Fusion48`):
 - Log baru "Fusi 48MP: masker gerak X% gambar".
 - Bila "Simpan foto 48MP mentah (debug)" aktif, masker disimpan sebagai `Documents/Debug/<burst>_gerak.jpg`
   (overlay merah). Debug kini menyimpan 16 file.
+BELUM DIUJI DI HP. Build 117 (run 44518078895) sukses (hanya peringatan CIKernel deprecated seperti biasa). IPA: `data/ipa-v0.42.9/BaginCam-unsigned.ipa`. IPA v0.42.8 dihapus.
