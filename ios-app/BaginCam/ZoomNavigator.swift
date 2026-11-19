@@ -39,10 +39,10 @@ final class ZoomNavigator: ObservableObject {
     private var refGray: [Float] = []
     private var refW = 0, refH = 0
 
-    var wantsRef: Bool {
-        guard enabled else { return false }
-        return zoom < Self.refBelow || ref == nil || stale || zoom <= refZoom * 1.02
-    }
+    /// v0.42.8: acuan hanya dari zoom < 6x (gambar lebar). Build 115 juga mengambil acuan di zoom tinggi (saat basi /
+    /// kembali ke tingkat acuan) -> peta 50x berisi tampilan 25x yang sempit (IMG_7468). Preview di zoom tinggi sudah
+    /// di-crop kamera, jadi gambar lebar hanya ada saat zoom rendah (kamera bawaan memakai aliran kamera kedua).
+    var wantsRef: Bool { enabled && zoom < Self.refBelow }
     /// minta frame preview untuk dicocokkan dengan peta (tiap ~0,5 s selama peta tampil)
     var wantsProbe: Bool { visible && !outside }
 
@@ -128,18 +128,50 @@ final class ZoomNavigator: ObservableObject {
                 if ncc > best { best = ncc; bx = ox; by = oy }
             }
         }
-        if best >= 0.45 {
+        // koreksi posisi hanya bila templat cukup besar & sangat cocok
+        if tw >= 40 && best >= 0.6 {
             misses = 0
             // pusat kotak dikunci ke posisi yang cocok (koreksi melenceng gyro)
             let cx = (Double(bx) + Double(tw) / 2) / Double(refW), cy = (Double(by) + Double(th) / 2) / Double(refH)
             tiltY = atan((0.5 - cx) * 2 * refTanW)
             tiltX = atan((0.5 - cy) * 2 * refTanH)
             updateRect()
+            return
+        }
+        // v0.42.8: basi dinilai pada grid kasar (12 kolom: tata letak terang / gelap), bukan detail halus. Build 115:
+        // kotak 28 px (25x dari acuan 2x) -> detail 25x tidak bisa dibandingkan -> NCC 0.38 padahal tempat sama.
+        let gw = 12, gh = max(4, Int((Double(th) / Double(tw) * 12).rounded()))
+        func cells(_ get: (Int, Int) -> Float) -> [Float] {
+            var c = [Float](repeating: 0, count: gw * gh)
+            for gy in 0..<gh {
+                let y0 = gy * th / gh, y1 = max(y0 + 1, (gy + 1) * th / gh)
+                for gx in 0..<gw {
+                    let x0 = gx * tw / gw, x1 = max(x0 + 1, (gx + 1) * tw / gw)
+                    var sum: Float = 0
+                    for yy in y0..<y1 { for xx in x0..<x1 { sum += get(xx, yy) } }
+                    c[gy * gw + gx] = sum / Float((y1 - y0) * (x1 - x0))
+                }
+            }
+            return c
+        }
+        let ct = cells { x, y in t[y * tw + x] }
+        let cr = cells { x, y in self.refGray[(by + y) * self.refW + bx + x] }
+        func stat(_ v: [Float]) -> (Float, Float) {
+            let m = v.reduce(0, +) / Float(v.count)
+            let sd = sqrt(v.reduce(0) { $0 + ($1 - m) * ($1 - m) } / Float(v.count))
+            return (m, sd)
+        }
+        let (mt, st) = stat(ct), (mr, sr) = stat(cr)
+        guard st > 8 else { return }           // preview polos: tidak bisa dinilai
+        var cc: Float = 0
+        if sr > 2 { for i in 0..<ct.count { cc += (ct[i] - mt) * (cr[i] - mr) }; cc /= Float(ct.count) * st * sr }
+        if cc >= 0.3 {
+            misses = 0
         } else {
             misses += 1
-            if misses >= 2 && !stale {
+            if misses >= 3 && !stale {
                 stale = true
-                Log.camera.notice("Peta zoom: acuan tidak cocok lagi dengan preview (NCC \(best, format: .fixed(precision: 2), privacy: .public), zoom \(Double(self.zoom), format: .fixed(precision: 1), privacy: .public)x, acuan \(Double(self.refZoom), format: .fixed(precision: 1), privacy: .public)x) - disembunyikan, acuan diperbarui")
+                Log.camera.notice("Peta zoom: acuan tidak cocok lagi dengan preview (grid \(cc, format: .fixed(precision: 2), privacy: .public), detail \(best, format: .fixed(precision: 2), privacy: .public), zoom \(Double(self.zoom), format: .fixed(precision: 1), privacy: .public)x, acuan \(Double(self.refZoom), format: .fixed(precision: 1), privacy: .public)x) - disembunyikan sampai zoom < 6x")
                 refresh()
             }
         }

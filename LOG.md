@@ -2604,3 +2604,25 @@ Perubahan v0.42.7 build 115:
   - Adegan polos (simpangan < 6) tidak dinilai.
 - PreviewRenderer mengirim frame ke peta paling sering ~3x/detik (dulu tiap frame ke main thread).
 BELUM DIUJI DI HP. Build 115 (run 44451807648) sukses. IPA: `data/ipa-v0.42.7/BaginCam-unsigned.ipa` (berisi juga build 114). IPA v0.42.6 dihapus.
+
+## 2026-11-19 - Cek build 115: peta zoom 50x hanya tembok polos ("masih belum sama") -> v0.42.8 build 116
+
+Ditarik: log + IMG_7467-7470 di `%TEMP%\claude\cek1119b`.
+- Terpasang 0.42.7 (115).
+- IMG_7468 / 7470 (FOTO 50x, Tele crop 10x): peta hanya berisi tembok hijau, sedangkan preview menampilkan tembok
+  dengan tepi putih.
+
+Penyebab: kesalahan build 115.
+- 10:36:33 "Peta zoom: acuan tidak cocok lagi (NCC 0.38, zoom 25x, acuan 2x)". Pada 25x dari acuan 2x, kotaknya
+  hanya ~28 px di peta, jadi detail 25x tidak bisa dibandingkan dan tempat yang sama dinilai basi.
+- Setelah itu acuan diambil ulang di 25x, sehingga peta 50x hanya berisi tampilan 25x yang sempit.
+- Preview di zoom tinggi sudah di-crop kamera (`videoZoomFactor`), jadi gambar lebar memang hanya ada saat zoom
+  rendah. Kamera bawaan memakai aliran kamera kedua.
+
+Perubahan v0.42.8 build 116 (`ZoomNavigator`):
+- Acuan hanya diambil di zoom < 6x (setelah zoom diam 0,6 s).
+- Koreksi posisi kotak hanya bila templat >= 40 px dan NCC detail >= 0,6.
+- Basi dinilai pada grid kasar 12 kolom (tata letak terang / gelap), dan hanya bila preview tidak polos.
+  Basi = 3x berturut-turut grid NCC < 0,3. Bila basi, peta disembunyikan sampai zoom < 6x (log "disembunyikan
+  sampai zoom < 6x").
+BELUM DIUJI DI HP.
